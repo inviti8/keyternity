@@ -471,6 +471,7 @@ pub fn draw_hierarchy(
                                     offset.x += 18.;
                                 }
                                 if bone.ik_family_id != -1 {
+                                    // drawing IK icon
                                     let color = config.colors.inverse_kinematics;
                                     let desc = shared_ui
                                         .loc("armature_panel.icons.ik_family")
@@ -486,10 +487,12 @@ pub fn draw_hierarchy(
                                     if response.contains_pointer() {
                                         response.show_tooltip_text(&desc);
                                     }
+
+                                    // drawing family ID number
                                     let family_id = bone.ik_family_id.to_string();
                                     let id = format!("{}ik", b.to_string());
                                     let color = colors.inverse_kinematics;
-                                    let id_offset = Vec2::new(offset.x - 18., 18.);
+                                    let id_offset = Vec2::new(0., 18.);
                                     bone_label(&family_id, false, ui, id, id_offset, &desc, color);
                                     offset.x += 18.;
                                 }
