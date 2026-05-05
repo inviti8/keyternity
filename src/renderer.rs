@@ -1886,10 +1886,10 @@ fn draw_gridline(
 
     // draw vertical lines
     let mut x = (cam.pos.x - cam.zoom / camera.aspect_ratio()).round();
+    x = -x.abs();
 
     // snap to first line
     x += (x % config.gridline_gap as f32).abs();
-
     let right_side = cam.pos.x + cam.zoom / camera.aspect_ratio();
     while x < right_side {
         let color = if x == 0. {
@@ -1905,10 +1905,10 @@ fn draw_gridline(
 
     // draw horizontal lines
     let mut y = (cam.pos.y - cam.zoom).round();
+    y = -y.abs();
 
     // snap to first line
     y += (y % config.gridline_gap as f32).abs();
-
     let top_side = cam.pos.y + cam.zoom;
     while y < top_side {
         let color = if y == 0. {
