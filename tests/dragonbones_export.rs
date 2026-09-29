@@ -588,3 +588,170 @@ fn synthetic_bind_pose_rig() {
     let posed: Vec<u64> = vec![pose[0].as_u64().unwrap(), pose[7].as_u64().unwrap()];
     assert!(posed.contains(&idx("cloak")) && posed.contains(&idx("arm")));
 }
+
+// ------------------------------------------------------------------ import round trip
+
+use skelform_lib::dragonbones_import::{self, DbAtlas};
+
+/// World transforms of every bone and drawn vertices of textured bones, as SkelForm renders.
+struct Frame {
+    bones: std::collections::HashMap<i32, (Vec2, f32, Vec2)>,
+    verts: std::collections::HashMap<i32, Vec<Vec2>>,
+}
+
+fn render(arm: &Armature, mut local: Vec<Bone>) -> Frame {
+    for bone in &mut local {
+        if let Some(size) = tex_size(arm, &bone.tex) {
+            if !bone.verts_edited {
+                (bone.vertices, bone.indices) = create_tex_rect(&size);
+            }
+        }
+    }
+    let mut world = local.clone();
+    construction(&mut world, &local);
+    let mut bones = std::collections::HashMap::new();
+    let mut verts = std::collections::HashMap::new();
+    for b in &world {
+        bones.insert(b.id, (b.pos, b.rot, b.scale));
+        if let Some(size) = tex_size(arm, &b.tex) {
+            let left = if is_facing_left(b.scale) { -1. } else { 1. };
+            let pivot = utils::rotate(&(size * b.pivot_pos), b.rot * left) * b.scale;
+            verts.insert(b.id, b.vertices.iter().map(|v| v.pos + pivot).collect());
+        }
+    }
+    Frame { bones, verts }
+}
+
+fn angle_diff(a: f32, b: f32) -> f32 {
+    let mut d = (a - b) % std::f32::consts::TAU;
+    if d > std::f32::consts::PI {
+        d -= std::f32::consts::TAU;
+    }
+    if d < -std::f32::consts::PI {
+        d += std::f32::consts::TAU;
+    }
+    d.abs()
+}
+
+/// Export → import → compare SkelForm's rendering of both, at setup and every frame.
+/// Returns (max bone position error, max vertex error).
+fn round_trip(arm: &Armature, name: &str) -> (f32, f32) {
+    let (files, _, _) = export(arm, name);
+    let imported = dragonbones_import::import(
+        &files.ske_json,
+        &[DbAtlas {
+            json: files.tex_json.clone(),
+            png: files.tex_png.clone(),
+        }],
+    )
+    .unwrap();
+    for w in &imported.warnings {
+        println!("  [{name}] warning: {w}");
+    }
+    let back = imported.armature;
+
+    // the exporter makes bone names unique (name, name_2, ...) and names slots after bones
+    let mut used: Vec<String> = vec![];
+    let mut pairs: Vec<(i32, i32, String)> = vec![];
+    let mut carriers: Vec<(i32, i32, String)> = vec![];
+    for b in arm.bones.iter().filter(|b| b.bind_owner.is_none()) {
+        let base = if b.name.is_empty() {
+            "bone".to_string()
+        } else {
+            b.name.clone()
+        };
+        let mut unique = base.clone();
+        let mut n = 2;
+        while used.contains(&unique) {
+            unique = format!("{base}_{n}");
+            n += 1;
+        }
+        used.push(unique.clone());
+        if let Some(ib) = back.bones.iter().find(|x| x.name == unique) {
+            pairs.push((b.id, ib.id, unique.clone()));
+        }
+        if tex_size(arm, &b.tex).is_some() {
+            if let Some(c) = imported.slot_bones.iter().find(|s| s.0 == unique) {
+                carriers.push((b.id, c.1, unique.clone()));
+            }
+        }
+    }
+
+    let (mut bone_err, mut vert_err, mut worst) = (0f32, 0f32, String::new());
+    let mut compare = |a: &Frame, b: &Frame, tag: &str| {
+        for (orig, imp, n) in &pairs {
+            let (Some((pa, ra, sa)), Some((pb, rb, sb))) = (a.bones.get(orig), b.bones.get(imp))
+            else {
+                continue;
+            };
+            let e = (*pa - *pb).mag() + angle_diff(*ra, *rb) * 10. + (*sa - *sb).mag() * 10.;
+            if e > bone_err {
+                bone_err = e;
+                worst = format!("{tag} bone {n}");
+            }
+        }
+        for (orig, imp, n) in &carriers {
+            let (Some(va), Some(vb)) = (a.verts.get(orig), b.verts.get(imp)) else {
+                continue;
+            };
+            for p in va {
+                let d = vb.iter().map(|q| (*p - *q).mag()).fold(f32::MAX, f32::min);
+                if d > vert_err {
+                    vert_err = d;
+                    worst = format!("{tag} verts {n}");
+                }
+            }
+        }
+    };
+
+    compare(
+        &render(arm, arm.bones.clone()),
+        &render(&back, back.bones.clone()),
+        "setup",
+    );
+    let rate = back.animations.first().map(|a| a.fps).unwrap_or(60) as f32;
+    for a in 0..arm.animations.len() {
+        let mut orig = arm.clone();
+        orig.animations[a].keyframes.retain(|k| k.frame >= 0);
+        orig.animations[a].sort_keyframes();
+        let last = orig.animations[a]
+            .keyframes
+            .iter()
+            .map(|k| k.frame)
+            .max()
+            .unwrap_or(0);
+        let scale = rate / orig.animations[a].fps as f32;
+        for f in 0..=last {
+            let fb = (f as f32 * scale).round() as i32;
+            let ra = render(&orig, orig.clone().animate(a, f, None));
+            let rb = render(&back, back.clone().animate(a, fb, None));
+            compare(&ra, &rb, &format!("{}@{f}", orig.animations[a].name));
+        }
+    }
+    println!("{name}: bones {bone_err:.4} | verts {vert_err:.4} px | worst: {worst}");
+    (bone_err, vert_err)
+}
+
+#[test]
+fn import_round_trip() {
+    let mut bind_posed = synthetic();
+    skelform_lib::bind_pose::set_bind_pose(&mut bind_posed, 3).unwrap();
+    // Skellina's legacy all-zero curve handles are linear, which the export writes exactly,
+    // while SkelForm's own solver is ~3 px off near t=0 (docs/DRAGONBONES_EXPORT.md §4)
+    for (arm, name, tolerance) in [
+        (synthetic(), "rt_synthetic", 0.5),
+        (bind_posed, "rt_synthetic_bindpose", 0.5),
+        (
+            load_skf("./samples/_skellington.skf"),
+            "rt_skellington",
+            0.5,
+        ),
+        (load_skf("./samples/_skellina.skf"), "rt_skellina", 3.5),
+    ] {
+        let (bones, verts) = round_trip(&arm, name);
+        assert!(
+            bones < tolerance && verts < tolerance,
+            "{name}: bones {bones} verts {verts}"
+        );
+    }
+}

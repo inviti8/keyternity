@@ -500,7 +500,13 @@ int main(int argc, char** argv)
             // without timelines get pose timelines back to setup. A stopped state still
             // evaluates its timelines at _time on advanceTime(0).
             animation->reset();
-            const auto state = animation->gotoAndStopByFrame(name, f);
+            // sample just after frame f: f / frameRate can round to a hair before the frame,
+            // which shows the previous frame of stepped timelines (display index, held keys).
+            // The last frame is the animation's end, so sample it exactly.
+            const auto frameRate = (float)armature->_armatureData->frameRate;
+            const auto state = f < animData->frameCount
+                ? animation->gotoAndStopByTime(name, ((float)f + 0.001f) / frameRate)
+                : animation->gotoAndStopByFrame(name, f);
             if (state == nullptr)
             {
                 std::fprintf(stderr, "dbharness: gotoAndStopByFrame(%s,%u) returned null\n", name.c_str(), f);
