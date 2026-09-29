@@ -32,7 +32,7 @@ pub fn iterate_events(
         type E = Events;
         #[rustfmt::skip]
         match last_event {
-            E::NewBone | E::DragBone | E::DeleteBone | E::PasteBone | E::RaiseGlobalZindex => undo_states.new_undo_bones(&armature.bones),
+            E::NewBone | E::DragBone | E::DeleteBone | E::PasteBone | E::RaiseGlobalZindex | E::SetBindPose | E::ClearBindPose => undo_states.new_undo_bones(&armature.bones),
             E::NewAnimation | E::DeleteAnim => undo_states.new_undo_anims(&armature.animations),
             E::DeleteSelectedTextures       => undo_states.new_undo_style(&armature.sel_style(&selections).unwrap()),
             E::DeleteStyle | E::NewStyle    => undo_states.new_undo_styles(&armature.styles),
@@ -782,6 +782,11 @@ pub fn simple_event(
                 });
             }
 
+            if bind_pose::is_bind_posed(armature, id) {
+                return;
+            }
+            let bone_mut = &mut armature.sel_bone_mut(&selections).unwrap();
+
             let temp_bone = renderer.temp_bones.iter().find(|b| b.id == id).unwrap();
             let temp_bones = &renderer.temp_bones;
 
@@ -893,6 +898,18 @@ pub fn simple_event(
         Events::DeleteKeyframesByFrame => {
             let anim = armature.sel_anim_mut(&selections).unwrap();
             anim.keyframes.retain(|kf| kf.frame != value as i32);
+        }
+        Events::SetBindPose => {
+            let bone_id = armature.sel_bone(&selections).unwrap().id;
+            if let Err(err) = bind_pose::set_bind_pose(armature, bone_id) {
+                ui.custom_error = err;
+                let headline = ui.loc("bone_panel.bind_pose.error");
+                open_modal(ui, false, headline);
+            }
+        }
+        Events::ClearBindPose => {
+            let bone_id = armature.sel_bone(&selections).unwrap().id;
+            bind_pose::clear_bind_pose(armature, bone_id);
         }
         Events::ResetVertices => {
             let sel_bone = armature.sel_bone(&selections).unwrap().clone();
@@ -1265,7 +1282,8 @@ fn select_bone(
 
     // set this bone as bind if in bind mode
     if edit_mode.setting_bind_bone {
-        let id = armature.bones[idx].id;
+        let mesh_id = armature.sel_bone(&sel).map(|b| b.id).unwrap_or(-1);
+        let id = bind_pose::bind_target(armature, armature.bones[idx].id, mesh_id);
         if let Some(bind) = armature
             .sel_bone_mut(&sel)
             .and_then(|bone| bone.binds.get_mut(sel.bind as usize))

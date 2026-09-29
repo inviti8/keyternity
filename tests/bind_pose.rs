@@ -132,7 +132,7 @@ fn by_name<'a>(arm: &'a mut Armature, name: &str) -> &'a mut Bone {
 }
 
 fn helper_count(arm: &Armature) -> usize {
-    arm.bones.iter().filter(|b| b.bind_helper).count()
+    arm.bones.iter().filter(|b| b.bind_owner.is_some()).count()
 }
 
 // ------------------------------------------------------------------ §9.1 no jump
@@ -146,11 +146,12 @@ fn set_bind_pose_does_not_move_vertices() {
         assert_same(&before, &drawn(&arm, 3), &format!("mirrored={mirrored}"));
 
         assert!(bind_pose::is_bind_posed(&arm, 3));
-        // owner + upper + fore
-        assert_eq!(helper_count(&arm), 3);
+        // one helper per bound bone (upper, fore) for this mesh
+        assert_eq!(helper_count(&arm), 2);
         let mesh = arm.bones.iter().find(|b| b.id == 3).unwrap();
         assert_eq!(mesh.pivot_pos, Vec2::ZERO);
-        assert_eq!(mesh.pivot_rot, 0.);
+        // pivot rotation/scale apply inside skinning, so they're kept
+        assert_eq!(mesh.pivot_rot, 0.2);
     }
 }
 
@@ -204,7 +205,8 @@ fn reference_lbs(
     mesh.vertices
         .iter()
         .map(|v| {
-            let mut weights: Vec<(i32, f32)> = vec![];
+            // the owner starts at 1, each bind lerps
+            let mut weights: Vec<(i32, f32)> = vec![(mesh_id, 1.)];
             for bind in &mesh.binds {
                 if let Some(bv) = bind.verts.iter().find(|bv| bv.id == v.id as i32) {
                     for w in weights.iter_mut() {
@@ -213,11 +215,17 @@ fn reference_lbs(
                     weights.push((parent_of(bind.bone_id), bv.weight));
                 }
             }
+            // rest position: the owner's setup frame, with the mesh's pivot rot/scale
+            let owner = setup.iter().find(|b| b.id == mesh_id).unwrap();
+            let rest = utils::rotate(
+                &(v.pos * owner.scale * mesh.pivot_scale),
+                owner.rot + mesh.pivot_rot,
+            ) + owner.pos;
             let mut out = Vec2::ZERO;
             for (bone_id, w) in weights {
                 let b = setup.iter().find(|b| b.id == bone_id).unwrap();
                 let wb = posed.iter().find(|b| b.id == bone_id).unwrap();
-                out += apply(wb, apply_inverse(b, v.pos)) * w;
+                out += apply(wb, apply_inverse(b, rest)) * w;
             }
             out
         })
@@ -255,7 +263,6 @@ fn weight_edits_do_not_move_vertices() {
     let mut arm = arm_rig(true, false);
     bind_pose::set_bind_pose(&mut arm, 3).unwrap();
     let before = drawn(&arm, 3);
-    // the first bind (owner helper, weight 1) is structural and not user-editable
     for bind in arm
         .bones
         .iter_mut()
@@ -263,7 +270,6 @@ fn weight_edits_do_not_move_vertices() {
         .unwrap()
         .binds
         .iter_mut()
-        .skip(1)
     {
         for v in &mut bind.verts {
             v.weight = (v.weight * 0.37 + 0.2).min(1.);
@@ -281,8 +287,7 @@ fn setup_edits_keep_mesh_in_place() {
         bind_pose::set_bind_pose(&mut arm, 3).unwrap();
         let before = drawn(&arm, 3);
 
-        // edit bound bones and an ancestor in the setup pose, then re-sync
-        by_name(&mut arm, "root").pos += Vec2::new(-7., 12.);
+        // edit the bound bones (and the forearm's ancestor) in the setup pose, then re-sync
         by_name(&mut arm, "upper").rot += 0.4;
         by_name(&mut arm, "fore").scale *= 1.3;
         by_name(&mut arm, "fore").pos += Vec2::new(4., -9.);
@@ -300,6 +305,16 @@ fn setup_edits_keep_mesh_in_place() {
             &before,
             &drawn(&arm, 3),
             &format!("reparent, mirrored={mirrored}"),
+        );
+
+        // moving the mesh's own ancestor moves the mesh with it, rigidly (as always)
+        by_name(&mut arm, "root").pos += Vec2::new(-7., 12.);
+        bind_pose::sync_helpers(&mut arm);
+        let shifted: Vec<Vec2> = before.iter().map(|p| *p + Vec2::new(-7., 12.)).collect();
+        assert_same(
+            &shifted,
+            &drawn(&arm, 3),
+            &format!("owner ancestor, mirrored={mirrored}"),
         );
     }
 }
@@ -321,7 +336,7 @@ fn save_load_keeps_helpers_and_deformation() {
     let helper_names: Vec<String> = arm
         .bones
         .iter()
-        .filter(|b| b.bind_helper)
+        .filter(|b| b.bind_owner.is_some())
         .map(|b| b.name.clone())
         .collect();
     let mut posed = arm.clone();
@@ -358,7 +373,7 @@ fn save_load_keeps_helpers_and_deformation() {
     let loaded_helpers: Vec<String> = loaded
         .bones
         .iter()
-        .filter(|b| b.bind_helper)
+        .filter(|b| b.bind_owner.is_some())
         .map(|b| b.name.clone())
         .collect();
     assert_eq!(loaded_helpers, helper_names);
@@ -385,4 +400,59 @@ fn clear_bind_pose_restores_classic_binds() {
     assert!(!bind_pose::is_bind_posed(&arm, 3));
     assert_eq!(helper_count(&arm), 0);
     assert_same(&before, &drawn(&arm, 3), "after clear");
+}
+
+// ------------------------------------------------------------------ editor upkeep
+
+#[test]
+fn bind_target_uses_helpers_on_bind_posed_meshes() {
+    let mut arm = arm_rig(false, false);
+    // classic mesh: picking a bone binds to the bone itself
+    assert_eq!(bind_pose::bind_target(&mut arm, 1, 3), 1);
+
+    bind_pose::set_bind_pose(&mut arm, 3).unwrap();
+    let before = drawn(&arm, 3);
+    // bind-posed: picking the root creates its helper for this mesh
+    let target = bind_pose::bind_target(&mut arm, 0, 3);
+    assert_eq!(bind_pose::helper_for(&arm, 0, 3), Some(target));
+    let mesh = arm.bones.iter_mut().find(|b| b.id == 3).unwrap();
+    mesh.binds.push(bind(target, &[(1, 0.4), (2, 0.6)]));
+    bind_pose::maintain(&mut arm);
+    assert_same(&before, &drawn(&arm, 3), "new bind on root");
+}
+
+#[test]
+fn maintain_gives_a_pasted_mesh_its_own_helpers() {
+    let mut arm = arm_rig(false, false);
+    bind_pose::set_bind_pose(&mut arm, 3).unwrap();
+
+    // simulate a paste: a copy of the mesh elsewhere, still bound to the original's helpers
+    let mut copy = arm.bones.iter().find(|b| b.id == 3).unwrap().clone();
+    copy.id = 50;
+    copy.name = "mesh copy".into();
+    copy.pos += Vec2::new(0., 80.);
+    arm.bones.push(copy);
+
+    bind_pose::maintain(&mut arm);
+    assert!(bind_pose::is_bind_posed(&arm, 50));
+    assert!(bind_pose::is_bind_posed(&arm, 3));
+    assert_eq!(helper_count(&arm), 4);
+
+    // the copy sits where the original is, shifted by its offset (in the root's frame)
+    let offset = utils::rotate(&Vec2::new(0., 80.), by_name(&mut arm, "root").rot);
+    let original = drawn(&arm, 3);
+    let copied = drawn(&arm, 50);
+    for (a, b) in original.iter().zip(&copied) {
+        let d = *b - *a;
+        assert!((d - offset).mag() < EPS, "copy offset {d}");
+    }
+}
+
+#[test]
+fn maintain_removes_helpers_of_deleted_meshes() {
+    let mut arm = arm_rig(false, false);
+    bind_pose::set_bind_pose(&mut arm, 3).unwrap();
+    arm.bones.retain(|b| b.id != 3);
+    bind_pose::maintain(&mut arm);
+    assert_eq!(helper_count(&arm), 0);
 }

@@ -1226,9 +1226,10 @@ pub struct Bone {
     pub blacklist: Vec<u32>,
     #[serde(skip)]
     pub anim_folded: bool,
-    /// Bind Pose helper bone (see `bind_pose.rs`). Editor-only; saved in editor.json.
+    /// Bind Pose helper: id of the mesh bone it serves (see `bind_pose.rs`).
+    /// Editor-only; saved in editor.json.
     #[serde(skip)]
-    pub bind_helper: bool,
+    pub bind_owner: Option<i32>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Default, Debug)]
@@ -1274,8 +1275,8 @@ pub struct EditorBone {
     #[serde(default = "default_0_alpha")]
     pub group_color: Color,
     pub anim_folded: bool,
-    #[serde(skip_serializing_if = "is_false")]
-    pub bind_helper: bool,
+    #[serde(default = "default_neg_one", skip_serializing_if = "is_neg_one")]
+    pub bind_owner: i32,
 }
 
 #[derive(
@@ -2407,6 +2408,8 @@ pub enum Events {
     CenterBoneVerts,
     TraceBoneVerts,
     SetBindWeight,
+    SetBindPose,
+    ClearBindPose,
     OpenFileErrModal,
     SetExportClearColor,
     SetExportImgFormat,
@@ -2501,6 +2504,8 @@ impl EventState {
     generic_event!(new_vertex, Events::NewVertex);
     generic_event!(cancel_pending_texture, Events::CancelPendingTexture);
     generic_event!(reset_vertices, Events::ResetVertices);
+    generic_event!(set_bind_pose, Events::SetBindPose);
+    generic_event!(clear_bind_pose, Events::ClearBindPose);
     generic_event!(delete_ik_target, Events::DeleteIkTarget);
     generic_event!(center_bone_verts, Events::CenterBoneVerts);
     generic_event!(trace_bone_verts, Events::TraceBoneVerts);

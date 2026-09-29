@@ -74,34 +74,34 @@ any combination of weights**, and weights can be edited freely.
 ## 2. The idea: bind poses as ordinary helper bones
 
 `Wⱼ · inverse(Bⱼ)` is the *skinning matrix* of bone j. SkelForm can already
-represent it: it is the world transform of a **child bone of j whose local
-transform is `inverse(Bⱼ)`**. That child is constant and never animated.
+represent it with an ordinary bone: a constant, never-animated **child of j**.
 
-**Set Bind Pose** therefore:
-1. For each bone the mesh uses (its owner plus every weight-bind bone), creates or
-   refreshes a child **bind helper** `<bone>__bind`. The helper's local transform
-   puts its world transform at the **identity** (origin, rotation 0, scale 1) in
-   the current pose.
-2. Rewrites every mesh vertex to its **current world position** (armature space,
-   `v_rest`).
-3. Puts a new **owner snap bind** first: a bind to the owner's own helper,
-   containing every vertex at weight 1. It then points the mesh's original weight
-   binds at their bones' helpers, **keeping their weights**.
-   - The snap bind moves every vertex to `v_rest` via the owner's helper.
-   - The original binds then lerp from there exactly as before.
-   - So the owner keeps its original share of each blend, and no weights need
-     converting.
+For a mesh with owner bone `O`, the helper is placed exactly at the **owner's
+setup transform**. Its local transform is `inverse(Bⱼ) · O_setup`, so:
+- **At rest**, every helper sits where the owner is. Every bind therefore places a
+  vertex exactly where the owner does, and nothing moves, whatever the weights.
+- **When bone j moves**, its helper moves by exactly `Wⱼ · inverse(Bⱼ)`, and the
+  vertex follows standard linear blend skinning.
 
-With every helper at the identity, `inherit_vert(v_rest, helperⱼ) = v_rest` for all
-j. Nothing moves, whatever the weights. When bone j later moves, its helper moves
-by exactly `Wⱼ · inverse(Bⱼ)`, and the vertex follows standard skinning.
+**Set Bind Pose** therefore, for the selected mesh:
+1. For each bone the mesh binds to, creates a child **bind helper**
+   `<bone>__bind__<mesh>` and points the bind at it. The binds keep their weights.
+2. Leaves the vertices in the **owner's local space**, as with classic binds. It
+   only bakes the world-axis `pivot_pos` offset into them (§2.2).
+3. Syncs every helper to the owner's setup transform (§2.1).
+
+Because the vertex starts on its owner (`renderer::construct_verts`) and every bind
+agrees with the owner at rest, the owner keeps its original share of each blend.
+No weights are converted.
 
 **Why this shape:**
 - Helpers are **ordinary bones**. `armature.json` keeps its existing format, so every
   runtime (Rust, C, JS, Unity, Go, Python, …) plays bind-pose meshes **unchanged**.
 - Everything new lives in the **editor**. Runtime maintainers have nothing to do.
-- SkelForm's sequential bind lerps stay as they are. With every bind seeing the same
-  `v_rest`, any lerp order gives a proper blend, so the weight UI keeps working.
+- **Vertices stay owner-local**, so every existing vertex tool (drag, add, center,
+  trace, reset) works unchanged on bind-posed meshes.
+- **The cost:** a helper is specific to one (bone, mesh) pair. A bone bound by three
+  meshes has three helpers.
 
 ### 2.1 Helper local transform
 
@@ -113,23 +113,29 @@ world.scale = parent.scale * local.scale
 world.pos   = parent.pos + rotate(local.pos * parent.scale, parent.rot)
 ```
 
-To get world = identity under parent world `(P, r, S)` at bind time:
+To put a child exactly at the owner's setup world transform `(Pₒ, rₒ, Sₒ)` under
+a parent world `(P, r, S)`:
 
 ```
-local.scale = 1 / S
-local.rot   = facing_left(parent) ? r : -r
-local.pos   = rotate(-P, -r) / S
+local.scale = Sₒ / S
+local.rot   = facing_left(parent) ? r − rₒ : rₒ − r
+local.pos   = rotate(Pₒ − P, −r) / S
 ```
 
-`S` must be non-zero on both axes. Set Bind Pose refuses a bone with zero scale.
+- At rest this is exact, component by component.
+- When posed, it matches `Wⱼ · inverse(Bⱼ) · O_setup` whenever bone j's scale
+  changes uniformly relative to setup (§5).
+- `S` must be non-zero on both axes, so Set Bind Pose refuses a bone with zero scale.
 
 ### 2.2 The mesh bone's pivot
 
-`inherit_vert` also applies the mesh bone's `pivot_rot`/`pivot_scale`. The
-renderer adds `pivot_pos` as a world-space offset afterwards (`final_pivot` in
-`renderer.rs`). Set Bind Pose **bakes the pivot into `v_rest`** (it's part of the
-current world position) and **resets the mesh bone's pivot to neutral**. UVs are
-untouched, so the texture mapping doesn't change.
+- `pivot_rot` and `pivot_scale` are applied inside `inherit_vert` for the owner and
+  for every bind alike, so they stay as they are.
+- `pivot_pos` is different. The renderer adds it as a world-space offset *after*
+  skinning, rotated by the owner only (`final_pivot` in `renderer.rs`), so it
+  wouldn't follow the blend.
+- Set Bind Pose therefore **bakes `pivot_pos` into the vertices** and sets it to
+  zero. UVs are untouched, so the texture mapping doesn't change.
 
 ---
 
@@ -137,9 +143,9 @@ untouched, so the texture mapping doesn't change.
 
 | what | where | runtime-visible? |
 |---|---|---|
-| Helper bones | `armature.json` `bones`, as normal bones: name `<bone>__bind`, constant transform, no texture | yes, as ordinary bones (that's the point) |
-| Mesh vertices at `v_rest`, binds pointing at helpers | existing `visuals` vertices/binds | yes, existing fields |
-| "This bone is a bind helper" | **`editor.json`** `EditorBone.bind_helper: bool` (next to `locked`, `folded`, …) | **no** |
+| Helper bones | `armature.json` `bones`, as normal bones: name `<bone>__bind__<mesh>`, constant transform, no texture | yes, as ordinary bones (that's the point) |
+| Mesh vertices (owner-local, as today), binds pointing at helpers | existing `visuals` vertices/binds | yes, existing fields |
+| "This bone is a bind helper for mesh X" | **`editor.json`** `EditorBone.bind_owner: i32` (the mesh's bone index, `-1` = not a helper), next to `locked`, `folded`, … | **no** |
 
 - **Older SkelForm versions** open these files fine. `editor.json` fields they don't
   know are ignored, and the helpers show up as ordinary bones. They still deform
@@ -156,12 +162,11 @@ untouched, so the texture mapping doesn't change.
 | operation | behaviour |
 |---|---|
 | **Set Bind Pose** (mesh bone panel) | Steps 1–3 above for the selected mesh. Allowed only in the setup pose (not while animating). One undo step. From then on the bind pose **is** the setup pose, kept in sync automatically (§4.3), so there's no separate Rebind |
-| **Clear Bind Pose** | Converts back to classic binds. Each vertex gets its owner-relative position; helpers are removed if no other mesh uses them. Exact only for single-bind vertices, same as today |
-| Bind/unbind a vertex (bind-posed mesh) | No position rewrite is needed. All helpers share the identity frame at bind time, so the `ClickVertex` compensation branch is skipped. Binding to a bone with no helper yet creates one at the current setup pose |
+| **Clear Bind Pose** | Converts back to classic binds. Each vertex is stored in the frame of the bone with its largest effective weight, and the mesh's helpers are removed. Exact only for single-bone vertices, same as classic binding |
+| Bind/unbind a vertex (bind-posed mesh) | No position rewrite is needed, because every helper agrees with the owner at rest. The `ClickVertex` compensation is skipped. Picking a bind bone creates that bone's helper for this mesh (`bind_pose::bind_target`) |
 | Edit a weight | Nothing to compensate, since every bind sees the same `v_rest`. This fixes the `SetBindWeight` drift. Weights stay SkelForm's existing **per-bind** values, with the same UI and storage as today |
-| Edit mesh vertices (drag, add, center, trace) | For a bind-posed mesh, `Vertex.pos` is in armature space, so the vertex tools work in armature space instead of the owner bone's frame. This affects the drag conversion in `editor.rs` (~L759), which today divides by the owner's rotation and scale. Regenerating the mesh (Trace, reset to rect) keeps the bind pose and re-binds new vertices to the owner's helper |
+| Edit mesh vertices (drag, add, center, trace, reset) | Unchanged. Vertices stay owner-local. Resetting to a rect clears the binds, and the now-unused helpers are removed |
 | Path binds | Not supported on bind-posed meshes (v1). Set Bind Pose refuses a mesh with path binds, because path binds read the vertex in the owner's frame |
-| The owner snap bind | Structural (§2, step 3). Its weights must stay 1, and it must not be deleted, so the editor shows it read-only |
 
 ### 4.2 Helper hygiene
 
@@ -180,7 +185,15 @@ untouched, so the texture mapping doesn't change.
 - **Copy/paste:** helpers are copied only with their parent. A pasted mesh's binds
   are remapped to pasted helpers when those were copied too, and otherwise keep
   pointing at the originals.
-- **Rename:** helpers follow their parent's name (`<bone>__bind`).
+- **Rename:** helper names (`<bone>__bind__<mesh>`) are informational, taken at
+  creation. Nothing looks helpers up by name.
+- **Upkeep:** `bind_pose::maintain` runs every frame, and does nothing when there
+  are no helpers. It:
+  - gives pasted meshes their own helpers,
+  - removes helpers whose mesh is gone or no longer binds to them,
+  - re-syncs helpers to the setup pose.
+
+  This covers delete, paste, reparent, undo and redo without per-event hooks.
 
 ### 4.3 Editing the setup pose after binding: Blender-style (decided)
 
@@ -189,8 +202,8 @@ transform re-captures the bind, so the mesh **stays put**, as in Blender's edit
 mode. Deformation only appears when animating.
 
 How:
-- A helper's local transform is derived data: `inverse(parent's world transform in
-  the setup pose)` (§2.1). `v_rest` never changes when bones move.
+- A helper's local transform is derived data: it puts the helper at its mesh
+  owner's setup transform (§2.1). The vertices never change when bones move.
 - After **any** setup-pose change (move, rotate, scale, reparent, or an IK target
   moved in the setup pose), the editor recomputes **every** helper's local transform
   from the new constructed setup pose.
@@ -218,9 +231,7 @@ see deformation, pose the bone in an animation, like pose mode in 3D software.
   has.
 - **Mirroring.** Negative scales go through SkelForm's `facing_left` rule (§2.1),
   which needs explicit tests.
-- **Extra bones.** Exactly one helper per bone that has bind-posed meshes, shared
-  by all of them. Because the bind pose always equals the setup pose (§4.3), no
-  bone ever needs a second helper.
+- **Extra bones.** One helper per (bound bone, bind-posed mesh) pair.
 
 ---
 
@@ -256,10 +267,12 @@ transform, drop the helpers, and keep `v_rest`.
 
 | area | change |
 |---|---|
-| `src/bind_pose.rs` (new) | `set_bind_pose(armature, mesh_bone_id)`, `clear_bind_pose`, `sync_helpers(armature)` (§4.3), `helper_for(bone_id)`, helper local-transform math (§2.1), pivot baking (§2.2). Pure functions on `Armature`, unit-tested without GPU |
-| `shared.rs` | `Bone.bind_helper` (runtime-only, `#[serde(skip)]`), `EditorBone.bind_helper`; new events `SetBindPose` / `ClearBindPose` |
-| `utils.rs` | save/load `bind_helper` through `editor.json` (`prepare_files` / `import`) |
-| `editor.rs` | event handlers (with undo); call `sync_helpers` after setup-pose bone edits and reparenting (§4.3); skip the `ClickVertex` compensation for bind-posed meshes; armature-space vertex tools (§4.1); delete/paste hooks (§4.2) |
+| `src/bind_pose.rs` (new) | `set_bind_pose`, `clear_bind_pose`, `sync_helpers` (§4.3), `maintain` (§4.2), `bind_target`, `helper_for`, `is_bind_posed`, helper local-transform math (§2.1), pivot baking (§2.2). Pure functions on `Armature`, unit-tested without GPU |
+| `shared.rs` | `Bone.bind_owner: Option<i32>` (runtime-only, `#[serde(skip)]`), `EditorBone.bind_owner`; new events `SetBindPose` / `ClearBindPose` |
+| `utils.rs` | save/load `bind_owner` through `editor.json`, remapped to bone indices on save (`prepare_files` / `import`) |
+| `lib.rs` | run `bind_pose::maintain` every frame (§4.2, §4.3) |
+| `editor.rs` | event handlers (with undo); bind bone picking via `bind_target`; skip the `ClickVertex` compensation for bind-posed meshes |
+| `renderer.rs` | no bone points or kites for helpers |
 | `armature_window.rs` | draw helpers greyed out and read-only; block rename, drag, selection and keyframing |
 | `bone_panel.rs` | Set Bind Pose / Clear buttons in the mesh section; a bind-pose indicator; read-only view for helpers |
 | `assets/i18n/en.json` | strings |
@@ -276,7 +289,7 @@ transform, drop the helpers, and keep `v_rest`.
 4. **Setup edits (Blender-style):** moving, rotating, scaling or reparenting a bound
    bone, or one of its ancestors, in the setup pose leaves every bind-posed vertex
    where it was.
-5. **Round-trip:** save → load keeps the helpers, the `bind_helper` flags and the
+5. **Round-trip:** save → load keeps the helpers, the `bind_owner` flags and the
    deformation.
 6. **Runtime parity:** play a bind-posed rig in `rusty_skelform` (unchanged) and
    compare with the editor.
@@ -300,7 +313,7 @@ other two build on it.
 | # | task | depends on | doc |
 |---|---|---|---|
 | 1 ✅ | **Bind Pose core:** `bind_pose.rs` (set/clear, `sync_helpers`, helper math, pivot baking), `editor.json` flag, tests §9.1–9.5 | — | this doc |
-| 2 | **Bind Pose editor:** Set/Clear buttons, auto-sync after setup-pose edits, armature-space vertex tools, greyed-out helpers, delete/paste hooks, test §9.7 | 1 | this doc |
+| 2 🚧 | **Bind Pose editor:** Set/Clear buttons, per-frame `maintain` (auto-sync, paste/delete upkeep), bind-bone picking, greyed-out read-only helpers, no canvas gizmos for helpers, tests. Needs a manual pass in the app | 1 | this doc |
 | 3 | **Exporter update:** bind-posed meshes export as native DragonBones weights with real `bonePose` data, and their helpers are not emitted as bones | 1 | `DRAGONBONES_EXPORT.md` §4a |
 | 4 | **Importer:** parser, atlas, bones/slots/skins, animations, IK, warnings modal | — (cutout) | `DRAGONBONES_IMPORT.md` |
 | 5 | **Importer meshes:** weighted meshes imported as bind-posed meshes | 1, 4 | `DRAGONBONES_IMPORT.md` §4.5 |

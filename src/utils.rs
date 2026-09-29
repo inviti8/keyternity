@@ -887,7 +887,12 @@ pub fn prepare_files(
             group_color: bone.group_color,
             blacklist: bone.blacklist.clone(),
             anim_folded: bone.anim_folded,
-            bind_helper: bone.bind_helper,
+            // bone ids are re-indexed on save, so store the owner's index
+            bind_owner: bone
+                .bind_owner
+                .and_then(|id| armature.bones.iter().position(|b| b.id == id))
+                .map(|i| i as i32)
+                .unwrap_or(-1),
         });
     }
     for style in &armature_copy.styles {
@@ -1142,7 +1147,7 @@ pub fn import<R: Read + std::io::Seek>(
                 bone.locked = ed_bone.locked;
                 bone.group_color = ed_bone.group_color;
                 bone.blacklist = ed_bone.blacklist.clone();
-                bone.bind_helper = ed_bone.bind_helper;
+                bone.bind_owner = Some(ed_bone.bind_owner).filter(|id| *id != -1);
             }
             for s in 0..temp_arm.styles.len() {
                 let style = &mut temp_arm.styles[s];

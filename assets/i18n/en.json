@@ -210,6 +210,18 @@
     }
   },
   "bone_panel": {
+    "bind_pose": {
+      "label": "Bind Pose ℹ:",
+      "desc": "Bind pose skinning: vertices blended across several bones follow each bone relative to where it was when bound, like in 3D software. Weights can be edited freely without vertices moving.\n\nThe bind pose always follows the setup pose.\n\nWorks by adding greyed-out helper bones (name__bind__mesh), so any SkelForm runtime plays it unchanged.",
+      "set": "Set",
+      "set_desc": "Use bind pose skinning for this mesh",
+      "path_desc": "Meshes with path binds can't use bind pose skinning",
+      "clear": "Clear",
+      "clear_desc": "Go back to classic binds. Vertices blended across several bones may shift.",
+      "active": "On",
+      "error": "Can't set bind pose:\n\n$err",
+      "helper_note": "This is a Bind Pose helper bone. It is managed automatically and can't be edited."
+    },
     "heading": "Bone",
     "name": "Name:",
     "texture": "Texture:",

@@ -878,6 +878,9 @@ impl BackendRenderer {
         self.check_export_style(&shared.armature, &mut shared.ui);
 
         // animated bones will be used throughout the program
+        // keep Bind Pose helpers consistent with the setup pose (no-op without helpers)
+        bind_pose::maintain(&mut shared.armature);
+
         utils::animate_bones(&mut shared.armature, &shared.selections, &shared.edit_mode);
         shared.renderer.temp_bones = shared.armature.animated_bones.clone();
 
