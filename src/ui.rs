@@ -1725,23 +1725,6 @@ fn edit_mode_bar(
             edit_mode_button!(move_str, E::Move, edit_mode_move, ikd, key_move);
             edit_mode_button!(rotate_str, E::Rotate, edit_mode_rotate, ikd, key_rotate);
             edit_mode_button!(scale_str, E::Scale, edit_mode_scale, ikd, key_scale);
-
-            // Pose Mode: test-pose bones (e.g. to check skinning); leaving it restores the rest pose
-            ui.separator();
-            let pose_str = shared_ui.loc("edit_bar.pose.heading");
-            let can_pose = edit_mode.pose_mode || !shared_ui.is_animating(edit_mode, selections);
-            ui.add_enabled_ui(can_pose, |ui| {
-                let job = egui::text::LayoutJob::simple_singleline(
-                    pose_str.to_string(),
-                    egui::FontId::default(),
-                    config.colors.text.into(),
-                );
-                let button = selection_button(job, edit_mode.pose_mode, ui)
-                    .on_hover_text(shared_ui.loc("edit_bar.pose.desc"));
-                if button.clicked() {
-                    events.toggle_pose_mode();
-                }
-            });
         });
         shared_ui.edit_bar.scale = ui.min_rect().size().into();
 
@@ -1863,12 +1846,30 @@ fn animate_bar(
         ));
     window.show(egui_ctx, |ui| {
         ui.horizontal(|ui| {
+            // three modes: Armature (edit the rest pose), Pose (test-pose, see bind_pose.rs),
+            // Animation
+            let posing = edit_mode.pose_mode;
             let str_armature = &shared_ui.loc("armature_panel.heading");
-            if selection_button(str_armature, !edit_mode.anim_open, ui).clicked() {
+            let armature_mode = !edit_mode.anim_open && !posing;
+            if selection_button(str_armature, armature_mode, ui).clicked() {
+                if posing {
+                    events.toggle_pose_mode();
+                }
                 events.toggle_anim_panel_open(0);
+            }
+            let str_pose = shared_ui.loc("edit_bar.pose.heading");
+            let pose_mode = !edit_mode.anim_open && posing;
+            let pose = selection_button(str_pose, pose_mode, ui)
+                .on_hover_text(shared_ui.loc("edit_bar.pose.desc"));
+            if pose.clicked() && !posing {
+                events.toggle_anim_panel_open(0);
+                events.toggle_pose_mode();
             }
             let str_animation = &shared_ui.loc("keyframe_editor.heading");
             if selection_button(str_animation, edit_mode.anim_open, ui).clicked() {
+                if posing {
+                    events.toggle_pose_mode();
+                }
                 events.toggle_anim_panel_open(1);
             }
             shared_ui.anim_bar.scale = ui.min_rect().size().into();

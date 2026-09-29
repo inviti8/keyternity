@@ -879,11 +879,11 @@ impl BackendRenderer {
 
         // animated bones will be used throughout the program
         // Pose Mode is for the setup pose; animations have their own keyframes
-        if shared.edit_mode.pose_mode
-            && shared
+        let animating = shared.edit_mode.anim_open
+            || shared
                 .ui
-                .is_animating(&shared.edit_mode, &shared.selections)
-        {
+                .is_animating(&shared.edit_mode, &shared.selections);
+        if shared.edit_mode.pose_mode && animating {
             editor::exit_pose_mode(
                 &mut shared.armature,
                 &mut shared.edit_mode,

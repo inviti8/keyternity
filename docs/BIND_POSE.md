@@ -217,8 +217,23 @@ How:
 - Undo: the helper recompute is part of the same undo step as the edit that
   triggered it.
 
-Consequence: moving a bone in the setup pose never deforms a bind-posed mesh. To
-see deformation, pose the bone in an animation, like pose mode in 3D software.
+Consequence: moving a bone in the setup pose never deforms a bind-posed mesh.
+
+### 4.4 Pose Mode (test-posing)
+
+To check how a mesh deforms while skinning, SkelForm has a **Pose** mode between
+**Armature** and **Animation** in the mode tabs (top right of the viewport):
+
+- **Entering** takes a snapshot of every bone's transform (the rest pose).
+  Helpers stay synced to that snapshot (`bind_pose::maintain_with_rest`), so
+  moving bones deforms bind-posed meshes live.
+- **Leaving** (the Armature or Animation tab) restores every bone to the
+  snapshot. Pose edits are dropped from undo history, so undo can't write a test
+  pose into the rest pose.
+- **Saves and exports** always use the rest pose, even mid-pose.
+- Set/Clear/All Bind Pose are disabled while posing, since the bind is captured
+  at rest.
+- Opening the animation view (tab or hotkey) leaves Pose Mode.
 
 ---
 
@@ -300,7 +315,7 @@ transform, drop the helpers, and keep `v_rest`.
 
 | # | question | decision |
 |---|---|---|
-| 1 | Setup-pose edits after binding | **Blender-style.** The bind pose tracks the setup pose automatically, so meshes stay put (§4.3) |
+| 1 | Setup-pose edits after binding | **Blender-style.** The bind pose tracks the setup pose automatically, so meshes stay put (§4.3). Test-posing happens in **Pose Mode** (§4.4) |
 | 2 | Weight UI | **Keep SkelForm's per-bind weights** for now. Normalised 3D-style per-vertex weights can come later as a view on the same data |
 | 3 | Helper visibility | **Greyed out** under their bone, read-only (§4.2) |
 | 4 | Helper bones vs native format field | **Helper bones first** (no format change). The native field (§6) remains a possible later migration |
