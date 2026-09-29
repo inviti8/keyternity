@@ -32,7 +32,7 @@ pub fn iterate_events(
         type E = Events;
         #[rustfmt::skip]
         match last_event {
-            E::NewBone | E::DragBone | E::DeleteBone | E::PasteBone | E::RaiseGlobalZindex | E::SetBindPose | E::ClearBindPose => undo_states.new_undo_bones(&armature.bones),
+            E::NewBone | E::DragBone | E::DeleteBone | E::PasteBone | E::RaiseGlobalZindex | E::SetBindPose | E::SetBindPoseAll | E::ClearBindPose => undo_states.new_undo_bones(&armature.bones),
             E::NewAnimation | E::DeleteAnim => undo_states.new_undo_anims(&armature.animations),
             E::DeleteSelectedTextures       => undo_states.new_undo_style(&armature.sel_style(&selections).unwrap()),
             E::DeleteStyle | E::NewStyle    => undo_states.new_undo_styles(&armature.styles),
@@ -906,6 +906,19 @@ pub fn simple_event(
                 let headline = ui.loc("bone_panel.bind_pose.error");
                 open_modal(ui, false, headline);
             }
+        }
+        Events::SetBindPoseAll => {
+            let report = bind_pose::set_bind_pose_all(armature);
+            let mut summary = format!("{} mesh(es) use bind pose.", report.converted.len());
+            if !report.skipped.is_empty() {
+                summary += &format!("\n\n{} skipped:", report.skipped.len());
+                for (name, reason) in &report.skipped {
+                    summary += &format!("\n- {name}: {reason}");
+                }
+            }
+            ui.custom_error = summary;
+            let headline = ui.loc("bone_panel.bind_pose.all_result");
+            open_modal(ui, false, headline);
         }
         Events::ClearBindPose => {
             let bone_id = armature.sel_bone(&selections).unwrap().id;

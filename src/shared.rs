@@ -2409,6 +2409,7 @@ pub enum Events {
     TraceBoneVerts,
     SetBindWeight,
     SetBindPose,
+    SetBindPoseAll,
     ClearBindPose,
     OpenFileErrModal,
     SetExportClearColor,
@@ -2505,6 +2506,7 @@ impl EventState {
     generic_event!(cancel_pending_texture, Events::CancelPendingTexture);
     generic_event!(reset_vertices, Events::ResetVertices);
     generic_event!(set_bind_pose, Events::SetBindPose);
+    generic_event!(set_bind_pose_all, Events::SetBindPoseAll);
     generic_event!(clear_bind_pose, Events::ClearBindPose);
     generic_event!(delete_ik_target, Events::DeleteIkTarget);
     generic_event!(center_bone_verts, Events::CenterBoneVerts);

@@ -456,3 +456,107 @@ fn maintain_removes_helpers_of_deleted_meshes() {
     bind_pose::maintain(&mut arm);
     assert_eq!(helper_count(&arm), 0);
 }
+
+// ------------------------------------------------------------------ sample rig
+
+fn load_skf(path: &str) -> Armature {
+    let mut shared = Shared::default();
+    let ctx = egui::Context::default();
+    utils::import(
+        std::fs::File::open(path).unwrap(),
+        &mut shared,
+        None,
+        None,
+        None,
+        Some(&ctx),
+    );
+    shared.armature
+}
+
+/// Like `drawn`, but for an already-posed bone list (eg: an animation frame).
+fn drawn_pose(arm: &Armature, local: Vec<Bone>, mesh_id: i32) -> Vec<Vec2> {
+    let mut posed = arm.clone();
+    posed.bones = local;
+    drawn(&posed, mesh_id)
+}
+
+/// Effective (linear) weights of a vertex under SkelForm's sequential bind lerps.
+fn effective_weights(mesh: &Bone, vert_id: u32) -> Vec<(i32, f32)> {
+    let mut weights = vec![(mesh.id, 1.)];
+    for bind in &mesh.binds {
+        if let Some(bv) = bind.verts.iter().find(|bv| bv.id == vert_id as i32) {
+            for w in weights.iter_mut() {
+                w.1 *= 1. - bv.weight;
+            }
+            weights.push((bind.bone_id, bv.weight));
+        }
+    }
+    weights.retain(|w| w.1 > 1e-6);
+    weights
+}
+
+/// Set Bind Pose on every mesh of the Skellington sample, then compare with classic
+/// skinning over every frame of every animation.
+#[test]
+fn skellington_bind_pose_all() {
+    let classic = load_skf("./samples/_skellington.skf");
+    let mut bound = classic.clone();
+    let report = bind_pose::set_bind_pose_all(&mut bound);
+    println!("converted: {:?}", report.converted);
+    println!("skipped:   {:?}", report.skipped);
+
+    let meshes: Vec<&Bone> = classic
+        .bones
+        .iter()
+        .filter(|b| report.converted.contains(&b.name))
+        .collect();
+    assert!(!meshes.is_empty(), "no mesh converted");
+
+    for mesh in meshes {
+        // setup pose: nothing moves
+        assert_same(
+            &drawn(&classic, mesh.id),
+            &drawn(&bound, mesh.id),
+            &mesh.name,
+        );
+
+        // animations: single-bone vertices must match exactly; report blended drift
+        let single: Vec<bool> = mesh
+            .vertices
+            .iter()
+            .map(|v| effective_weights(mesh, v.id).len() == 1)
+            .collect();
+        let (mut single_max, mut blend_max, mut frames) = (0f32, 0f32, 0);
+        for a in 0..classic.animations.len() {
+            let last = classic.animations[a]
+                .keyframes
+                .iter()
+                .map(|k| k.frame)
+                .max()
+                .unwrap_or(0);
+            for f in 0..=last {
+                let c = drawn_pose(&classic, classic.clone().animate(a, f, None), mesh.id);
+                let b = drawn_pose(&bound, bound.clone().animate(a, f, None), mesh.id);
+                for (i, (p, q)) in c.iter().zip(&b).enumerate() {
+                    let d = (*p - *q).mag();
+                    if single[i] {
+                        single_max = single_max.max(d);
+                    } else {
+                        blend_max = blend_max.max(d);
+                    }
+                }
+                frames += 1;
+            }
+        }
+        let blended = single.iter().filter(|s| !**s).count();
+        println!(
+            "{:>16}: {} verts ({} blended), {} frames | single-bone max diff {:.4} px | blended max diff {:.2} px",
+            mesh.name, single.len(), blended, frames, single_max, blend_max
+        );
+        assert!(
+            single_max < 0.01,
+            "{}: single-bone vertices changed",
+            mesh.name
+        );
+    }
+}

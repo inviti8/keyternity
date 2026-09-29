@@ -325,3 +325,34 @@ pub fn maintain(armature: &mut Armature) {
     remove_unused_helpers(armature);
     sync_helpers(armature);
 }
+
+/// Result of `set_bind_pose_all`: mesh names converted, and skipped with the reason.
+#[derive(Default, Debug)]
+pub struct BindAllReport {
+    pub converted: Vec<String>,
+    pub skipped: Vec<(String, String)>,
+}
+
+/// Set Bind Pose on every mesh in the armature that can use it. Meshes without binds are
+/// left alone (they follow their bone rigidly, so bind pose changes nothing).
+pub fn set_bind_pose_all(armature: &mut Armature) -> BindAllReport {
+    let mut report = BindAllReport::default();
+    let meshes: Vec<(i32, String)> = armature
+        .bones
+        .iter()
+        .filter(|b| b.bind_owner.is_none() && b.verts_edited && !b.vertices.is_empty())
+        .filter(|b| b.binds.iter().any(|bind| bind.bone_id != -1))
+        .map(|b| (b.id, b.name.clone()))
+        .collect();
+    for (id, name) in meshes {
+        if is_bind_posed(armature, id) {
+            report.converted.push(name);
+            continue;
+        }
+        match set_bind_pose(armature, id) {
+            Ok(()) => report.converted.push(name),
+            Err(err) => report.skipped.push((name, err)),
+        }
+    }
+    report
+}

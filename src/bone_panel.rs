@@ -837,6 +837,11 @@ pub fn mesh_deformation(
                     }
                 });
             }
+            let str_all = shared_ui.loc("bone_panel.bind_pose.all");
+            let desc_all = shared_ui.loc("bone_panel.bind_pose.all_desc");
+            if ui.skf_button(str_all).on_hover_text(desc_all).clicked() {
+                events.set_bind_pose_all();
+            }
         });
     });
 
