@@ -2109,6 +2109,9 @@ pub enum ExportImgFormat {
 }
 enum_string!(ExportImgFormat);
 
+/// Bone transforms (id, pos, rot, scale) of the rest pose, kept while in Pose Mode.
+pub type PoseSnapshot = Vec<(i32, Vec2, f32, Vec2)>;
+
 #[derive(Default, Clone)]
 pub struct EditMode {
     pub current: EditModes,
@@ -2132,6 +2135,11 @@ pub struct EditMode {
     pub holding_edit_mod: bool,
     pub holding_edit_snap: bool,
     pub editing_pivot: bool,
+    /// Pose Mode: bones can be posed to test skinning; leaving it restores `pose_snapshot`
+    pub pose_mode: bool,
+    pub pose_snapshot: PoseSnapshot,
+    /// undo stack length when Pose Mode was entered (pose edits are dropped on exit)
+    pub pose_undo_len: usize,
 }
 
 #[derive(Default, PartialEq, Debug, Clone)]
@@ -2416,6 +2424,7 @@ pub enum Events {
     SetBindWeight,
     SetBindPose,
     SetBindPoseAll,
+    TogglePoseMode,
     ClearBindPose,
     OpenFileErrModal,
     SetExportClearColor,
@@ -2513,6 +2522,7 @@ impl EventState {
     generic_event!(reset_vertices, Events::ResetVertices);
     generic_event!(set_bind_pose, Events::SetBindPose);
     generic_event!(set_bind_pose_all, Events::SetBindPoseAll);
+    generic_event!(toggle_pose_mode, Events::TogglePoseMode);
     generic_event!(clear_bind_pose, Events::ClearBindPose);
     generic_event!(delete_ik_target, Events::DeleteIkTarget);
     generic_event!(center_bone_verts, Events::CenterBoneVerts);

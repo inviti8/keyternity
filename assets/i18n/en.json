@@ -520,6 +520,10 @@
       "snap": "Snap X/Y",
       "ratio": "Maintain aspect ratio",
       "pivot": "Scale texture pivot"
+    },
+    "pose": {
+      "heading": "Pose",
+      "desc": "Pose Mode: move bones freely to test how meshes deform, without changing the rest (setup) pose.\n\nTurning it off puts every bone back. Pose Mode edits aren't kept in undo history, and saving always saves the rest pose."
     }
   }
 }

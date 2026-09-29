@@ -809,40 +809,42 @@ pub fn mesh_deformation(
 
     ui.separator();
 
-    // Bind Pose (docs/BIND_POSE.md)
+    // Bind Pose (docs/BIND_POSE.md); captured at rest, so not while in Pose Mode
     let bind_posed = bind_pose::is_bind_posed(armature, bone.id);
-    ui.horizontal(|ui| {
-        ui.label(shared_ui.loc("bone_panel.bind_pose.label"))
-            .on_hover_text(shared_ui.loc("bone_panel.bind_pose.desc"));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if bind_posed {
-                let str_clear = shared_ui.loc("bone_panel.bind_pose.clear");
-                let desc = shared_ui.loc("bone_panel.bind_pose.clear_desc");
-                if ui.skf_button(str_clear).on_hover_text(desc).clicked() {
-                    events.clear_bind_pose();
-                }
-                ui.label(shared_ui.loc("bone_panel.bind_pose.active"));
-            } else {
-                let has_path = bone.binds.iter().any(|b| b.is_path);
-                let can_set = !bone.vertices.is_empty() && !has_path;
-                let desc = if has_path {
-                    shared_ui.loc("bone_panel.bind_pose.path_desc")
-                } else {
-                    shared_ui.loc("bone_panel.bind_pose.set_desc")
-                };
-                let str_set = shared_ui.loc("bone_panel.bind_pose.set");
-                ui.add_enabled_ui(can_set, |ui| {
-                    if ui.skf_button(str_set).on_hover_text(desc).clicked() {
-                        events.set_bind_pose();
+    ui.add_enabled_ui(!edit_mode.pose_mode, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(shared_ui.loc("bone_panel.bind_pose.label"))
+                .on_hover_text(shared_ui.loc("bone_panel.bind_pose.desc"));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if bind_posed {
+                    let str_clear = shared_ui.loc("bone_panel.bind_pose.clear");
+                    let desc = shared_ui.loc("bone_panel.bind_pose.clear_desc");
+                    if ui.skf_button(str_clear).on_hover_text(desc).clicked() {
+                        events.clear_bind_pose();
                     }
-                });
-            }
-            let str_all = shared_ui.loc("bone_panel.bind_pose.all");
-            let desc_all = shared_ui.loc("bone_panel.bind_pose.all_desc");
-            if ui.skf_button(str_all).on_hover_text(desc_all).clicked() {
-                events.set_bind_pose_all();
-            }
-        });
+                    ui.label(shared_ui.loc("bone_panel.bind_pose.active"));
+                } else {
+                    let has_path = bone.binds.iter().any(|b| b.is_path);
+                    let can_set = !bone.vertices.is_empty() && !has_path;
+                    let desc = if has_path {
+                        shared_ui.loc("bone_panel.bind_pose.path_desc")
+                    } else {
+                        shared_ui.loc("bone_panel.bind_pose.set_desc")
+                    };
+                    let str_set = shared_ui.loc("bone_panel.bind_pose.set");
+                    ui.add_enabled_ui(can_set, |ui| {
+                        if ui.skf_button(str_set).on_hover_text(desc).clicked() {
+                            events.set_bind_pose();
+                        }
+                    });
+                }
+                let str_all = shared_ui.loc("bone_panel.bind_pose.all");
+                let desc_all = shared_ui.loc("bone_panel.bind_pose.all_desc");
+                if ui.skf_button(str_all).on_hover_text(desc_all).clicked() {
+                    events.set_bind_pose_all();
+                }
+            });
+        })
     });
 
     ui.separator();

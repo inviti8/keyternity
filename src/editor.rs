@@ -907,6 +907,18 @@ pub fn simple_event(
             let anim = armature.sel_anim_mut(&selections).unwrap();
             anim.keyframes.retain(|kf| kf.frame != value as i32);
         }
+        Events::TogglePoseMode => {
+            if edit_mode.pose_mode {
+                exit_pose_mode(armature, edit_mode, undo_states);
+            } else {
+                edit_mode.pose_snapshot = bind_pose::pose_snapshot(armature);
+                edit_mode.pose_undo_len = undo_states.undo_actions.len();
+                edit_mode.pose_mode = true;
+            }
+        }
+        // the bind pose is captured at rest, so these wait until Pose Mode is off
+        Events::SetBindPose | Events::SetBindPoseAll | Events::ClearBindPose
+            if edit_mode.pose_mode => {}
         Events::SetBindPose => {
             let bone_id = armature.sel_bone(&selections).unwrap().id;
             if let Err(err) = bind_pose::set_bind_pose(armature, bone_id) {
@@ -1227,6 +1239,22 @@ pub fn simple_event(
         }
         _ => {}
     }
+}
+
+/// Leave Pose Mode: put every bone back to its rest transform, and drop the pose edits from
+/// undo history (undoing them later would write the test pose into the rest pose).
+pub fn exit_pose_mode(armature: &mut Armature, edit_mode: &mut EditMode, undo: &mut UndoStates) {
+    if !edit_mode.pose_mode {
+        return;
+    }
+    bind_pose::apply_pose(armature, &edit_mode.pose_snapshot);
+    let len = edit_mode.pose_undo_len.min(undo.undo_actions.len());
+    undo.undo_actions.truncate(len);
+    undo.redo_actions.clear();
+    undo.unsaved_undo_actions = undo.unsaved_undo_actions.min(len);
+    undo.prev_undo_actions = undo.prev_undo_actions.min(len);
+    edit_mode.pose_mode = false;
+    edit_mode.pose_snapshot = vec![];
 }
 
 pub fn center_verts(verts: &mut Vec<Vertex>) {

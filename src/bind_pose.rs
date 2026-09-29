@@ -133,6 +133,11 @@ pub fn sync_helpers(armature: &mut Armature) -> bool {
         return false;
     }
     let world = setup_world(armature);
+    sync_helpers_to(armature, &world)
+}
+
+/// `sync_helpers` against a given constructed rest pose (eg: the Pose Mode snapshot).
+fn sync_helpers_to(armature: &mut Armature, world: &Vec<Bone>) -> bool {
     let mut changed = false;
     for b in 0..armature.bones.len() {
         let Some(owner_id) = armature.bones[b].bind_owner else {
@@ -306,10 +311,46 @@ pub fn bind_target(armature: &mut Armature, bone_id: i32, mesh_id: i32) -> i32 {
     helper
 }
 
-/// Keep bind pose data consistent after structural edits (paste, delete, reparent, undo),
-/// then re-derive helpers from the setup pose. Cheap when there are no helpers, so it runs
-/// every frame.
+/// Transforms of every (non-helper) bone, taken when entering Pose Mode.
+pub fn pose_snapshot(armature: &Armature) -> PoseSnapshot {
+    armature
+        .bones
+        .iter()
+        .filter(|b| b.bind_owner.is_none())
+        .map(|b| (b.id, b.pos, b.rot, b.scale))
+        .collect()
+}
+
+/// Put bones back to a snapshot (leaving Pose Mode, or saving the rest pose).
+pub fn apply_pose(armature: &mut Armature, snapshot: &PoseSnapshot) {
+    for (id, pos, rot, scale) in snapshot {
+        if let Some(bone) = armature.bones.iter_mut().find(|b| b.id == *id) {
+            bone.pos = *pos;
+            bone.rot = *rot;
+            bone.scale = *scale;
+        }
+    }
+}
+
+/// The armature with its rest pose: itself, or with the Pose Mode snapshot applied.
+pub fn rest_armature(armature: &Armature, rest: Option<&PoseSnapshot>) -> Armature {
+    let mut rest_arm = armature.clone();
+    if let Some(snapshot) = rest {
+        apply_pose(&mut rest_arm, snapshot);
+    }
+    rest_arm
+}
+
+/// `maintain` against the setup pose.
 pub fn maintain(armature: &mut Armature) {
+    maintain_with_rest(armature, None);
+}
+
+/// Keep bind pose data consistent after structural edits (paste, delete, reparent, undo),
+/// then re-derive helpers from the rest pose. Cheap when there are no helpers, so it runs
+/// every frame. In Pose Mode, `rest` is the snapshot taken on entry: helpers stay at the
+/// rest pose while bones are posed, so meshes deform.
+pub fn maintain_with_rest(armature: &mut Armature, rest: Option<&PoseSnapshot>) {
     let any = armature
         .bones
         .iter()
@@ -354,7 +395,8 @@ pub fn maintain(armature: &mut Armature) {
     }
 
     remove_unused_helpers(armature);
-    sync_helpers(armature);
+    let world = setup_world(&rest_armature(armature, rest));
+    sync_helpers_to(armature, &world);
 }
 
 /// Number of vertices of a classic (non bind-posed) mesh that are in more than one weight

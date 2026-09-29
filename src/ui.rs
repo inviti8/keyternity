@@ -1725,6 +1725,23 @@ fn edit_mode_bar(
             edit_mode_button!(move_str, E::Move, edit_mode_move, ikd, key_move);
             edit_mode_button!(rotate_str, E::Rotate, edit_mode_rotate, ikd, key_rotate);
             edit_mode_button!(scale_str, E::Scale, edit_mode_scale, ikd, key_scale);
+
+            // Pose Mode: test-pose bones (e.g. to check skinning); leaving it restores the rest pose
+            ui.separator();
+            let pose_str = shared_ui.loc("edit_bar.pose.heading");
+            let can_pose = edit_mode.pose_mode || !shared_ui.is_animating(edit_mode, selections);
+            ui.add_enabled_ui(can_pose, |ui| {
+                let job = egui::text::LayoutJob::simple_singleline(
+                    pose_str.to_string(),
+                    egui::FontId::default(),
+                    config.colors.text.into(),
+                );
+                let button = selection_button(job, edit_mode.pose_mode, ui)
+                    .on_hover_text(shared_ui.loc("edit_bar.pose.desc"));
+                if button.clicked() {
+                    events.toggle_pose_mode();
+                }
+            });
         });
         shared_ui.edit_bar.scale = ui.min_rect().size().into();
 

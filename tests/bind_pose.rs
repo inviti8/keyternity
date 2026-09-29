@@ -668,3 +668,42 @@ fn legacy_bind_posed_meshes_are_detected() {
     bind_pose::maintain(&mut arm);
     assert!(bind_pose::is_bind_posed(&arm, 3));
 }
+
+// ------------------------------------------------------------------ Pose Mode
+
+#[test]
+fn pose_mode_deforms_and_restores() {
+    let mut arm = quad_rig();
+    bind_pose::set_bind_pose(&mut arm, 3).unwrap();
+    let all = [(0, 1.), (1, 1.), (2, 1.), (3, 1.)];
+    add_bind(&mut arm, 3, 1, &all);
+    add_bind(&mut arm, 3, 2, &all);
+    let rest = drawn(&arm, 3);
+
+    // enter Pose Mode, then pose b2 directly (like dragging it in the viewport)
+    let snapshot = bind_pose::pose_snapshot(&arm);
+    by_name(&mut arm, "b2").rot += std::f32::consts::FRAC_PI_2;
+    bind_pose::maintain_with_rest(&mut arm, Some(&snapshot));
+
+    let joint = Vec2::new(50., 0.);
+    let expected: Vec<Vec2> = rest
+        .iter()
+        .map(|p| joint + utils::rotate(&(*p - joint), std::f32::consts::FRAC_PI_2))
+        .collect();
+    assert_same(&expected, &drawn(&arm, 3), "posed in Pose Mode");
+
+    // what gets saved meanwhile is the rest pose
+    let saved = bind_pose::rest_armature(&arm, Some(&snapshot));
+    assert_same(&rest, &drawn(&saved, 3), "saved mid Pose Mode");
+
+    // outside Pose Mode the same edit re-captures the bind instead (Blender edit mode)
+    let mut edit = saved.clone();
+    by_name(&mut edit, "b2").rot += std::f32::consts::FRAC_PI_2;
+    bind_pose::maintain(&mut edit);
+    assert_same(&rest, &drawn(&edit, 3), "setup edit keeps the mesh");
+
+    // leave Pose Mode: bones back to rest
+    bind_pose::apply_pose(&mut arm, &snapshot);
+    bind_pose::maintain(&mut arm);
+    assert_same(&rest, &drawn(&arm, 3), "after leaving Pose Mode");
+}

@@ -855,7 +855,7 @@ impl BackendRenderer {
                 let saving_type = shared.ui.saving.lock().unwrap().clone();
                 if saving_type == Saving::CustomPath || saving_type == Saving::Exporting {
                     #[rustfmt::skip]
-                    utils::save_web(&shared.armature, &shared.camera, &shared.edit_mode, saving_type);
+                    utils::save_web(&rest_armature(shared), &shared.camera, &shared.edit_mode, saving_type);
                 }
             }
 
@@ -869,7 +869,7 @@ impl BackendRenderer {
             // recording animations for images/videos
             shared.events.open_modal("exporting", true);
             #[rustfmt::skip]
-            utils::render_spritesheets(&shared.armature, &mut shared.ui, &shared.camera, &shared.config, self, &shared.renderer);
+            utils::render_spritesheets(&rest_armature(shared), &mut shared.ui, &shared.camera, &shared.config, self, &shared.renderer);
             *shared.ui.saving.lock().unwrap() = Saving::None;
             shared.ui.spritesheet_elapsed = Some(Instant::now());
             shared.ui.export_modal = false;
@@ -878,8 +878,25 @@ impl BackendRenderer {
         self.check_export_style(&shared.armature, &mut shared.ui);
 
         // animated bones will be used throughout the program
-        // keep Bind Pose helpers consistent with the setup pose (no-op without helpers)
-        bind_pose::maintain(&mut shared.armature);
+        // Pose Mode is for the setup pose; animations have their own keyframes
+        if shared.edit_mode.pose_mode
+            && shared
+                .ui
+                .is_animating(&shared.edit_mode, &shared.selections)
+        {
+            editor::exit_pose_mode(
+                &mut shared.armature,
+                &mut shared.edit_mode,
+                &mut shared.undo_states,
+            );
+        }
+
+        // keep Bind Pose helpers consistent with the rest pose (no-op without helpers)
+        let rest = shared
+            .edit_mode
+            .pose_mode
+            .then_some(&shared.edit_mode.pose_snapshot);
+        bind_pose::maintain_with_rest(&mut shared.armature, rest);
 
         utils::animate_bones(&mut shared.armature, &shared.selections, &shared.edit_mode);
         shared.renderer.temp_bones = shared.armature.animated_bones.clone();
@@ -1272,7 +1289,7 @@ impl BackendRenderer {
         let buffer = frames[0].buffer.clone();
         let screenshot_res = shared.screenshot_res;
 
-        let mut armature = shared.armature.clone();
+        let mut armature = rest_armature(shared);
         let camera = shared.camera.clone();
         let edit_mode = shared.edit_mode.clone();
 
@@ -1358,7 +1375,8 @@ impl BackendRenderer {
         let base = dragonbones_export::base_name(file_name);
 
         let pad = shared.edit_mode.export_tex_padding;
-        let result = dragonbones_export::export(&shared.armature, &base, pad).and_then(|files| {
+        let armature = rest_armature(shared);
+        let result = dragonbones_export::export(&armature, &base, pad).and_then(|files| {
             let write = |name: String, bytes: &[u8]| {
                 fs::write(dir.join(&name), bytes).map_err(|e| format!("{}: {}", name, e))
             };
@@ -1954,4 +1972,13 @@ mod tests {
         armature_window::drag_bone(&mut shared, false, 2, 1);
         assert_eq!(shared.armature.bones[2].parent_id, 1);
     }
+}
+
+/// The armature as it should be saved/exported: with the rest pose, even mid Pose Mode.
+fn rest_armature(shared: &Shared) -> Armature {
+    let rest = shared
+        .edit_mode
+        .pose_mode
+        .then_some(&shared.edit_mode.pose_snapshot);
+    bind_pose::rest_armature(&shared.armature, rest)
 }
