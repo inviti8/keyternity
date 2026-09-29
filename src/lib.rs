@@ -54,6 +54,7 @@ use winit::{
 pub mod armature_window;
 pub mod atlas_modal;
 pub mod backwards_compat;
+pub mod bind_pose;
 pub mod bone_panel;
 pub mod dragonbones_export;
 pub mod editor;

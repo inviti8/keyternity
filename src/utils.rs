@@ -887,6 +887,7 @@ pub fn prepare_files(
             group_color: bone.group_color,
             blacklist: bone.blacklist.clone(),
             anim_folded: bone.anim_folded,
+            bind_helper: bone.bind_helper,
         });
     }
     for style in &armature_copy.styles {
@@ -1141,6 +1142,7 @@ pub fn import<R: Read + std::io::Seek>(
                 bone.locked = ed_bone.locked;
                 bone.group_color = ed_bone.group_color;
                 bone.blacklist = ed_bone.blacklist.clone();
+                bone.bind_helper = ed_bone.bind_helper;
             }
             for s in 0..temp_arm.styles.len() {
                 let style = &mut temp_arm.styles[s];

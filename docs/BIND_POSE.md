@@ -83,9 +83,14 @@ transform is `inverse(Bⱼ)`**. That child is constant and never animated.
    puts its world transform at the **identity** (origin, rotation 0, scale 1) in
    the current pose.
 2. Rewrites every mesh vertex to its **current world position** (armature space,
-   `v_rest`). Vertices that had no bind are bound to the owner's helper with
-   weight 1.
-3. Points the mesh's weight binds at the helpers.
+   `v_rest`).
+3. Puts a new **owner snap bind** first: a bind to the owner's own helper,
+   containing every vertex at weight 1. It then points the mesh's original weight
+   binds at their bones' helpers, **keeping their weights**.
+   - The snap bind moves every vertex to `v_rest` via the owner's helper.
+   - The original binds then lerp from there exactly as before.
+   - So the owner keeps its original share of each blend, and no weights need
+     converting.
 
 With every helper at the identity, `inherit_vert(v_rest, helperⱼ) = v_rest` for all
 j. Nothing moves, whatever the weights. When bone j later moves, its helper moves
@@ -155,7 +160,8 @@ untouched, so the texture mapping doesn't change.
 | Bind/unbind a vertex (bind-posed mesh) | No position rewrite is needed. All helpers share the identity frame at bind time, so the `ClickVertex` compensation branch is skipped. Binding to a bone with no helper yet creates one at the current setup pose |
 | Edit a weight | Nothing to compensate, since every bind sees the same `v_rest`. This fixes the `SetBindWeight` drift. Weights stay SkelForm's existing **per-bind** values, with the same UI and storage as today |
 | Edit mesh vertices (drag, add, center, trace) | For a bind-posed mesh, `Vertex.pos` is in armature space, so the vertex tools work in armature space instead of the owner bone's frame. This affects the drag conversion in `editor.rs` (~L759), which today divides by the owner's rotation and scale. Regenerating the mesh (Trace, reset to rect) keeps the bind pose and re-binds new vertices to the owner's helper |
-| Path binds | Unchanged. Path binds keep their own semantics and aren't converted |
+| Path binds | Not supported on bind-posed meshes (v1). Set Bind Pose refuses a mesh with path binds, because path binds read the vertex in the owner's frame |
+| The owner snap bind | Structural (§2, step 3). Its weights must stay 1, and it must not be deleted, so the editor shows it read-only |
 
 ### 4.2 Helper hygiene
 
@@ -293,7 +299,7 @@ other two build on it.
 
 | # | task | depends on | doc |
 |---|---|---|---|
-| 1 | **Bind Pose core:** `bind_pose.rs` (set/clear, `sync_helpers`, helper math, pivot baking), `editor.json` flag, tests §9.1–9.5 | — | this doc |
+| 1 ✅ | **Bind Pose core:** `bind_pose.rs` (set/clear, `sync_helpers`, helper math, pivot baking), `editor.json` flag, tests §9.1–9.5 | — | this doc |
 | 2 | **Bind Pose editor:** Set/Clear buttons, auto-sync after setup-pose edits, armature-space vertex tools, greyed-out helpers, delete/paste hooks, test §9.7 | 1 | this doc |
 | 3 | **Exporter update:** bind-posed meshes export as native DragonBones weights with real `bonePose` data, and their helpers are not emitted as bones | 1 | `DRAGONBONES_EXPORT.md` §4a |
 | 4 | **Importer:** parser, atlas, bones/slots/skins, animations, IK, warnings modal | — (cutout) | `DRAGONBONES_IMPORT.md` |

@@ -1226,6 +1226,9 @@ pub struct Bone {
     pub blacklist: Vec<u32>,
     #[serde(skip)]
     pub anim_folded: bool,
+    /// Bind Pose helper bone (see `bind_pose.rs`). Editor-only; saved in editor.json.
+    #[serde(skip)]
+    pub bind_helper: bool,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Default, Debug)]
@@ -1271,6 +1274,8 @@ pub struct EditorBone {
     #[serde(default = "default_0_alpha")]
     pub group_color: Color,
     pub anim_folded: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    pub bind_helper: bool,
 }
 
 #[derive(
