@@ -6,13 +6,50 @@ animations, editable and saved as `.skf` like any other rig. It is the reverse o
 common "author in DragonBones Pro, play elsewhere" flow. Rigs from the DragonBones
 ecosystem can move *into* SkelForm and then run on SkelForm's own runtimes.
 
-Status: **scoping.** Nothing is implemented yet. §7 lists the questions to settle
-(some with the SkelForm maintainer) before building.
+Status: **implemented** in `src/dragonbones_import.rs` (File › Open a
+`<name>_ske.json`, desktop only). §0 records where the build departed from this
+plan and what was measured; the rest of the doc is the original scoping.
 
 > Format facts below were checked against upstream `DragonBonesCPP`
 > (`DragonBones/src/dragonBones/parser/JSONDataParser.cpp`, `animation/*TimelineState*`,
 > `armature/Bone.cpp`), which is the reference runtime. SkelForm facts are from this
 > repo's `src/`.
+
+
+## 0. As built (2026-09-29)
+
+**Departures from the plan below:**
+- **IK is baked, not mapped to SkelForm IK families.** SkelForm's FABRIK/Arc
+  solvers don't reproduce DragonBones' analytic solver. So the importer ports the
+  runtime's bone update (all inherit flags) and IK solver (`_computeA`/`_computeB`),
+  evaluates DragonBones' own pose, and bakes IK chain bones and bones not inheriting
+  rotation/translation into per-frame keys. Everything else keeps 1:1 keyframes.
+- **The setup pose is shown without IK.** Meshes are bound against the authored
+  (un-IK'd) pose (`bonePose`), so keeping it keeps skinning exact. DragonBones
+  applies IK even at setup, so only the static setup view differs; every
+  animation frame matches.
+- **Slots:** a slot's displays share one bone when their placement agrees relative
+  to the texture size and none is a mesh. Otherwise each display gets its own
+  child bone (`<slot>/<i>`), shown and hidden by texture keys. Empty slots hide via
+  an empty texture, because `Hidden` would propagate to child bones.
+- **Trimmed atlas regions** are padded back to their frame, so pivots need no
+  per-texture correction.
+- **Classic meshes:** when every `bonePose` equals the `slotPose` (SkelForm's own
+  exporter writes that for classic skinning), the mesh comes back as classic binds.
+  Other weighted meshes become Bind Pose meshes (`BIND_POSE.md`).
+- **Older formats** (2.x–4.x) get an error pointing at `db2 -t new`.
+
+**Measured** (`tests/dragonbones_import.rs`, every frame against DragonBonesCPP;
+`tests/dragonbones_export.rs` for round trips):
+
+| rigs | result |
+|---|---|
+| Round trip SkelForm → DragonBones → SkelForm (synthetic, synthetic + Bind Pose, Skellington) | ≤ 0.013 px |
+| Round trip, Skellina | 3.1 px: SkelForm's own solver on legacy all-zero curve handles (`DRAGONBONES_EXPORT.md` §4) |
+| 42 of DragonBonesCPP's 45 sample rigs (incl. IK, weighted meshes, display swaps, rotated/trimmed atlases) | ≤ ~1 px, most < 0.1 px |
+| `you_xin/body` | 20 px on one face mesh: FFD (mesh deform) animation, unsupported and warned |
+| `mecha_1004d` | 3.8 px: a rotated display under a non-uniformly scaled bone (skew, R1) |
+| `mecha_2903` | 1 px: sub-degree skew in the file (editor rounding) |
 
 ---
 

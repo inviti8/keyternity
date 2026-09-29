@@ -60,6 +60,22 @@ On a failure it prints the stage, e.g. `animation "Walk" frame 12`.
 To check one of your own rigs, add a test in `tests/dragonbones_export.rs` that
 loads it with `load_skf` and calls `export(&arm, "<name>")`, then rerun `verify.py`.
 
+### Importer check (DragonBones-authored rigs)
+
+```sh
+set DB_SAMPLES=<folder of *_ske.json rigs, e.g. DragonBonesCPP/Cocos2DX_3.x/Demos/Resources>
+cargo test --test dragonbones_import -- --ignored --nocapture
+```
+
+This imports each rig into SkelForm, plays the **original** files in DragonBonesCPP
+through the harness, and compares bone positions, rotations and slot vertices by
+name, on every frame. It prints one line per rig: max rotation / bone / vertex error
+and where it happened, plus the number of import warnings.
+- Trimmed textures are compared by containment, because SkelForm pads them back to
+  their frame.
+- The setup pose is skipped for rigs with IK (see `DRAGONBONES_IMPORT.md` §0).
+- The last frame (the loop point) is skipped.
+
 ## Reading the output
 
 ```
