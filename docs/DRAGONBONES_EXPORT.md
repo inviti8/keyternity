@@ -431,6 +431,25 @@ non-uniform (in the setup or any animation frame) is moved onto a root-level
 
 ---
 
+## 4a. Bind-posed meshes (planned, with `BIND_POSE.md`)
+
+Today a SkelForm weighted mesh is exported with every `bonePose` equal to the
+`slotPose` (§4, "Weights"), which reproduces SkelForm's classic skinning. Once Bind
+Pose lands, a **bind-posed** mesh is exported differently:
+
+- The flagged `__bind` helpers are **not** exported as bones.
+- Each bind's weight goes to the helper's **parent** (the real bone). The weights
+  are converted from SkelForm's per-bind sequential weights back to linear weights,
+  the inverse of the importer's conversion.
+- `bonePose` for each bone is its setup world transform (the bind pose, since bind
+  pose = setup pose). `slotPose` is the identity, and `vertices` are the rest
+  positions in armature space.
+- The result is ordinary DragonBones weighted skinning, which is also what the
+  importer reads back. So SkelForm → DragonBones → SkelForm round-trips without
+  growing helper bones.
+- `__path` and `__pivot` helpers are unaffected. They handle other SkelForm
+  behaviour.
+
 ## 5. Acceptance / testing
 
 ### 5.1 What was run (2026-09-28)
