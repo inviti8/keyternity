@@ -328,7 +328,7 @@ other two build on it.
 | # | task | depends on | doc |
 |---|---|---|---|
 | 1 ✅ | **Bind Pose core:** `bind_pose.rs` (set/clear, `sync_helpers`, helper math, pivot baking), `editor.json` flag, tests §9.1–9.5 | — | this doc |
-| 2 🚧 | **Bind Pose editor:** Set/Clear buttons, per-frame `maintain` (auto-sync, paste/delete upkeep), bind-bone picking, greyed-out read-only helpers, no canvas gizmos for helpers, tests. Needs a manual pass in the app | 1 | this doc |
+| 2 ✅ | **Bind Pose editor:** Set/Clear buttons, per-frame `maintain` (auto-sync, paste/delete upkeep), bind-bone picking, greyed-out read-only helpers, no canvas gizmos for helpers, tests. Needs a manual pass in the app | 1 | this doc |
 | 3 | **Exporter update:** bind-posed meshes export as native DragonBones weights with real `bonePose` data, and their helpers are not emitted as bones | 1 | `DRAGONBONES_EXPORT.md` §4a |
 | 4 | **Importer:** parser, atlas, bones/slots/skins, animations, IK, warnings modal | — (cutout) | `DRAGONBONES_IMPORT.md` |
 | 5 | **Importer meshes:** weighted meshes imported as bind-posed meshes | 1, 4 | `DRAGONBONES_IMPORT.md` §4.5 |
