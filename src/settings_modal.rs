@@ -349,6 +349,7 @@ fn rendering(
                 default!(config, gridline_gap);
                 default!(config, pixel_magnification);
                 default!(config, gridline_front);
+                default!(config, attachment_display);
             }
         });
     });
@@ -376,6 +377,15 @@ fn rendering(
     let str = &shared_ui.loc("settings_modal.rendering.gridline_front");
     let mut_front = &mut shared_ui.updated_config.gridline_front;
     basic_checkbox(ui, str, "", mut_front, config, true);
+
+    basic_checkbox(
+        ui,
+        &shared_ui.loc("settings_modal.rendering.attachment_display"),
+        &shared_ui.loc("settings_modal.rendering.attachment_display_desc"),
+        &mut shared_ui.updated_config.attachment_display,
+        config,
+        false,
+    );
 
     ui.add_space(7.);
 }
@@ -647,6 +657,7 @@ fn colors(ui: &mut egui::Ui, shared_ui: &mut crate::Ui) {
         color_row!("transform_rings",       &mut colors!().transform_rings,       true);
         color_row!("mesh_base",  &mut colors!().mesh_base, true);
         color_row!("bound_vert", &mut colors!().bound_vert, true);
+        color_row!("attachment_point", &mut colors!().attachment_point, true);
         ui.add_space(10.);
     };
 }

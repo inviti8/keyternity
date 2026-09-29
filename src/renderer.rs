@@ -641,7 +641,8 @@ pub fn render(
                 let cam = &world_camera(&camera, &config);
                 let aspect_ratio = camera.aspect_ratio();
                 let cw = world_vert(center, cam, aspect_ratio, Vec2::default());
-                let (mut verts, mut indices) = draw_line(cw.pos, mouse);
+                let color = Color::new(0, 255, 0, 255);
+                let (mut verts, mut indices) = draw_line(cw.pos, mouse, color);
                 line_verts.append(&mut verts);
                 add_offseted_indices(&mut indices, &mut line_indices);
             }
@@ -1759,14 +1760,12 @@ pub fn vert_lines(
     (all_verts, all_indices, hovered_once)
 }
 
-fn draw_line(origin: Vec2, target: Vec2) -> (Vec<Vertex>, Vec<u32>) {
+fn draw_line(origin: Vec2, target: Vec2, color: Color) -> (Vec<Vertex>, Vec<u32>) {
     let dir = target - origin;
 
     let width = 2.5;
     let mut base = Vec2::new(width, width) / 1000.;
     base = utils::rotate(&base, dir.y.atan2(dir.x) + (45. * 3.14 / 180.));
-
-    let color = Color::new(0, 255, 0, 255);
 
     macro_rules! vert {
         ($pos:expr) => {
@@ -2131,6 +2130,21 @@ pub fn add_offseted_indices(src: &mut Vec<u32>, dst: &mut Vec<u32>) {
     dst.append(src);
 }
 
+/// Whether a bone is drawn as an attachment (see `Config::attachment_display`): any bone
+/// showing a texture, so the art reads separately from the rig.
+fn is_attachment(config: &Config, armature: &Armature, bone: &Bone) -> bool {
+    config.attachment_display && armature.tex_of(bone.id).is_some()
+}
+
+/// Color of an attachment's dot/line: full when selected, faded otherwise.
+fn attachment_color(config: &Config, selected: bool) -> Color {
+    let mut color = config.colors.attachment_point;
+    if !selected {
+        color.a /= 2;
+    }
+    color
+}
+
 pub fn draw_points(
     config: &Config,
     camera: &Camera,
@@ -2180,10 +2194,19 @@ pub fn draw_points(
             }
         }
 
+        let attachment = is_attachment(config, temp_arm, bone);
+        if attachment {
+            color = attachment_color(config, sel_bone_ids.contains(&bone.id));
+        }
+
         // play shrinking animation if this bone was just selected
         let fade_speed = 0.1;
         let sel_size = config.center_point_radius * 4.;
-        let normal_size = config.center_point_radius;
+        let normal_size = if attachment {
+            config.center_point_radius * 0.6
+        } else {
+            config.center_point_radius
+        };
         let elapsed = if selections.bone_ids.len() > 1 && selections.bone_ids.contains(&bone.id) {
             (sel_size - edit_mode.sel_time * fade_speed).max(normal_size)
         } else {
@@ -2200,6 +2223,9 @@ pub fn draw_points(
             color = bone.group_color.into();
             if bone.group_color.a == 0 {
                 color = config.colors.center_point;
+            }
+            if attachment {
+                color = config.colors.attachment_point;
             }
             if sel_bone_ids.contains(&bone.id) {
                 color += Color::new(64, 64, 64, 255);
@@ -2254,6 +2280,8 @@ pub fn draw_kites(
     let cam = world_camera(&camera, &config);
     let mut kite_verts = vec![];
     let mut kite_indices = vec![];
+    let mut line_verts = vec![];
+    let mut line_indices = vec![];
 
     for p in 0..temp_arm.bones.len() {
         let bone = &temp_arm.bones[p];
@@ -2268,6 +2296,23 @@ pub fn draw_kites(
 
         let parent = temp_arm.bones.iter().find(|b| b.id == bone.parent_id);
         if parent == None {
+            continue;
+        }
+
+        // attachments: thin line to the parent instead of a kite
+        if is_attachment(config, temp_arm, bone) {
+            let ar = camera.aspect_ratio();
+            let from = world_vert(vert(Some(bone.pos), None, None), &cam, ar, Vec2::default());
+            let to = world_vert(
+                vert(Some(parent.unwrap().pos), None, None),
+                &cam,
+                ar,
+                Vec2::default(),
+            );
+            let color = attachment_color(config, sel_bone_ids.contains(&bone.id));
+            let (mut verts, mut indices) = draw_line(from.pos, to.pos, color);
+            line_verts.append(&mut verts);
+            add_offseted_indices(&mut indices, &mut line_indices);
             continue;
         }
 
@@ -2303,6 +2348,18 @@ pub fn draw_kites(
         render_pass.set_bind_group(0, &renderer.flow_kite_bindgroup, &[]);
         setup_render_buffer(&mut renderer.kite_buffer, &kite_verts, &kite_indices, queue);
         draw(&renderer.kite_buffer, render_pass, 0, kite_indices.len());
+    }
+
+    if line_indices.len() > 0 {
+        render_pass.set_bind_group(0, &renderer.generic_bindgroup, &[]);
+        let buffer = &mut renderer.attachment_line_buffer;
+        setup_render_buffer(buffer, &line_verts, &line_indices, queue);
+        draw(
+            &renderer.attachment_line_buffer,
+            render_pass,
+            0,
+            line_indices.len(),
+        );
     }
 }
 
