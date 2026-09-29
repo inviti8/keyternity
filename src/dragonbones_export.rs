@@ -31,6 +31,9 @@ pub fn export(armature: &Armature, base: &str, tex_padding: Vec2) -> Result<DbFi
         return Err("Armature has no bones".to_string());
     }
 
+    // Bind Pose helpers aren't exported: bind-posed meshes become native DragonBones skinning
+    let armature = &without_bind_helpers(armature);
+
     let textures = resolve_textures(armature);
     let (tex_png, tex_json, tex_sizes) = build_atlas(armature, &textures, base, tex_padding)?;
 
@@ -48,6 +51,31 @@ pub fn export(armature: &Armature, base: &str, tex_padding: Vec2) -> Result<DbFi
         tex_json: serde_json::to_string_pretty(&tex_json).unwrap(),
         tex_png,
     })
+}
+
+/// The armature without Bind Pose helper bones (see `bind_pose.rs`): binds of bind-posed
+/// meshes point at the helpers' parents (the real bones) again. The meshes keep their
+/// `bind_pose` flag, which tells the exporter to write native bind-pose skinning.
+pub fn without_bind_helpers(armature: &Armature) -> Armature {
+    let mut arm = armature.clone();
+    let helpers: Vec<(i32, i32)> = arm
+        .bones
+        .iter()
+        .filter(|b| b.bind_owner.is_some())
+        .map(|b| (b.id, b.parent_id))
+        .collect();
+    if helpers.is_empty() {
+        return arm;
+    }
+    for bone in &mut arm.bones {
+        for bind in &mut bone.binds {
+            if let Some(h) = helpers.iter().find(|h| h.0 == bind.bone_id) {
+                bind.bone_id = h.1;
+            }
+        }
+    }
+    arm.bones.retain(|b| b.bind_owner.is_none());
+    arm
 }
 
 /// Textures of the active style(s), deduplicated by name (first active style wins, like `Armature::tex_of`).
@@ -301,6 +329,26 @@ fn anim_worlds(arm: &Armature, a: usize) -> Vec<Vec<Bone>> {
     (0..=last_frame(&arm.animations[a]))
         .map(|f| world(arm.animate(a, f, None)))
         .collect()
+}
+
+/// DragonBones `weights` array from per-vertex (bone index, weight) lists, plus the sorted
+/// bone indices used.
+fn weights_json(per_vert: &Vec<Vec<(usize, f32)>>) -> (Vec<Value>, Vec<usize>) {
+    let mut used: Vec<usize> = vec![];
+    let mut weights = vec![];
+    for entries in per_vert {
+        let entries: Vec<&(usize, f32)> = entries.iter().filter(|e| e.1 > 1e-6).collect();
+        weights.push(json!(entries.len()));
+        for (idx, w) in entries {
+            weights.push(json!(idx));
+            weights.push(json!(r(*w)));
+            if !used.contains(idx) {
+                used.push(*idx);
+            }
+        }
+    }
+    used.sort();
+    (weights, used)
 }
 
 /// Run SkelForm's construction (incl. IK) on a local pose.
@@ -844,6 +892,32 @@ impl<'a> Ctx<'a> {
             return None;
         }
 
+        // Bind Pose meshes are standard linear blend skinning: vertices at their rest position
+        // in armature space, each bone's setup (= bind) pose as its bonePose
+        if bone.bind_pose {
+            for (i, v) in bone.vertices.iter().enumerate() {
+                let local = v.pos * owner_world.scale * bone.pivot_scale;
+                let rest = utils::rotate(&local, owner_world.rot + bone.pivot_rot)
+                    + owner_world.pos
+                    + pivot_world;
+                overrides[i] = Some(rest);
+            }
+            let (weights, used) = weights_json(&per_vert);
+            let mut bone_pose = vec![];
+            for idx in used {
+                bone_pose.push(json!(idx));
+                for v in self.setup_world(self.arm.bones[idx].id).json() {
+                    bone_pose.push(json!(v));
+                }
+            }
+            return Some(SkinWeights {
+                weights,
+                bone_pose,
+                slot_pose: Mat::IDENTITY.json(),
+                overrides,
+            });
+        }
+
         // every bound bone uses the owner's setup matrix, so each bone sees the same local vertex
         let mut pose = self.setup_world(bone.id);
         let det = pose.a * pose.d - pose.b * pose.c;
@@ -851,20 +925,7 @@ impl<'a> Ctx<'a> {
             pose = Mat::IDENTITY;
         }
 
-        let mut used: Vec<usize> = vec![];
-        let mut weights = vec![];
-        for entries in &per_vert {
-            let entries: Vec<&(usize, f32)> = entries.iter().filter(|e| e.1 > 1e-6).collect();
-            weights.push(json!(entries.len()));
-            for (idx, w) in entries {
-                weights.push(json!(idx));
-                weights.push(json!(r(*w)));
-                if !used.contains(idx) {
-                    used.push(*idx);
-                }
-            }
-        }
-        used.sort();
+        let (weights, used) = weights_json(&per_vert);
 
         let mut bone_pose = vec![];
         for idx in used {

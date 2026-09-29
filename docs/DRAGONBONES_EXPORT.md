@@ -431,11 +431,12 @@ non-uniform (in the setup or any animation frame) is moved onto a root-level
 
 ---
 
-## 4a. Bind-posed meshes (planned, with `BIND_POSE.md`)
+## 4a. Bind-posed meshes (see `BIND_POSE.md`)
 
-Today a SkelForm weighted mesh is exported with every `bonePose` equal to the
-`slotPose` (§4, "Weights"), which reproduces SkelForm's classic skinning. Once Bind
-Pose lands, a **bind-posed** mesh is exported differently:
+A classic SkelForm weighted mesh is exported with every `bonePose` equal to the
+`slotPose` (§4, "Weights"), which reproduces SkelForm's classic skinning. A
+**bind-posed** mesh is exported differently (`without_bind_helpers` +
+`skin_weights` in `dragonbones_export.rs`):
 
 - The flagged `__bind` helpers are **not** exported as bones.
 - Each bind's weight goes to the helper's **parent** (the real bone). The weights
@@ -449,6 +450,9 @@ Pose lands, a **bind-posed** mesh is exported differently:
   growing helper bones.
 - `__path` and `__pivot` helpers are unaffected. They handle other SkelForm
   behaviour.
+- Verified with the DragonBonesCPP harness (test `synthetic_bind_pose_rig`): the
+  blended cloak mesh matches SkelForm to 0.06 px over every frame of a full-turn
+  animation.
 
 ## 5. Acceptance / testing
 

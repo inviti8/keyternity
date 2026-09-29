@@ -183,6 +183,8 @@ fn pose(arm: &Armature, mut local: Vec<Bone>) -> Value {
     }
     let mut world = local.clone();
     construction(&mut world, &local);
+    // helper bones aren't exported, so leave them out to line up with the exported bone list
+    world.retain(|b| b.bind_owner.is_none());
 
     let hidden = |mut id: i32| {
         while let Some(b) = world.iter().find(|b| b.id == id) {
@@ -542,4 +544,47 @@ fn base_names() {
     assert_eq!(dragonbones_export::base_name("hero_ske.json"), "hero");
     assert_eq!(dragonbones_export::base_name("hero.json"), "hero");
     assert_eq!(dragonbones_export::base_name("hero"), "hero");
+}
+
+/// A bind-posed mesh exports as native DragonBones skinning: no helper bones, each bone's
+/// setup pose as its bonePose, vertices in armature space, identity slotPose.
+#[test]
+fn synthetic_bind_pose_rig() {
+    let mut arm = synthetic();
+    skelform_lib::bind_pose::set_bind_pose(&mut arm, 3).unwrap();
+    assert!(
+        arm.bones.iter().any(|b| b.bind_owner.is_some()),
+        "helpers expected"
+    );
+
+    let (_, ske, tex) = export(&arm, "synthetic_bindpose");
+    validate(&ske, &tex);
+
+    let a = &ske["armature"][0];
+    let names: Vec<&str> = a["bone"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| b["name"].as_str().unwrap())
+        .collect();
+    assert!(
+        names.iter().all(|n| !n.contains("__bind")),
+        "helpers exported: {names:?}"
+    );
+
+    let cloak = a["skin"][0]["slot"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == "cloak")
+        .unwrap();
+    let mesh = &cloak["display"][0];
+    assert_eq!(mesh["slotPose"], json!([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]));
+    // owner (cloak) and arm, each with its own bind pose
+    let pose = mesh["bonePose"].as_array().unwrap();
+    assert_eq!(pose.len(), 14);
+    assert_ne!(pose[1..7], pose[8..14]);
+    let idx = |name: &str| names.iter().position(|n| *n == name).unwrap() as u64;
+    let posed: Vec<u64> = vec![pose[0].as_u64().unwrap(), pose[7].as_u64().unwrap()];
+    assert!(posed.contains(&idx("cloak")) && posed.contains(&idx("arm")));
 }
