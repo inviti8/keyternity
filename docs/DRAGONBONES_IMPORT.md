@@ -1,4 +1,4 @@
-# DragonBones import — scoping
+# DragonBones import
 
 **Goal:** let SkelForm open DragonBones rigs (`<name>_ske.json` + `<name>_tex.json` +
 `<name>_tex.png`) as regular SkelForm armatures: bones, textures, styles and
