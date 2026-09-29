@@ -319,8 +319,6 @@
       "rot_snap_step": "Rotation snap step (degrees): ",
       "bone_translucency": "Bone translucency:",
       "bone_translucency_desc": "How transparent (0-1) other bones should be if not selected",
-      "attachment_display": "Show textured bones as attachments ℹ:",
-      "attachment_display_desc": "Draw bones that show a texture as a small dot with a thin line to their parent, instead of a full bone.\n\nKeeps the rig (bones) visually separate from the art (textures).",
       "transform_rings": {
         "heading": "Transform Rings",
         "center_point_radius": "Center point radius:",
@@ -333,7 +331,9 @@
       "gridline_gap": "Gridline gap (pixels): ",
       "pixel_mag": "Pixel Magnification: ",
       "translucent_desc": "Makes this box translucent to preview rendering changes",
-      "gridline_front": "Render gridline in front: "
+      "gridline_front": "Render gridline in front: ",
+      "attachment_display": "Show textured bones as attachments ℹ:",
+      "attachment_display_desc": "Draw bones that show a texture as a small dot with a thin line to their parent, instead of a full bone.\n\nKeeps the rig (bones) visually separate from the art (textures)."
     },
     "keyboard": {
       "heading": "Keyboard",

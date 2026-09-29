@@ -265,7 +265,6 @@ fn editing(ui: &mut egui::Ui, shared_ui: &mut crate::Ui, config: &crate::Config)
                 default!(config, center_point_radius);
                 default!(config, transform_scale_radius);
                 default!(config, bone_translucency);
-                default!(config, attachment_display);
             }
         });
     });
@@ -284,15 +283,6 @@ fn editing(ui: &mut egui::Ui, shared_ui: &mut crate::Ui, config: &crate::Config)
         shared_ui.updated_config.rot_snap_step,
         shared_ui,
         ui,
-        config,
-        false,
-    );
-
-    basic_checkbox(
-        ui,
-        &shared_ui.loc("settings_modal.editing.attachment_display"),
-        &shared_ui.loc("settings_modal.editing.attachment_display_desc"),
-        &mut shared_ui.updated_config.attachment_display,
         config,
         false,
     );
@@ -359,6 +349,7 @@ fn rendering(
                 default!(config, gridline_gap);
                 default!(config, pixel_magnification);
                 default!(config, gridline_front);
+                default!(config, attachment_display);
             }
         });
     });
@@ -386,6 +377,15 @@ fn rendering(
     let str = &shared_ui.loc("settings_modal.rendering.gridline_front");
     let mut_front = &mut shared_ui.updated_config.gridline_front;
     basic_checkbox(ui, str, "", mut_front, config, true);
+
+    basic_checkbox(
+        ui,
+        &shared_ui.loc("settings_modal.rendering.attachment_display"),
+        &shared_ui.loc("settings_modal.rendering.attachment_display_desc"),
+        &mut shared_ui.updated_config.attachment_display,
+        config,
+        false,
+    );
 
     ui.add_space(7.);
 }
