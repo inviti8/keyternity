@@ -265,6 +265,7 @@ fn editing(ui: &mut egui::Ui, shared_ui: &mut crate::Ui, config: &crate::Config)
                 default!(config, center_point_radius);
                 default!(config, transform_scale_radius);
                 default!(config, bone_translucency);
+                default!(config, attachment_display);
             }
         });
     });
@@ -283,6 +284,15 @@ fn editing(ui: &mut egui::Ui, shared_ui: &mut crate::Ui, config: &crate::Config)
         shared_ui.updated_config.rot_snap_step,
         shared_ui,
         ui,
+        config,
+        false,
+    );
+
+    basic_checkbox(
+        ui,
+        &shared_ui.loc("settings_modal.editing.attachment_display"),
+        &shared_ui.loc("settings_modal.editing.attachment_display_desc"),
+        &mut shared_ui.updated_config.attachment_display,
         config,
         false,
     );
@@ -647,6 +657,7 @@ fn colors(ui: &mut egui::Ui, shared_ui: &mut crate::Ui) {
         color_row!("transform_rings",       &mut colors!().transform_rings,       true);
         color_row!("mesh_base",  &mut colors!().mesh_base, true);
         color_row!("bound_vert", &mut colors!().bound_vert, true);
+        color_row!("attachment_point", &mut colors!().attachment_point, true);
         ui.add_space(10.);
     };
 }

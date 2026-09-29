@@ -814,6 +814,8 @@ pub struct Config {
     pub transform_scale_radius: f32,
     pub rot_snap_step: f32,
     pub bone_translucency: f32,
+    /// Draw textured bones as attachments (small dot + line to parent) instead of full bones
+    pub attachment_display: bool,
 
     #[serde(skip)]
     pub colors: ColorConfig,
@@ -843,6 +845,7 @@ pub struct ColorConfig {
     pub transform_rings: Color,
     pub mesh_base: Color,
     pub bound_vert: Color,
+    pub attachment_point: Color,
 }
 
 impl Default for Config {
@@ -866,6 +869,7 @@ impl Default for Config {
             transform_scale_radius: 0.16,
             rot_snap_step: 22.5,
             bone_translucency: 0.25,
+            attachment_display: false,
         }
     }
 }
@@ -892,6 +896,7 @@ impl Default for ColorConfig {
             transform_rings: Color::new(173, 123, 255, 255),
             mesh_base: Color::new(0, 255, 0, 255),
             bound_vert: Color::new(184, 110, 251, 255),
+            attachment_point: Color::new(255, 210, 0, 255),
         }
     }
 }
@@ -2299,6 +2304,7 @@ pub struct Renderer {
     pub next_onion_buffer: RenderBuffer,
     pub point_buffer: RenderBuffer,
     pub kite_buffer: RenderBuffer,
+    pub attachment_line_buffer: RenderBuffer,
     pub sel_bone_buffer: RenderBuffer,
     pub gridline_buffer: RenderBuffer,
     pub ring_buffer: RenderBuffer,

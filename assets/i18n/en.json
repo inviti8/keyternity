@@ -319,6 +319,8 @@
       "rot_snap_step": "Rotation snap step (degrees): ",
       "bone_translucency": "Bone translucency:",
       "bone_translucency_desc": "How transparent (0-1) other bones should be if not selected",
+      "attachment_display": "Show textured bones as attachments ℹ:",
+      "attachment_display_desc": "Draw bones that show a texture as a small dot with a thin line to their parent, instead of a full bone.\n\nKeeps the rig (bones) visually separate from the art (textures).",
       "transform_rings": {
         "heading": "Transform Rings",
         "center_point_radius": "Center point radius:",
@@ -392,7 +394,8 @@
       "inactive_center_point": "Inactive Center Point",
       "transform_rings": "Transform Rings",
       "mesh_base": "Mesh Base",
-      "bound_vert": "Bound Vertex"
+      "bound_vert": "Bound Vertex",
+      "attachment_point": "Attachment Point"
     },
     "miscellaneous": {
       "heading": "Miscellaneous",

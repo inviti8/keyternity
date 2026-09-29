@@ -1037,6 +1037,7 @@ impl BackendRenderer {
             renderer.next_onion_buffer.init(&self.gpu.device, max);
             renderer.point_buffer.init(&self.gpu.device, max);
             renderer.kite_buffer.init(&self.gpu.device, max);
+            renderer.attachment_line_buffer.init(&self.gpu.device, max);
             renderer.sel_bone_buffer.init(&self.gpu.device, max);
             renderer.gridline_buffer.init(&self.gpu.device, max);
             renderer.meshframe_buffer.init(&self.gpu.device, max);
