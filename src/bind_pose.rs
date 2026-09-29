@@ -25,16 +25,24 @@ pub fn helper_for(armature: &Armature, bone_id: i32, owner_id: i32) -> Option<i3
         .map(|b| b.id)
 }
 
-/// Whether a mesh bone is bind-posed, ie: it binds to its own helpers.
+/// Whether a mesh bone uses Bind Pose skinning (an explicit per-mesh switch, so it can be
+/// turned on before any binds exist).
 pub fn is_bind_posed(armature: &Armature, mesh_id: i32) -> bool {
-    let Some(mesh) = armature.bones.iter().find(|b| b.id == mesh_id) else {
-        return false;
-    };
+    armature
+        .bones
+        .iter()
+        .find(|b| b.id == mesh_id)
+        .map(|b| b.bind_pose)
+        .unwrap_or(false)
+}
+
+/// Whether a mesh binds to its own helpers (how bind-posed meshes looked before the switch).
+fn binds_to_own_helpers(armature: &Armature, mesh: &Bone) -> bool {
     mesh.binds.iter().any(|bind| {
         armature
             .bones
             .iter()
-            .any(|b| b.id == bind.bone_id && b.bind_owner == Some(mesh_id))
+            .any(|b| b.id == bind.bone_id && b.bind_owner == Some(mesh.id))
     })
 }
 
@@ -208,6 +216,7 @@ pub fn set_bind_pose(armature: &mut Armature, mesh_id: i32) -> Result<(), String
     }
     mesh.pivot_pos = Vec2::ZERO;
     mesh.verts_edited = true;
+    mesh.bind_pose = true;
 
     sync_helpers(armature);
     Ok(())
@@ -264,6 +273,7 @@ pub fn clear_bind_pose(armature: &mut Armature, mesh_id: i32) {
     let mesh_mut = armature.bones.iter_mut().find(|b| b.id == mesh_id).unwrap();
     mesh_mut.binds = mesh.binds;
     mesh_mut.vertices = mesh.vertices;
+    mesh_mut.bind_pose = false;
 
     remove_unused_helpers(armature);
 }
@@ -300,19 +310,40 @@ pub fn bind_target(armature: &mut Armature, bone_id: i32, mesh_id: i32) -> i32 {
 /// then re-derive helpers from the setup pose. Cheap when there are no helpers, so it runs
 /// every frame.
 pub fn maintain(armature: &mut Armature) {
-    if !armature.bones.iter().any(|b| b.bind_owner.is_some()) {
+    let any = armature
+        .bones
+        .iter()
+        .any(|b| b.bind_owner.is_some() || b.bind_pose);
+    if !any {
         return;
     }
 
-    // a pasted mesh still binds to the original mesh's helpers: give it its own
+    // files from before the explicit switch: a mesh binding to its own helpers is bind-posed
+    let legacy: Vec<i32> = armature
+        .bones
+        .iter()
+        .filter(|b| !b.bind_pose && binds_to_own_helpers(armature, b))
+        .map(|b| b.id)
+        .collect();
+    for bone in armature.bones.iter_mut() {
+        if legacy.contains(&bone.id) {
+            bone.bind_pose = true;
+        }
+    }
+
+    // every bind of a bind-posed mesh goes through a helper serving that mesh:
+    // - a pasted mesh still binds to the original mesh's helpers: give it its own
+    // - a bind that reached a real bone some other way gets that bone's helper
     let mut retargets: Vec<(i32, usize, i32)> = vec![];
     for mesh in &armature.bones {
         for (bi, bind) in mesh.binds.iter().enumerate() {
-            let target = armature.bones.iter().find(|b| b.id == bind.bone_id);
-            if let Some(helper) = target {
-                if helper.bind_owner.is_some() && helper.bind_owner != Some(mesh.id) {
-                    retargets.push((mesh.id, bi, helper.parent_id));
-                }
+            let Some(target) = armature.bones.iter().find(|b| b.id == bind.bone_id) else {
+                continue;
+            };
+            match target.bind_owner {
+                Some(owner) if owner != mesh.id => retargets.push((mesh.id, bi, target.parent_id)),
+                None if mesh.bind_pose && !bind.is_path => retargets.push((mesh.id, bi, target.id)),
+                _ => {}
             }
         }
     }
@@ -324,6 +355,27 @@ pub fn maintain(armature: &mut Armature) {
 
     remove_unused_helpers(armature);
     sync_helpers(armature);
+}
+
+/// Number of vertices of a classic (non bind-posed) mesh that are in more than one weight
+/// bind. Classic binding only places a vertex correctly for one bind, so these are
+/// misplaced at rest (see docs/BIND_POSE.md §1).
+pub fn classic_multi_bind_verts(armature: &Armature, mesh: &Bone) -> usize {
+    if mesh.bind_pose || mesh.bind_owner.is_some() {
+        return 0;
+    }
+    let valid =
+        |bind: &BoneBind| !bind.is_path && armature.bones.iter().any(|b| b.id == bind.bone_id);
+    mesh.vertices
+        .iter()
+        .filter(|v| {
+            let binds = mesh.binds.iter().filter(|bind| valid(bind));
+            binds
+                .filter(|bind| bind.verts.iter().any(|bv| bv.id == v.id as i32))
+                .count()
+                > 1
+        })
+        .count()
 }
 
 /// Result of `set_bind_pose_all`: mesh names converted, and skipped with the reason.

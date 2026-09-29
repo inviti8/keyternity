@@ -785,6 +785,14 @@ pub fn simple_event(
             if bind_pose::is_bind_posed(armature, id) {
                 return;
             }
+            // classic binding misplaces a vertex that's in more than one bind: say so now
+            if bound {
+                let mesh = armature.sel_bone(&selections).unwrap();
+                if bind_pose::classic_multi_bind_verts(armature, mesh) > 0 {
+                    ui.warnings_open = true;
+                    ui.flash_warn_timer = Some(Instant::now());
+                }
+            }
             let bone_mut = &mut armature.sel_bone_mut(&selections).unwrap();
 
             let temp_bone = renderer.temp_bones.iter().find(|b| b.id == id).unwrap();

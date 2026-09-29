@@ -824,7 +824,7 @@ pub fn mesh_deformation(
                 ui.label(shared_ui.loc("bone_panel.bind_pose.active"));
             } else {
                 let has_path = bone.binds.iter().any(|b| b.is_path);
-                let can_set = bone.verts_edited && !has_path;
+                let can_set = !bone.vertices.is_empty() && !has_path;
                 let desc = if has_path {
                     shared_ui.loc("bone_panel.bind_pose.path_desc")
                 } else {

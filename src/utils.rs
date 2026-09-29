@@ -893,6 +893,7 @@ pub fn prepare_files(
                 .and_then(|id| armature.bones.iter().position(|b| b.id == id))
                 .map(|i| i as i32)
                 .unwrap_or(-1),
+            bind_pose: bone.bind_pose,
         });
     }
     for style in &armature_copy.styles {
@@ -1148,6 +1149,7 @@ pub fn import<R: Read + std::io::Seek>(
                 bone.group_color = ed_bone.group_color;
                 bone.blacklist = ed_bone.blacklist.clone();
                 bone.bind_owner = Some(ed_bone.bind_owner).filter(|id| *id != -1);
+                bone.bind_pose = ed_bone.bind_pose;
             }
             for s in 0..temp_arm.styles.len() {
                 let style = &mut temp_arm.styles[s];

@@ -477,6 +477,7 @@ pub enum Warnings {
     BoneOutOfFamily,
     EmptyStyles,
     UnusedTextures,
+    ClassicMultiBind,
 }
 
 #[derive(Clone, Default, PartialEq)]
@@ -1230,6 +1231,9 @@ pub struct Bone {
     /// Editor-only; saved in editor.json.
     #[serde(skip)]
     pub bind_owner: Option<i32>,
+    /// This mesh uses Bind Pose skinning (see `bind_pose.rs`). Editor-only; saved in editor.json.
+    #[serde(skip)]
+    pub bind_pose: bool,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Default, Debug)]
@@ -1277,6 +1281,8 @@ pub struct EditorBone {
     pub anim_folded: bool,
     #[serde(default = "default_neg_one", skip_serializing_if = "is_neg_one")]
     pub bind_owner: i32,
+    #[serde(skip_serializing_if = "is_false")]
+    pub bind_pose: bool,
 }
 
 #[derive(

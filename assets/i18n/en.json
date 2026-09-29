@@ -214,7 +214,7 @@
       "label": "Bind Pose ℹ:",
       "desc": "Bind pose skinning: vertices blended across several bones follow each bone relative to where it was when bound, like in 3D software. Weights can be edited freely without vertices moving.\n\nThe bind pose always follows the setup pose.\n\nWorks by adding greyed-out helper bones (name__bind__mesh), so any SkelForm runtime plays it unchanged.",
       "set": "Set",
-      "set_desc": "Use bind pose skinning for this mesh",
+      "set_desc": "Use bind pose skinning for this mesh. Best turned on before adding vertices to binds.",
       "all": "All",
       "all_desc": "Use bind pose skinning for every mesh in the armature that has binds",
       "all_result": "Bind Pose\n\n$err",
@@ -501,7 +501,8 @@
     "BoneOutOfFamily": "Bones of IK family $ik_family_id are not all within the same root.",
     "BoneOutOfFamilyCulprits": "Culprits:",
     "EmptyStyles": "Styles with no textures:",
-    "UnusedTextures": "Unused textures:"
+    "UnusedTextures": "Unused textures:",
+    "ClassicMultiBind": "$bone has $count vertices in more than one bind. Classic binds place these out of position; turn on Bind Pose for this mesh (in the mesh panel) before binding to blend them correctly."
   },
   "edit_bar": {
     "move": {

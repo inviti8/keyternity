@@ -560,3 +560,111 @@ fn skellington_bind_pose_all() {
         );
     }
 }
+
+// ------------------------------------------------------------------ explicit switch + workflow
+
+/// The user's workflow: a plain quad, a b1 → b2 chain, Bind Pose turned on *before* any
+/// binds, then every vertex added to a b1 bind and a b2 bind at weight 1.
+fn quad_rig() -> Armature {
+    let root = bone(0, -1, "root", Vec2::new(0., 0.), 0.);
+    let b1 = bone(1, 0, "b1", Vec2::new(-50., 0.), 0.);
+    let b2 = bone(2, 1, "b2", Vec2::new(100., 0.), 0.);
+    let mut quad = bone(3, 0, "tex", Vec2::new(0., 0.), 0.);
+    quad.vertices = vec![
+        vertex(0, -60., 20.),
+        vertex(1, 60., 20.),
+        vertex(2, 60., -20.),
+        vertex(3, -60., -20.),
+    ];
+    quad.indices = vec![0, 1, 2, 0, 2, 3];
+    let mut arm = Armature::default();
+    arm.bones = vec![root, b1, b2, quad];
+    arm
+}
+
+fn add_bind(arm: &mut Armature, mesh_id: i32, bone_id: i32, verts: &[(i32, f32)]) {
+    let target = bind_pose::bind_target(arm, bone_id, mesh_id);
+    let mesh = arm.bones.iter_mut().find(|b| b.id == mesh_id).unwrap();
+    mesh.binds.push(bind(target, verts));
+    bind_pose::maintain(arm);
+}
+
+#[test]
+fn bind_pose_can_be_turned_on_before_binds() {
+    let mut arm = quad_rig();
+    let rest = drawn(&arm, 3);
+
+    bind_pose::set_bind_pose(&mut arm, 3).unwrap();
+    assert!(
+        bind_pose::is_bind_posed(&arm, 3),
+        "switch must stick without binds"
+    );
+
+    let all = [(0, 1.), (1, 1.), (2, 1.), (3, 1.)];
+    add_bind(&mut arm, 3, 1, &all);
+    add_bind(&mut arm, 3, 2, &all);
+    assert_eq!(helper_count(&arm), 2);
+    // no offset at rest, whatever was bound
+    assert_same(&rest, &drawn(&arm, 3), "after binding");
+
+    // animate: rotate b2 by 90° at frame 10
+    let (start_handle, end_handle) = utils::interp_preset(HandlePreset::Linear);
+    arm.animations.push(Animation {
+        name: "bend".into(),
+        fps: 30,
+        keyframes: vec![
+            Keyframe {
+                frame: 0,
+                bone_id: 2,
+                element: AnimElement::Rotation,
+                value: 0.,
+                start_handle,
+                end_handle,
+                ..Default::default()
+            },
+            Keyframe {
+                frame: 10,
+                bone_id: 2,
+                element: AnimElement::Rotation,
+                value: std::f32::consts::FRAC_PI_2,
+                start_handle,
+                end_handle,
+                ..Default::default()
+            },
+        ],
+        ..Default::default()
+    });
+    let posed = drawn_pose(&arm, arm.clone().animate(0, 10, None), 3);
+
+    // the last bind has weight 1 for every vertex, so the quad follows b2 entirely:
+    // rotated 90° about b2's joint (world x = 50)
+    let joint = Vec2::new(50., 0.);
+    let expected: Vec<Vec2> = rest
+        .iter()
+        .map(|p| joint + utils::rotate(&(*p - joint), std::f32::consts::FRAC_PI_2))
+        .collect();
+    assert_same(&expected, &posed, "animated");
+}
+
+#[test]
+fn classic_multi_bind_is_detected() {
+    let mut arm = quad_rig();
+    arm.bones[3].verts_edited = true;
+    arm.bones[3].binds = vec![bind(1, &[(0, 1.), (1, 1.)]), bind(2, &[(1, 1.), (2, 1.)])];
+    // vertex 1 is in both binds
+    assert_eq!(bind_pose::classic_multi_bind_verts(&arm, &arm.bones[3]), 1);
+
+    bind_pose::set_bind_pose(&mut arm, 3).unwrap();
+    let mesh = arm.bones.iter().find(|b| b.id == 3).unwrap();
+    assert_eq!(bind_pose::classic_multi_bind_verts(&arm, mesh), 0);
+}
+
+#[test]
+fn legacy_bind_posed_meshes_are_detected() {
+    let mut arm = arm_rig(false, false);
+    bind_pose::set_bind_pose(&mut arm, 3).unwrap();
+    // as saved before the explicit switch existed
+    by_name(&mut arm, "mesh").bind_pose = false;
+    bind_pose::maintain(&mut arm);
+    assert!(bind_pose::is_bind_posed(&arm, 3));
+}
