@@ -345,3 +345,51 @@ fn import_dragonbones_samples() {
         }
     }
 }
+
+/// Every import warning per rig (`DB_SAMPLES` as above).
+#[test]
+#[ignore]
+fn import_dragonbones_warnings() {
+    let Ok(dir) = std::env::var("DB_SAMPLES") else { return };
+    let mut rigs = vec![];
+    find_rigs(Path::new(&dir), &mut rigs);
+    rigs.sort();
+    for ske in rigs {
+        let name = ske.file_name().unwrap().to_string_lossy().replace("_ske.json", "");
+        match dragonbones_import::read_files(&ske).and_then(|(j, a)| dragonbones_import::import(&j, &a)) {
+            Ok(imp) => {
+                println!("== {name}: {} warnings", imp.warnings.len());
+                for w in &imp.warnings {
+                    println!("   {w}");
+                }
+            }
+            Err(e) => println!("== {name}: FAILED {e}"),
+        }
+    }
+}
+
+/// SkelForm's own rig warnings (the ⚠ list) on each imported rig (`DB_SAMPLES` as above).
+#[test]
+#[ignore]
+fn import_dragonbones_editor_warnings() {
+    let Ok(dir) = std::env::var("DB_SAMPLES") else { return };
+    let mut rigs = vec![];
+    find_rigs(Path::new(&dir), &mut rigs);
+    rigs.sort();
+    for ske in rigs {
+        let name = ske.file_name().unwrap().to_string_lossy().replace("_ske.json", "");
+        let Ok(imp) = dragonbones_import::read_files(&ske).and_then(|(j, a)| dragonbones_import::import(&j, &a)) else { continue };
+        let warnings = skelform_lib::warnings::check_warnings(&imp.armature);
+        let mut counts: HashMap<String, (usize, usize)> = HashMap::new();
+        for w in &warnings {
+            const NAMES: [&str; 11] = ["SameZIndex", "NoIkTarget", "OnlyIk", "UnboundBind", "NoVertsInBind", "OnlyPath", "NoWeights", "BoneOutOfFamily", "EmptyStyles", "UnusedTextures", "ClassicMultiBind"];
+            let kind = NAMES.get(w.warn_type.clone() as usize).unwrap_or(&"?");
+            let e = counts.entry(kind.to_string()).or_default();
+            e.0 += 1;
+            e.1 += w.ids.len().max(w.str_values.len());
+        }
+        let mut counts: Vec<_> = counts.into_iter().collect();
+        counts.sort();
+        println!("{name:>22}: {:?}", counts);
+    }
+}

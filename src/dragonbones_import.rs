@@ -1300,6 +1300,18 @@ pub fn import(ske_json: &str, atlases: &[DbAtlas]) -> Result<Imported, String> {
         ));
     }
 
+    // only the textures this armature's displays use (atlases are often shared by every
+    // armature in the file)
+    let used: Vec<&String> = slot_tex.iter().flatten().collect();
+    let textures: Vec<Texture> = textures
+        .into_iter()
+        .filter(|t| used.contains(&&t.name))
+        .collect();
+    let tex_data: Vec<TextureData> = tex_data
+        .into_iter()
+        .filter(|d| textures.iter().any(|t| t.data_id == d.id))
+        .collect();
+
     let mut armature = Armature {
         bones: b.bones,
         animations,
