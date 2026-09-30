@@ -46,10 +46,10 @@ plan and what was measured; the rest of the doc is the original scoping.
 |---|---|
 | Round trip SkelForm → DragonBones → SkelForm (synthetic, synthetic + Bind Pose, Skellington) | ≤ 0.013 px |
 | Round trip, Skellina | 3.1 px: SkelForm's own solver on legacy all-zero curve handles (`DRAGONBONES_EXPORT.md` §4) |
-| 42 of DragonBonesCPP's 45 sample rigs (incl. IK, weighted meshes, display swaps, rotated/trimmed atlases) | ≤ ~1 px, most < 0.1 px |
+| 40 of DragonBonesCPP's 43 sample rigs (incl. IK, weighted meshes, display swaps, rotated/trimmed atlases) | ≤ ~1 px, most < 0.1 px |
 | `you_xin/body` | 20 px on one face mesh: FFD (mesh deform) animation, unsupported and warned |
 | `mecha_1004d` | 3.8 px: a rotated display under a non-uniformly scaled bone (skew, R1) |
-| `mecha_2903` | 1 px: sub-degree skew in the file (editor rounding) |
+| `mecha_2903` | 1.06 px: sub-degree skew in the file (editor rounding) |
 
 ---
 
