@@ -1,0 +1,68 @@
+Keyternity
+==========
+
+Keyternity is a modified version of SkelForm.
+
+  SkelForm  https://github.com/Retropaint/SkelForm
+            Copyright (C) Retropaint and contributors
+            Licensed under the GNU General Public License v3.0 (LICENSE.md)
+
+Keyternity was forked from SkelForm at upstream commit 68b66d21
+("Merge pull request #10 from pfirmino/master", 2026-09-11; 64ba8306 in
+this repository, whose history was rewritten to drop FFmpeg binaries), and
+diverged from it on 2026-09-30. It is distributed under the same license, GPL-3.0.
+Keyternity's modifications are copyright their authors and released under
+GPL-3.0. The full history of every change is in this repository's git log.
+
+
+Modifications (GPLv3 section 5a)
+--------------------------------
+
+2026-09-28 to 2026-09-29
+  DragonBones 5.5 JSON export (bind-posed meshes as native skinning: 09-29)
+    src/dragonbones_export.rs, src/export_modal.rs, src/lib.rs,
+    src/shared.rs, src/utils.rs, tests/dragonbones_export.rs,
+    tools/dragonbones_verify/, docs/DRAGONBONES_EXPORT.md,
+    docs/DRAGONBONES_VERIFY.md
+
+2026-09-29
+  Attachment display for textured bones
+    src/renderer.rs, src/settings_modal.rs, src/shared.rs, src/lib.rs
+
+2026-09-28 to 2026-09-29
+  Bind Pose skinning, Pose mode, classic multi-bind warning
+    src/bind_pose.rs, src/editor.rs, src/bone_panel.rs,
+    src/armature_window.rs, src/renderer.rs, src/ui.rs, src/warnings.rs,
+    src/shared.rs, src/utils.rs, src/lib.rs, tests/bind_pose.rs,
+    docs/BIND_POSE.md
+
+2026-09-29
+  DragonBones import
+    src/dragonbones_import.rs, src/file_reader.rs, src/utils.rs,
+    src/lib.rs, tests/dragonbones_import.rs, docs/DRAGONBONES_IMPORT.md
+  Unused Textures warning counts textures swapped in by animations
+    src/warnings.rs
+
+2026-09-30
+  FFmpeg from official sources, pinned and SHA-256 verified; FFmpeg
+  binaries removed from the repository and its history
+    src/export_modal.rs, src/lib.rs, src/utils.rs, release/install.iss,
+    release/release.py, web_build.py, tests/ffmpeg_download.rs,
+    docs/FFMPEG.md
+  README rewritten for Keyternity; this NOTICE added
+
+The user-facing strings for all of the above are in assets/i18n/en.json.
+
+
+Third-party components
+----------------------
+
+FFmpeg is not included in this repository or its builds. The Windows
+installer and the app download official builds from their publishers, and
+the web build fetches the official ffmpeg.wasm packages; see docs/FFMPEG.md
+for sources, versions and licenses.
+
+The DragonBones verification harness (tools/dragonbones_verify) builds
+against a separately obtained DragonBonesCPP checkout
+(https://github.com/DragonBones/DragonBonesCPP); none of its code is
+included here.
