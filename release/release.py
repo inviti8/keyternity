@@ -113,18 +113,11 @@ def darwin():
 match platform.system():
     case "Windows":
         shutil.copy(f"../target/{path}/SkelForm.pdb", f"./{dirname}")
-        #shutil.copy("../ffmpeg/native/ffmpeg.exe", f"./{dirname}/ffmpeg.exe")
         shutil.make_archive(dirname, 'zip', ".", dirname)
 
         # create installer (Inno Setup 7)
         subprocess.run("ISCC.exe install.iss", shell=True)
     case "Darwin":
-        shutil.copy("../ffmpeg/native/ffmpeg-mac-arm.zip", f"./{dirname}/ffmpeg.zip")
-        shutil.unpack_archive(f"./{dirname}/ffmpeg.zip", extract_dir=f"./{dirname}")
-        os.rename(f"./{dirname}/ffmpeg-mac-arm", f"./{dirname}/ffmpeg")
-        os.chmod(f"./{dirname}/ffmpeg", stat.S_IRWXU)
-        os.remove(f"./{dirname}/ffmpeg.zip")
         darwin()
     case "Linux":
-        #shutil.copy("../ffmpeg/native/ffmpeg-linux", f"./{dirname}/ffmpeg")
         shutil.make_archive(dirname, 'zip', ".", dirname)

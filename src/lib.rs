@@ -1202,13 +1202,10 @@ impl BackendRenderer {
 
     fn skf_pack_videos(&self, armature: &Armature, shared_ui: &mut Ui, path: &PathBuf) {
         #[rustfmt::skip]
-        let ffmpeg_bin = if shared_ui.use_system_ffmpeg {
-            "ffmpeg".to_string()
+        let ffmpeg_bin = if shared_ui.use_system_ffmpeg || cfg!(not(target_os = "windows")) {
+            utils::system_ffmpeg()
         } else {
-            #[cfg(target_os = "windows")] {
-            utils::bin_path().join("ffmpeg.exe").to_str().unwrap().to_string() }
-            #[cfg(not(target_os = "windows"))] {
-            utils::bin_path().join("ffmpeg").to_str().unwrap().to_string() }
+            utils::bin_path().join("ffmpeg.exe").to_str().unwrap().to_string()
         };
 
         let bufs = utils::encode_sequence(armature, shared_ui, self);

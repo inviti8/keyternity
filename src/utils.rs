@@ -1304,6 +1304,22 @@ pub fn open_docs(is_dev: bool, mut _path: &str) {
     }
 }
 
+/// The system's ffmpeg. macOS apps opened from Finder don't get the shell's PATH, so the
+/// usual Homebrew/MacPorts locations are checked before falling back to plain `ffmpeg`.
+pub fn system_ffmpeg() -> String {
+    #[cfg(target_os = "macos")]
+    for path in [
+        "/opt/homebrew/bin/ffmpeg",
+        "/usr/local/bin/ffmpeg",
+        "/opt/local/bin/ffmpeg",
+    ] {
+        if std::path::Path::new(path).exists() {
+            return path.to_string();
+        }
+    }
+    "ffmpeg".to_string()
+}
+
 pub fn bin_path() -> std::path::PathBuf {
     let exe_path = std::env::current_exe().unwrap();
     let exe_dir = exe_path.parent().unwrap();

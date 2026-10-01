@@ -1,6 +1,3 @@
-#[cfg(all(not(target_os = "windows"), not(target_arch = "wasm32")))]
-use std::os::unix::fs::PermissionsExt;
-
 use egui::IntoAtoms;
 
 use crate::{
@@ -545,22 +542,24 @@ pub fn video_export(
             });
         }
 
-        // allow using system (global) ffmpeg, if user already has it and prefers
-        // not to download local
-
-        basic_checkbox(
-            ui,
-            &shared_ui.loc("export_modal.video.use_system_ffmpeg"),
-            &shared_ui.loc("export_modal.video.use_system_ffmpeg_desc"),
-            &mut shared_ui.use_system_ffmpeg,
-            config,
-            false,
-        );
-
-        // download ffmpeg button (not needed for macos)
-        #[cfg(not(target_os = "macos"))]
+        // Windows: a verified official ffmpeg next to the app, or the system one if preferred
+        #[cfg(target_os = "windows")]
         {
+            basic_checkbox(
+                ui,
+                &shared_ui.loc("export_modal.video.use_system_ffmpeg"),
+                &shared_ui.loc("export_modal.video.use_system_ffmpeg_desc"),
+                &mut shared_ui.use_system_ffmpeg,
+                config,
+                false,
+            );
             download_ffmpeg_button(ui);
+        }
+        // Linux/macOS: always the system ffmpeg (package manager / Homebrew)
+        #[cfg(all(not(target_os = "windows"), not(target_arch = "wasm32")))]
+        {
+            ui.add_space(10.);
+            ui.label(shared_ui.loc("export_modal.video.system_ffmpeg_note"));
         }
     }
 
@@ -568,103 +567,121 @@ pub fn video_export(
     animations_list(ui, shared_ui, armature, _width, config);
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+/// Official FFmpeg build for Windows: gyan.dev's "essentials" build, from its GitHub release
+/// archive. Pinned, and checked by SHA-256 before anything is written. To update, change these
+/// together (see docs/FFMPEG.md); the installer pins the same build.
+#[cfg(target_os = "windows")]
+const FFMPEG_ZIP_URL: &str = "https://github.com/GyanD/codexffmpeg/releases/download/2026-02-09-git-9bfa1635ae/ffmpeg-2026-02-09-git-9bfa1635ae-essentials_build.zip";
+#[cfg(target_os = "windows")]
+const FFMPEG_ZIP_SHA256: &str = "170c57f56e116416ff09494f77bcee6cb4d6be34cc9c1170cbaa923b296616bf";
+#[cfg(target_os = "windows")]
+const FFMPEG_ZIP_MB: u32 = 108;
+
+#[cfg(target_os = "windows")]
+#[derive(Clone, PartialEq)]
+enum FfmpegDownload {
+    Idle,
+    Running,
+    Done,
+    Failed(String),
+}
+
+#[cfg(target_os = "windows")]
+static FFMPEG_DOWNLOAD: std::sync::Mutex<FfmpegDownload> =
+    std::sync::Mutex::new(FfmpegDownload::Idle);
+
+/// Download the pinned FFmpeg build, verify it, and put `ffmpeg.exe` next to the app.
+#[cfg(target_os = "windows")]
+pub fn fetch_ffmpeg() -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+
+    let resp = ureq::get(FFMPEG_ZIP_URL)
+        .call()
+        .map_err(|e| format!("couldn't download: {e}"))?;
+    let mut zip_bytes = vec![];
+    resp.into_body()
+        .into_reader()
+        .read_to_end(&mut zip_bytes)
+        .map_err(|e| format!("download interrupted: {e}"))?;
+
+    let hash: String = Sha256::digest(&zip_bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    if hash != FFMPEG_ZIP_SHA256 {
+        return Err("the download doesn't match the official build (SHA-256 mismatch); nothing was installed".into());
+    }
+
+    let mut zip = ZipArchive::new(std::io::Cursor::new(zip_bytes))
+        .map_err(|e| format!("couldn't open the archive: {e}"))?;
+    let name = zip
+        .file_names()
+        .find(|n| n.ends_with("/bin/ffmpeg.exe"))
+        .map(|n| n.to_string())
+        .ok_or("ffmpeg.exe not found in the archive")?;
+    let mut exe = vec![];
+    let mut entry = zip
+        .by_name(&name)
+        .map_err(|e| format!("couldn't extract ffmpeg.exe: {e}"))?;
+    entry
+        .read_to_end(&mut exe)
+        .map_err(|e| format!("couldn't extract ffmpeg.exe: {e}"))?;
+
+    // write beside the app, then swap in, so a failed write never leaves a broken ffmpeg.exe
+    let dir = utils::bin_path();
+    let part = dir.join("ffmpeg.exe.part");
+    let written = std::fs::write(&part, &exe)
+        .and_then(|_| std::fs::rename(&part, dir.join("ffmpeg.exe")));
+    written.map_err(|e| {
+        _ = std::fs::remove_file(&part);
+        format!(
+            "couldn't write to {} ({e}). If the app is installed, re-run the installer with the FFmpeg option, or use the system ffmpeg",
+            dir.display()
+        )
+    })
+}
+
+/// Windows only: elsewhere video export uses the system's ffmpeg.
+#[cfg(target_os = "windows")]
 pub fn download_ffmpeg_button(ui: &mut egui::Ui) {
-    #[allow(unreachable_code)]
+    let state = FFMPEG_DOWNLOAD.lock().unwrap().clone();
+    let running = state == FfmpegDownload::Running;
+
     ui.add_space(10.);
     ui.horizontal(|ui| {
-        let pressed = ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.skf_button("Download ffmpeg").clicked()
-        });
-        if !pressed.inner {
-            return;
-        }
-
-        let base_url =
-            "https://github.com/Retropaint/SkelForm/raw/refs/heads/master/ffmpeg/native/";
-        let bin_name;
-        let final_bin_name;
-        #[cfg(target_os = "macos")]
-        {
-            bin_name = "ffmpeg-mac-arm.zip";
-            final_bin_name = "ffmpeg";
-        }
-        #[cfg(target_os = "windows")]
-        {
-            bin_name = "ffmpeg-win.zip";
-            final_bin_name = "ffmpeg.exe";
-        }
-        #[cfg(target_os = "linux")]
-        {
-            bin_name = "ffmpeg-linux.zip";
-            final_bin_name = "ffmpeg";
-        }
-
-        // get downloaded zip file
-        let resp = ureq::get(base_url.to_string() + bin_name).call().unwrap();
-        let mut ffmpeg_zip = std::fs::File::create(utils::bin_path().join("ffmpeg.zip")).unwrap();
-        let bytes_result: Result<Vec<u8>, _> = resp.into_body().into_reader().bytes().collect();
-        if let Ok(bytes) = bytes_result {
-            _ = ffmpeg_zip.write(&bytes);
-        }
-
-        // extract ffmpeg from zip
-        let options = OpenOptions::new()
-            .append(true)
-            .read(true)
-            .open(utils::bin_path().join("ffmpeg.zip").clone());
-        match options {
-            Ok(file) => {
-                // unzip it
-                let mut zip = ZipArchive::new(file).unwrap();
-                let download = zip.by_index(0).unwrap();
-                let mut ffmpeg_bin =
-                    std::fs::File::create(utils::bin_path().join(final_bin_name)).unwrap();
-                let bytes_result: Result<Vec<u8>, _> = download.bytes().collect();
-                if let Ok(bytes) = bytes_result {
-                    _ = ffmpeg_bin.write(&bytes);
-                }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let button = ui.add_enabled_ui(!running, |ui| ui.skf_button("Download ffmpeg"));
+            if button.inner.clicked() {
+                *FFMPEG_DOWNLOAD.lock().unwrap() = FfmpegDownload::Running;
+                let ctx = ui.ctx().clone();
+                std::thread::spawn(move || {
+                    let result = match fetch_ffmpeg() {
+                        Ok(()) => FfmpegDownload::Done,
+                        Err(err) => FfmpegDownload::Failed(err),
+                    };
+                    *FFMPEG_DOWNLOAD.lock().unwrap() = result;
+                    ctx.request_repaint();
+                });
             }
-            Err(_) => {}
-        }
-
-        // set correct permissions for ffmpeg binary
-        let ffmpeg_bin = std::fs::File::open(utils::bin_path().join(final_bin_name)).unwrap();
-        let mut perms = ffmpeg_bin.metadata().unwrap().permissions();
-        perms.set_readonly(false);
-        #[cfg(not(target_os = "windows"))]
-        {
-            perms.set_mode(0o755);
-            ffmpeg_bin.set_permissions(perms).unwrap();
-        }
+        });
     });
 
     ui.add_space(2.5);
 
-    // note for downloading ffmpeg locally
-    #[allow(unused_mut)]
-    let mut size_warning = "";
-    #[allow(unused_mut)]
-    let mut ext = "";
-    #[cfg(target_os = "windows")]
-    {
-        // warn Windows users about comically large ffmpeg file
-        // the download is 30mb but install size is used to be safe,
-        // since most users don't know the difference
-        size_warning = " (>100mb).\nDo not close SkelForm during download.";
-        ext = ".exe";
-    }
+    let installed = std::fs::exists(utils::bin_path().join("ffmpeg.exe")).unwrap_or(false);
+    let str = match state {
+        FfmpegDownload::Running => {
+            format!("Downloading the official FFmpeg build (about {FFMPEG_ZIP_MB} MB)...")
+        }
+        FfmpegDownload::Failed(err) => format!("FFmpeg download failed: {err}."),
+        FfmpegDownload::Done => "FFmpeg is installed and verified.".to_string(),
+        FfmpegDownload::Idle if installed => "Re-download ffmpeg if problems occur.".to_string(),
+        FfmpegDownload::Idle => format!(
+            "ffmpeg is not installed.\nClick above to download the official build (about {FFMPEG_ZIP_MB} MB)."
+        ),
+    };
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let str =
-                if std::fs::exists(utils::bin_path().join("ffmpeg".to_string() + ext)).unwrap() {
-                    "Re-download ffmpeg if problems occur.".to_string()
-                } else {
-                    format!(
-                        "ffmpeg is not installed.\nClick above to download it{}.",
-                        &size_warning
-                    )
-                };
             ui.label(str);
         })
     });

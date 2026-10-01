@@ -3,6 +3,8 @@ import shutil
 import sys
 import argparse
 import os
+import hashlib
+import urllib.request
 
 RED = "\033[31m"
 RESET = "\033[0m"
@@ -65,7 +67,32 @@ subprocess.run(build_command, shell=True)
 shutil.copy("assets/skf_icon.ico", "dist/favicon.ico")
 shutil.copy("samples/_skellington.skf", "dist/_skellington.skf")
 shutil.copy("samples/_skellina.skf", "dist/_skellina.skf")
-shutil.copytree("ffmpeg/wasm", "dist/ffmpeg-wasm")
+
+# official ffmpeg.wasm (npm @ffmpeg/ffmpeg + @ffmpeg/core), pinned and checked by SHA-256.
+# See docs/FFMPEG.md to update.
+FFMPEG_WASM = [
+    ("https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/umd/ffmpeg.js", "ffmpeg.js",
+     "ad4cfe957589995dea03fc8de1fd5e9f5cb4558a7282913172203082a65bbfaa"),
+    ("https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/umd/814.ffmpeg.js", "814.ffmpeg.js",
+     "976f4174ae7da80c0d4f9523ee6dde3ecbce7dc2ee392b2a5322049abb9b8627"),
+    ("https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd/ffmpeg-core.js", "ffmpeg-core.js",
+     "b266ab5b952555881dd6310663986994a182acb2b7ff25cf10a25f7a37ac2b21"),
+    ("https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd/ffmpeg-core.wasm", "ffmpeg-core.wasm",
+     "9f57947a5bd530d8f00c5b3f2cb2a3492faa7e5d823315342d6a8656d0a6b7b7"),
+]
+cache = os.path.join("target", "ffmpeg-wasm")
+os.makedirs(cache, exist_ok=True)
+os.makedirs("dist/ffmpeg-wasm", exist_ok=True)
+for url, name, sha256 in FFMPEG_WASM:
+    path = os.path.join(cache, name)
+    if not os.path.exists(path) or hashlib.sha256(open(path, "rb").read()).hexdigest() != sha256:
+        print(f">>> Downloading {url}")
+        data = urllib.request.urlopen(url).read()
+        if hashlib.sha256(data).hexdigest() != sha256:
+            print(f">>> {RED}!! {name} doesn't match the pinned SHA-256; not using it !!{RESET}")
+            exit(1)
+        open(path, "wb").write(data)
+    shutil.copy(path, os.path.join("dist/ffmpeg-wasm", name))
 
 if args.serve:
     # automatically serve via python http

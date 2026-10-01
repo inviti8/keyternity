@@ -34,6 +34,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+Name: "ffmpeg"; Description: "Download FFmpeg for video export (official gyan.dev build, about 33 MB)"; GroupDescription: "Optional components:"
 
 [Files]
 Source: ".\skelform_windows\*"; DestDir: {app}; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -42,3 +43,67 @@ Source: ".\skelform_windows\*"; DestDir: {app}; Flags: ignoreversion recursesubd
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppName}.exe"
 Name: "{autodesktop}\SkelForm"; Filename: "{app}\SkelForm.exe"; Tasks: desktopicon
+
+[UninstallDelete]
+Type: files; Name: "{app}\ffmpeg.exe"
+
+[Code]
+// Official FFmpeg for Windows: gyan.dev's "essentials" build from its GitHub release archive.
+// Inno Setup checks the SHA-256 and refuses a mismatching download. Pins the same build as the
+// app's "Download ffmpeg" button (src/export_modal.rs); see docs/FFMPEG.md to update.
+const
+  FFmpegBuild = 'ffmpeg-2026-02-09-git-9bfa1635ae-essentials_build';
+  FFmpegUrl = 'https://github.com/GyanD/codexffmpeg/releases/download/2026-02-09-git-9bfa1635ae/ffmpeg-2026-02-09-git-9bfa1635ae-essentials_build.7z';
+  FFmpegSha256 = 'e3c8fca4c28011b46e7ff8e215c034c1d7000a6726d055c98d4d3f9c4d0e4ff9';
+
+var
+  DownloadPage: TDownloadWizardPage;
+
+function OnDownloadProgress(const Url, FileName: String; const Progress, ProgressMax: Int64): Boolean;
+begin
+  Result := True;
+end;
+
+procedure InitializeWizard;
+begin
+  DownloadPage := CreateDownloadPage(SetupMessage(msgWizardPreparing), SetupMessage(msgPreparingDesc), @OnDownloadProgress);
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+begin
+  Result := True;
+  if (CurPageID = wpReady) and WizardIsTaskSelected('ffmpeg') then begin
+    DownloadPage.Clear;
+    DownloadPage.Add(FFmpegUrl, 'ffmpeg.7z', FFmpegSha256);
+    DownloadPage.Show;
+    try
+      try
+        DownloadPage.Download;
+      except
+        if not DownloadPage.AbortedByUser then
+          SuppressibleMsgBox(AddPeriod(GetExceptionMessage) + #13#10#13#10 +
+            'Installing without FFmpeg. Video export can download it later.', mbError, MB_OK, IDOK);
+      end;
+    finally
+      DownloadPage.Hide;
+    end;
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  Archive, Dir: String;
+begin
+  Archive := ExpandConstant('{tmp}\ffmpeg.7z');
+  if (CurStep = ssPostInstall) and WizardIsTaskSelected('ffmpeg') and FileExists(Archive) then begin
+    Dir := ExpandConstant('{tmp}\ffmpeg');
+    try
+      ExtractArchive(Archive, Dir, '', True, nil);
+      if not FileCopy(Dir + '\' + FFmpegBuild + '\bin\ffmpeg.exe', ExpandConstant('{app}\ffmpeg.exe'), False) then
+        RaiseException('Could not copy ffmpeg.exe');
+    except
+      SuppressibleMsgBox(AddPeriod(GetExceptionMessage) + #13#10#13#10 +
+        'Installed without FFmpeg. Video export can download it later.', mbError, MB_OK, IDOK);
+    end;
+  end;
+end;
