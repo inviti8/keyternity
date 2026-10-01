@@ -1304,6 +1304,18 @@ pub fn open_docs(is_dev: bool, mut _path: &str) {
     }
 }
 
+/// Percent-encode text for a URL query value.
+pub fn url_encode(text: &str) -> String {
+    let mut out = String::new();
+    for b in text.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
 /// The system's ffmpeg. macOS apps opened from Finder don't get the shell's PATH, so the
 /// usual Homebrew/MacPorts locations are checked before falling back to plain `ffmpeg`.
 pub fn system_ffmpeg() -> String {
@@ -1567,12 +1579,8 @@ pub fn trunc_str(ui: &egui::Ui, text: &str, max_width: f32) -> String {
     ctext
 }
 
-pub fn attempt_exit(undo_states: &mut UndoStates, config: &Config, ui: &mut Ui) {
-    if undo_states.undo_actions.len() == 0 && !config.ignore_donate {
-        ui.donating_modal = true;
-    } else if !ui.donating_modal {
-        ui.exiting = true;
-    }
+pub fn attempt_exit(_undo_states: &mut UndoStates, _config: &Config, ui: &mut Ui) {
+    ui.exiting = true;
 }
 
 pub fn animate_bones(armature: &mut Armature, selection: &SelectionState, edit_mode: &EditMode) {

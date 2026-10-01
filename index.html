@@ -4,8 +4,8 @@
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <link rel="icon" href="/editor/favicon.ico" type="image/x-icon" />
-        <meta name="description" content="Try out SkelForm online!" />
-        <title>SkelForm Editor</title>
+        <meta name="description" content="Try out Keyternity online!" />
+        <title>Keyternity Editor</title>
         <base data-trunk-public-url />
         <style type="text/css">
             :root {
@@ -195,7 +195,7 @@
             data-trunk
             rel="rust"
             href="Cargo.toml"
-            data-target-name="SkelForm"
+            data-target-name="Keyternity"
         />
         <div class="root">
             <canvas
@@ -206,7 +206,7 @@
         </div>
 
         <div id="crash-box" style="visibility: hidden">
-            <p>SkelForm has crashed.</p>
+            <p>Keyternity has crashed.</p>
             <br />
             <p>
                 The crash log is in the console. Open via right clicking here >
@@ -234,7 +234,7 @@
             toggleElement(false, "edit-input-modal");
 
             async function loadConfig() {
-                let data = await localStorage.getItem("skelform_config");
+                let data = await localStorage.getItem("keyternity_config");
                 if (data === undefined) {
                     return;
                 }
@@ -380,7 +380,7 @@
             }
 
             function saveConfig(data) {
-                localStorage.setItem("skelform_config", data);
+                localStorage.setItem("keyternity_config", data);
             }
 
             async function downloadSample(filename) {
@@ -415,14 +415,14 @@
                     new Blob([binary], { type: "zip" }),
                 );
                 var ext = ".skf";
-                var name = "skelform_armature";
+                var name = "keyternity_armature";
                 switch (saving) {
                     case "Exporting":
                         ext = ".skfe";
                         break;
                     case "Spritesheet":
                         ext = ".zip";
-                        name = "skelform_spritesheet";
+                        name = "keyternity_spritesheet";
                 }
                 link.setAttribute("test", "sk_a");
                 link.setAttribute("download", name + ext);
@@ -614,24 +614,12 @@
                 link.remove();
             }
 
-            function sendFeedback(content) {
-                fetch("https://forums.skelform.org/feedback.php", {
-                    method: "POST",
-                    body: JSON.stringify({
-                        content: content,
-                    }),
-                    headers: {
-                        "Content-type": "application/json",
-                    },
-                });
-            }
-
             function clickedOnce() {
                 focusInitiator.style.pointerEvents = "none";
             }
 
             // remove focuser if this isn't in the standalone editor page(s)
-            if (window.location.href.indexOf("skelform.org/editor") == -1) {
+            if (window.location.href.indexOf("/editor") == -1) {
                 clickedOnce();
             }
         </script>

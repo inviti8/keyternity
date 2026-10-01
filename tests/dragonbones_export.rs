@@ -4,10 +4,10 @@
 //! own world-space pose per frame (in DragonBones' Y-down space) for comparing against a runtime.
 
 use serde_json::{json, Value};
-use skelform_lib::dragonbones_export::{self, DbFiles};
-use skelform_lib::renderer::{construction, create_tex_rect, is_facing_left};
-use skelform_lib::shared::*;
-use skelform_lib::utils;
+use keyternity_lib::dragonbones_export::{self, DbFiles};
+use keyternity_lib::renderer::{construction, create_tex_rect, is_facing_left};
+use keyternity_lib::shared::*;
+use keyternity_lib::utils;
 
 fn load_skf(path: &str) -> Armature {
     let mut shared = Shared::default();
@@ -551,7 +551,7 @@ fn base_names() {
 #[test]
 fn synthetic_bind_pose_rig() {
     let mut arm = synthetic();
-    skelform_lib::bind_pose::set_bind_pose(&mut arm, 3).unwrap();
+    keyternity_lib::bind_pose::set_bind_pose(&mut arm, 3).unwrap();
     assert!(
         arm.bones.iter().any(|b| b.bind_owner.is_some()),
         "helpers expected"
@@ -591,7 +591,7 @@ fn synthetic_bind_pose_rig() {
 
 // ------------------------------------------------------------------ import round trip
 
-use skelform_lib::dragonbones_import::{self, DbAtlas};
+use keyternity_lib::dragonbones_import::{self, DbAtlas};
 
 /// World transforms of every bone and drawn vertices of textured bones, as SkelForm renders.
 struct Frame {
@@ -735,7 +735,7 @@ fn round_trip(arm: &Armature, name: &str) -> (f32, f32) {
 #[test]
 fn import_round_trip() {
     let mut bind_posed = synthetic();
-    skelform_lib::bind_pose::set_bind_pose(&mut bind_posed, 3).unwrap();
+    keyternity_lib::bind_pose::set_bind_pose(&mut bind_posed, 3).unwrap();
     // Skellina's legacy all-zero curve handles are linear, which the export writes exactly,
     // while SkelForm's own solver is ~3 px off near t=0 (docs/DRAGONBONES_EXPORT.md §4)
     for (arm, name, tolerance) in [

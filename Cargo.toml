@@ -1,12 +1,12 @@
 [package]
-name = "SkelForm"
-version = "0.8.0"
+name = "Keyternity"
+version = "0.1.0"
 edition = "2021"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 path = "src/lib.rs"
-name = "skelform_lib"
+name = "keyternity_lib"
 
 [profile.release]
 opt-level = "s"

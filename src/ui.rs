@@ -161,9 +161,6 @@ pub fn draw(
     if shared_ui.startup_window {
         startup_window::startup_modal(context, shared_ui, events, &config);
     }
-    if shared_ui.donating_modal {
-        modal::donating_modal(context, shared_ui, &config);
-    }
     if shared_ui.atlas_modal {
         atlas_modal::draw(
             context, config, selections, armature, shared_ui, input, events,
@@ -181,27 +178,32 @@ pub fn draw(
     #[cfg(not(target_arch = "wasm32"))]
     if shared_ui.checking_update {
         modal::modal(context, shared_ui, &config);
-        let url = "https://skelform.org/versions.json";
-        let request = ureq::get(url).header("Example-Header", "header value");
-        let dl_links: serde_json::Value = match request.call() {
-            Ok(mut data) => {
-                serde_json::from_str(&data.body_mut().read_to_string().unwrap()).unwrap()
-            }
-            Err(_) => serde_json::Value::default(),
+        // latest release on Keyternity's GitHub (404 = nothing released yet)
+        let url = "https://api.github.com/repos/inviti8/keyternity/releases/latest";
+        let request = ureq::get(url)
+            .header("User-Agent", "Keyternity")
+            .header("Accept", "application/vnd.github+json");
+        let latest: Result<Option<String>, ()> = match request.call() {
+            Ok(mut data) => data
+                .body_mut()
+                .read_to_string()
+                .ok()
+                .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok())
+                .and_then(|json| json["tag_name"].as_str().map(|t| Some(t.to_string())))
+                .ok_or(()),
+            Err(ureq::Error::StatusCode(404)) => Ok(None),
+            Err(_) => Err(()),
         };
 
-        if dl_links.get("version") == None {
-            events.open_modal("startup.error_update", false);
-        } else if dl_links != "" {
-            let ver_str = dl_links["version"].as_str().unwrap();
-            let this_ver_str = format!("v{}", env!("CARGO_PKG_VERSION"));
-            if ver_str.trim() != this_ver_str.trim() {
+        let this_ver_str = format!("v{}", env!("CARGO_PKG_VERSION"));
+        match latest {
+            Err(()) => events.open_modal("startup.error_update", false),
+            Ok(Some(ver_str)) if ver_str.trim() != this_ver_str.trim() => {
                 let loc = "startup.update_available";
-                let str = shared_ui.loc(loc).replace("$ver", ver_str);
+                let str = shared_ui.loc(loc).replace("$ver", &ver_str);
                 events.open_polar_modal(PolarId::NewUpdate, str);
-            } else {
-                events.open_modal("startup.no_updates", false);
             }
+            Ok(_) => events.open_modal("startup.no_updates", false),
         }
 
         shared_ui.checking_update = false;

@@ -10,10 +10,10 @@
 //! every frame of every animation.
 
 use serde_json::Value;
-use skelform_lib::dragonbones_import;
-use skelform_lib::renderer::{construction, create_tex_rect, is_facing_left};
-use skelform_lib::shared::*;
-use skelform_lib::utils;
+use keyternity_lib::dragonbones_import;
+use keyternity_lib::renderer::{construction, create_tex_rect, is_facing_left};
+use keyternity_lib::shared::*;
+use keyternity_lib::utils;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -379,7 +379,7 @@ fn import_dragonbones_editor_warnings() {
     for ske in rigs {
         let name = ske.file_name().unwrap().to_string_lossy().replace("_ske.json", "");
         let Ok(imp) = dragonbones_import::read_files(&ske).and_then(|(j, a)| dragonbones_import::import(&j, &a)) else { continue };
-        let warnings = skelform_lib::warnings::check_warnings(&imp.armature);
+        let warnings = keyternity_lib::warnings::check_warnings(&imp.armature);
         let mut counts: HashMap<String, (usize, usize)> = HashMap::new();
         for w in &warnings {
             const NAMES: [&str; 11] = ["SameZIndex", "NoIkTarget", "OnlyIk", "UnboundBind", "NoVertsInBind", "OnlyPath", "NoWeights", "BoneOutOfFamily", "EmptyStyles", "UnusedTextures", "ClassicMultiBind"];

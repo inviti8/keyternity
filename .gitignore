@@ -6,10 +6,10 @@
 #/release/user_docs
 /release/dev-docs
 /release/user-docs
-/release/SkelForm.app/Contents/MacOS/user-docs
-/release/SkelForm.app/Contents/MacOS/dev-docs
-/release/skelform_*
-/release/SkelForm.app.zip
+/release/Keyternity.app/Contents/MacOS/user-docs
+/release/Keyternity.app/Contents/MacOS/dev-docs
+/release/keyternity_*
+/release/Keyternity.app.zip
 #skelform_*v0*
 autosave.skf
 armature.json

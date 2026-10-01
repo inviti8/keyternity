@@ -50,6 +50,13 @@ Modifications (GPLv3 section 5a)
     release/release.py, web_build.py, tests/ffmpeg_download.rs,
     docs/FFMPEG.md
   README rewritten for Keyternity; this NOTICE added
+  Renamed to Keyternity: package, window title, settings folder, installer
+  (own AppId, publisher HEAVYMETA), macOS bundle, web page, release scripts;
+  update check and feedback go to Keyternity's GitHub; donation prompt and
+  SkelForm community links removed; version restarted at 0.1.0
+    Cargo.toml, src/lib.rs, src/main.rs, src/shared.rs, src/ui.rs,
+    src/modal.rs, src/utils.rs, src/startup_window.rs, assets/startup.json,
+    index.html, web_build.py, release/, .gitignore, tests/
 
 The user-facing strings for all of the above are in assets/i18n/en.json.
 

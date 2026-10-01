@@ -10,9 +10,9 @@
 fn pinned_ffmpeg_downloads_and_verifies() {
     use sha2::{Digest, Sha256};
 
-    skelform_lib::export_modal::fetch_ffmpeg().unwrap();
+    keyternity_lib::export_modal::fetch_ffmpeg().unwrap();
 
-    let exe = skelform_lib::utils::bin_path().join("ffmpeg.exe");
+    let exe = keyternity_lib::utils::bin_path().join("ffmpeg.exe");
     let hash: String = Sha256::digest(std::fs::read(&exe).unwrap())
         .iter()
         .map(|b| format!("{b:02x}"))

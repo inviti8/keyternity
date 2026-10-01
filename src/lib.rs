@@ -51,6 +51,9 @@ use winit::{
     window::{Theme, Window},
 };
 
+/// Keyternity's repository (releases, issues, translations).
+pub const REPO_URL: &str = "https://github.com/inviti8/keyternity";
+
 pub mod armature_window;
 pub mod atlas_modal;
 pub mod backwards_compat;
@@ -107,7 +110,6 @@ extern "C" {
     pub fn changeLang(filename: String);
     pub fn getLang() -> Vec<u8>;
     pub fn clearLang();
-    pub fn sendFeedback(content: &str);
     pub fn ensureFFmpeg();
 }
 
@@ -350,7 +352,7 @@ impl ApplicationHandler for App {
                     if !self.shared.ui.changed_window_name {
                         // show loaded filename as window name
                         let file = if self.shared.ui.save_path == None {
-                            "SkelForm".to_string()
+                            "Keyternity".to_string()
                         } else {
                             let path = self.shared.ui.save_path.clone().unwrap();
                             let filename = path.as_path().file_name().unwrap();
@@ -516,12 +518,8 @@ impl ApplicationHandler for App {
             self.shared.ui.exiting = false;
         }
 
-        // exit has been confirmed - eviscerate and obliterate SkelForm
+        // exit has been confirmed - eviscerate and obliterate Keyternity
         if self.shared.ui.confirmed_exit {
-            if self.shared.ui.never_donate {
-                self.shared.config.ignore_donate = true;
-                crate::utils::save_config(&self.shared.config);
-            }
             event_loop.exit();
         }
 
@@ -1260,7 +1258,7 @@ impl BackendRenderer {
                 utils::save_to_recent_files(shared.ui.recent_file_paths.clone());
             }
             Saving::Autosaving => {
-                let dir_init = directories_next::ProjectDirs::from("com", "retropaint", "skelform");
+                let dir_init = directories_next::ProjectDirs::from("com", "keyternity", "keyternity");
                 let dir = dir_init.unwrap().data_dir().to_str().unwrap().to_string();
                 save_path = dir + "/autosave.skf";
                 let freq = shared.config.autosave_frequency as f32;

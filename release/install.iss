@@ -2,16 +2,16 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
 ; Non-commercial use only.
 
-#define MyAppName "SkelForm"
-#define MyAppVersion "0.8"
-#define MyAppPublisher "Retropaint"
-#define MyAppURL "https://www.skelform.org/"
+#define MyAppName "Keyternity"
+#define MyAppVersion "0.1.0"
+#define MyAppPublisher "HEAVYMETA"
+#define MyAppURL "https://github.com/inviti8/keyternity"
 #define EscapeConstArgument(Value) StringChange(StringChange(StringChange(Value, "%", "%25"), ",", "%2c"), "}", "%7d")
 
 [Setup]
 ; NOTE: The value of AppId uniquely identifies this application. Do not use the same AppId value in installers for other applications.
 ; (To generate a new GUID, click Tools | Generate GUID inside the IDE.)
-AppId={{57F18EF3-DB4A-4C9D-910C-908C0BD58F9D}
+AppId={{AFD69B48-205E-45FB-AB63-95A72BE3F455}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 ;AppVerName={cm:NameAndVersion,{#EscapeConstArgument(MyAppName)},{#EscapeConstArgument(MyAppVersion)}}
@@ -19,12 +19,12 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
-DefaultDirName="C:\Program Files\{#MyAppName}"
+DefaultDirName="{autopf}\{#MyAppName}"
 DefaultGroupName={#MyAppName}
 ; Uncomment the following line to run in non administrative install mode (install for current user only).
 ;PrivilegesRequired=lowest
 DisableProgramGroupPage=yes
-OutputBaseFilename=SkelForm_Install
+OutputBaseFilename=Keyternity_Install
 SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=admin
@@ -37,12 +37,12 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Name: "ffmpeg"; Description: "Download FFmpeg for video export (official gyan.dev build, about 33 MB)"; GroupDescription: "Optional components:"
 
 [Files]
-Source: ".\skelform_windows\*"; DestDir: {app}; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: ".\keyternity_windows\*"; DestDir: {app}; Flags: ignoreversion recursesubdirs createallsubdirs
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files.
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppName}.exe"
-Name: "{autodesktop}\SkelForm"; Filename: "{app}\SkelForm.exe"; Tasks: desktopicon
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppName}.exe"; Tasks: desktopicon
 
 [UninstallDelete]
 Type: files; Name: "{app}\ffmpeg.exe"

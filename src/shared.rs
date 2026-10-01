@@ -586,7 +586,6 @@ pub struct Ui {
     pub done_pending: bool,
     pub init_pending_mouse: Vec2,
     pub is_dragging_pending: bool,
-    pub never_donate: bool,
     pub atlas_image: Option<Vec2>,
     pub dragging_slice: usize,
     pub prev_pending_interp: Vec2,
@@ -603,7 +602,6 @@ pub struct Ui {
     pub settings_modal: bool,
     pub startup_window: bool,
     pub focus_style_dropdown: bool,
-    pub donating_modal: bool,
     pub atlas_modal: bool,
     pub export_modal: bool,
     pub checking_update: bool,
@@ -808,7 +806,6 @@ pub struct Config {
     pub keep_tex_str: bool,
     pub edit_while_playing: bool,
     pub layout: UiLayout,
-    pub ignore_donate: bool,
     pub pixel_magnification: i32,
     pub center_point_radius: f32,
     pub transform_rot_radius: f32,
@@ -863,7 +860,6 @@ impl Default for Config {
             keep_tex_str: false,
             layout: UiLayout::Split,
             edit_while_playing: false,
-            ignore_donate: false,
             pixel_magnification: 1,
             center_point_radius: 0.015,
             transform_rot_radius: 0.08,
@@ -2999,28 +2995,28 @@ pub fn bool_as_f32(value: bool) -> f32 {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn config_path() -> std::path::PathBuf {
-    directories_next::ProjectDirs::from("com", "retropaint", "skelform")
+    directories_next::ProjectDirs::from("com", "keyternity", "keyternity")
         .map(|proj_dirs| proj_dirs.data_dir().join("config.json"))
         .unwrap()
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn color_path() -> std::path::PathBuf {
-    directories_next::ProjectDirs::from("com", "retropaint", "skelform")
+    directories_next::ProjectDirs::from("com", "keyternity", "keyternity")
         .map(|proj_dirs| proj_dirs.data_dir().join("colors.json"))
         .unwrap()
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn keys_path() -> std::path::PathBuf {
-    directories_next::ProjectDirs::from("com", "retropaint", "skelform")
+    directories_next::ProjectDirs::from("com", "keyternity", "keyternity")
         .map(|proj_dirs| proj_dirs.data_dir().join("keys.json"))
         .unwrap()
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn recents_path() -> std::path::PathBuf {
-    directories_next::ProjectDirs::from("com", "retropaint", "skelform")
+    directories_next::ProjectDirs::from("com", "keyternity", "keyternity")
         .map(|proj_dirs| proj_dirs.data_dir().join("recent_files.json"))
         .unwrap()
 }

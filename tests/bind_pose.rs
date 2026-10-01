@@ -1,9 +1,9 @@
 //! Bind Pose skinning tests (docs/BIND_POSE.md §9).
 
-use skelform_lib::bind_pose;
-use skelform_lib::renderer::{construction, is_facing_left};
-use skelform_lib::shared::*;
-use skelform_lib::utils;
+use keyternity_lib::bind_pose;
+use keyternity_lib::renderer::{construction, is_facing_left};
+use keyternity_lib::shared::*;
+use keyternity_lib::utils;
 
 const EPS: f32 = 1e-3;
 

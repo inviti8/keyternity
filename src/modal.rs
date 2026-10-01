@@ -113,11 +113,7 @@ pub fn polar_modal(
                     events.delete_bone(ctx0);
                 }
                 PolarId::Exiting => {
-                    if config.ignore_donate {
-                        shared_ui.confirmed_exit = true;
-                    } else {
-                        shared_ui.donating_modal = true;
-                    }
+                    shared_ui.confirmed_exit = true;
                 }
                 PolarId::DeleteAnim => {
                     events.delete_anim(ctx0);
@@ -135,7 +131,7 @@ pub fn polar_modal(
                 PolarId::NewUpdate => {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
-                        let base_url = "https://github.com/Retropaint/SkelForm/releases/latest";
+                        let base_url = "https://github.com/inviti8/keyternity/releases/latest";
                         _ = open::that(base_url);
                     }
                 }
@@ -186,57 +182,6 @@ pub fn modal(ctx: &egui::Context, shared_ui: &mut crate::Ui, config: &Config) {
     )
 }
 
-pub fn donating_modal(ctx: &egui::Context, shared_ui: &mut crate::Ui, config: &Config) {
-    let headline = shared_ui.loc("donating");
-    let config = config.clone();
-    modal_template(
-        ctx,
-        "donate".to_string(),
-        &config,
-        |ui| {
-            let mut cache = egui_commonmark::CommonMarkCache::default();
-            let str = utils::markdown(headline);
-            egui_commonmark::CommonMarkViewer::new().show(ui, &mut cache, &str);
-        },
-        |ui| {
-            let mut pressed = false;
-            if ui.skf_button("Donate").clicked() {
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    _ = open::that("https://ko-fi.com/retropaintt");
-                }
-
-                #[cfg(target_arch = "wasm32")]
-                {
-                    crate::openLink("https://ko-fi.com/retropaintt".to_string());
-                }
-
-                // wait a second before closing
-                // oddly specific but it's for those with 'selector' default
-                // browsers like browserosaurus
-                std::thread::sleep(std::time::Duration::from_secs(1));
-
-                pressed = true;
-            }
-            if ui.skf_button("Later").clicked() {
-                pressed = true;
-            }
-            if ui.skf_button("Never").clicked() {
-                shared_ui.never_donate = true;
-                pressed = true;
-            }
-
-            if !pressed {
-                return;
-            }
-
-            shared_ui.modal = false;
-            shared_ui.confirmed_exit = true;
-            shared_ui.headline = "".to_string();
-        },
-    )
-}
-
 pub fn lang_import_modal(
     ctx: &egui::Context,
     shared_ui: &mut crate::Ui,
@@ -281,7 +226,7 @@ pub fn lang_import_modal(
                 #[cfg(target_arch = "wasm32")]
                 {
                     crate::openLink(
-                        "https://github.com/Retropaint/SkelForm/tree/master/assets/i18n"
+                        "https://github.com/inviti8/keyternity/tree/main/assets/i18n"
                             .to_string(),
                     );
                 }
@@ -312,64 +257,30 @@ pub fn feedback_modal(
                 .hint_text("I think you should add/fix...")
                 .show(ui);
             ui.add_space(5.);
-            ui.label("Social channels:");
             ui.horizontal(|ui| {
                 let col = config.colors.link;
-                let discord = ui.clickable_label(egui::RichText::new("Discord").color(col));
-                if discord.clicked() {
-                    utils::open_link("https://discord.com/invite/V9gm4p4cAB");
-                }
-                ui.label("|");
-                let reddit = ui.clickable_label(egui::RichText::new("Reddit").color(col));
-                if reddit.clicked() {
-                    utils::open_link("https://reddit.com/r/SkelForm");
-                }
-                ui.label("|");
-                let forums = ui.clickable_label(egui::RichText::new("Forums").color(col));
-                if forums.clicked() {
-                    utils::open_link("https://forums.skelform.org");
-                }
-                ui.label("|");
-                let github = ui.clickable_label(egui::RichText::new("Github").color(col));
-                if github.clicked() {
-                    utils::open_link("https://github.com/Retropaint/SkelForm/issues");
+                let issues = ui.clickable_label(egui::RichText::new("Keyternity issues on GitHub").color(col));
+                if issues.clicked() {
+                    utils::open_link(&format!("{}/issues", crate::REPO_URL));
                 }
             });
         },
         |ui| {
-            // send to /feedback.php on submit
             if ui.skf_button("Cancel").clicked() {
                 shared_ui.feedback_modal = false;
                 cancelled = true;
             }
+            // opens a new GitHub issue pre-filled with the text; the user submits it there
             ui.add_enabled_ui(shared_ui.lang_input != "", |ui| {
-                if !ui.skf_button("Submit").clicked() {
+                if !ui.skf_button("Open as GitHub issue").clicked() {
                     return;
                 }
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    let formatted = shared_ui.lang_input.replace("\n", "\\n");
-                    let request = ureq::post("https://forums.skelform.org/feedback.php")
-                        .header("Content-Type", "application/json")
-                        .send(format!("{{\"content\":\"{}\"}}", formatted));
-                    let mut is_error = true;
-                    if let Ok(mut request) = request {
-                        is_error = false;
-                        let response = request.body_mut().read_to_string();
-                        if let Err(err) = response {
-                            is_error = true;
-                            eprintln!("{}", err);
-                        }
-                    }
-                    if is_error {
-                        events.open_modal(&shared_ui.loc("feedback_sent_err"), false);
-                        return;
-                    }
-                }
-                #[cfg(target_arch = "wasm32")]
-                {
-                    crate::sendFeedback(&shared_ui.lang_input);
-                }
+                let url = format!(
+                    "{}/issues/new?body={}",
+                    crate::REPO_URL,
+                    utils::url_encode(&shared_ui.lang_input)
+                );
+                utils::open_link(&url);
                 shared_ui.feedback_modal = false;
                 events.open_modal(&shared_ui.loc("feedback_sent"), false);
             });

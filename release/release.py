@@ -18,7 +18,7 @@ CYAN = "\033[36m"
 RESET = "\033[0m"
 
 # yapf: disable
-parser = argparse.ArgumentParser(prog="SkelForm Release Builder", description="Build script for SkelForm release distributions.", formatter_class=argparse.RawTextHelpFormatter)
+parser = argparse.ArgumentParser(prog="Keyternity Release Builder", description="Build script for Keyternity release distributions.", formatter_class=argparse.RawTextHelpFormatter)
 parser.add_argument("-v", "--verbose", action="store_true", help="Print output of everything")
 parser.add_argument("-dmg", "--dmg", action="store_true", help="Attempt to create Mac dmg (requires create-dmg)")
 parser.add_argument("-d", "--debug", action="store_true", help="Create debug build")
@@ -57,7 +57,7 @@ match platform.system():
     case "Linux":
         platform_name = "linux"
 
-dirname = "skelform_" + platform_name
+dirname = "keyternity_" + platform_name
 
 # create clean release folder
 if os.path.exists(dirname):
@@ -79,7 +79,7 @@ if args.ubuntudeps:
 # build user and dev docs (if --nodocs wasn't set)
 # yapf: disable
 subprocess.run (f"cargo build {mode}", shell=True)
-shutil.copy    (f"../target/{path}/SkelForm{binExt}", f"./{dirname}")
+shutil.copy    (f"../target/{path}/Keyternity{binExt}", f"./{dirname}")
 if not args.nodocs:
     shutil.copytree("./user-docs", f"./{dirname}/user-docs")
     shutil.copytree("./dev-docs",  f"./{dirname}/dev-docs")
@@ -90,29 +90,29 @@ shutil.copytree("../samples",     f"./{dirname}/samples")
 
 def darwin():
     print(">>> Preparing Mac app...")
-    bin_path = "./SkelForm.app/Contents/MacOS/"
+    bin_path = "./Keyternity.app/Contents/MacOS/"
     if os.path.exists(bin_path):
         shutil.rmtree(bin_path)
     shutil.copytree(dirname, bin_path)
 
     # sign the app in any way, so the OS doesn't show 'this app is damaged'
-    subprocess.run("codesign --force --deep --sign - SkelForm.app", shell=True)
+    subprocess.run("codesign --force --deep --sign - Keyternity.app", shell=True)
 
-    shutil.make_archive("SkelForm.app", "zip", ".", "SkelForm.app")
+    shutil.make_archive("Keyternity.app", "zip", ".", "Keyternity.app")
     
     if not args.dmg:
-        print(f">>> Mac release complete. Please look for {BLUE}SkelForm.app{RESET}.")
+        print(f">>> Mac release complete. Please look for {BLUE}Keyternity.app{RESET}.")
         exit()
     print(
         ">>> Preparing Mac dmg...\n    The dmg will instantly open, but you should still wait."
     )
     subprocess.run("./create-dmg.sh" + stdout, shell=True)
-    os.rename(" SkelForm.dmg", "SkelForm.dmg")
-    print(f">>> Mac release complete. Please look for {BLUE}SkelForm.dmg{RESET}.")
+    os.rename(" Keyternity.dmg", "Keyternity.dmg")
+    print(f">>> Mac release complete. Please look for {BLUE}Keyternity.dmg{RESET}.")
 
 match platform.system():
     case "Windows":
-        shutil.copy(f"../target/{path}/SkelForm.pdb", f"./{dirname}")
+        shutil.copy(f"../target/{path}/Keyternity.pdb", f"./{dirname}")
         shutil.make_archive(dirname, 'zip', ".", dirname)
 
         # create installer (Inno Setup 7)

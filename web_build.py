@@ -21,8 +21,8 @@ generic = " --filehash false"
 default_build = features + generic
 
 parser = argparse.ArgumentParser(
-    prog="SkelForm Web Builder",
-    description="Build script for SkelForm's web (WASM) version.",
+    prog="Keyternity Web Builder",
+    description="Build script for Keyternity's web (WASM) version.",
     epilog="Default build command:\ntrunk build " + default_build,
 )
 

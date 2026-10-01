@@ -103,8 +103,12 @@ SkelForm's runtimes as is.
 
 Keyternity is under active development, and there's no release yet. The first
 release is planned as `v0.1.0`; Keyternity versions start fresh rather than
-continuing SkelForm's. Until the rename pass lands, the app still calls itself
-SkelForm in places (window title, installer, config folder).
+continuing SkelForm's. The app icon is still SkelForm's until Keyternity's own
+is ready.
+
+Keyternity keeps its settings in its own folder (`keyternity`), separate from an
+installed SkelForm, and installs alongside it rather than over it. Rig files stay
+SkelForm's `.skf` format, so they open in both.
 
 Build from source as described below.
 

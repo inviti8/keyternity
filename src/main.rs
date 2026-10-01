@@ -2,7 +2,7 @@
 
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 
-use skelform_lib::{shared::*, utils};
+use keyternity_lib::{shared::*, utils};
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::fs;
@@ -28,10 +28,10 @@ fn main() -> Result<(), winit::error::EventLoopError> {
     }
 
     // setup default values for shared values
-    let mut app = skelform_lib::App::default();
+    let mut app = keyternity_lib::App::default();
     init_shared(&mut app.shared);
 
-    // open 'SkelForm has crashed' modal if there's an untagged crash log
+    // open 'Keyternity has crashed' modal if there's an untagged crash log
     #[cfg(not(target_arch = "wasm32"))]
     if let Ok(does) = fs::exists(utils::crashlog_file()) {
         if does {
