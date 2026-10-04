@@ -1,7 +1,7 @@
 //! Local mesh topology edits (docs/TOPOLOGY_TOOLS.md §4, §6, §9).
 
-use skelform_lib::shared::*;
-use skelform_lib::topology::{self, TopoError, VertSite};
+use keyternity_lib::shared::*;
+use keyternity_lib::topology::{self, TopoError, VertSite};
 
 const EPS: f32 = 1e-5;
 

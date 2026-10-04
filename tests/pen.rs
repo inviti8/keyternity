@@ -1,7 +1,7 @@
 //! Pen cuts (docs/TOPOLOGY_TOOLS.md §5.3, §9).
 
-use skelform_lib::pen::{self, PenCut, PenPoint, Snap};
-use skelform_lib::shared::*;
+use keyternity_lib::pen::{self, PenCut, PenPoint, Snap};
+use keyternity_lib::shared::*;
 
 const EPS: f32 = 1e-4;
 const TEX: Vec2 = Vec2 { x: 100., y: 100. };

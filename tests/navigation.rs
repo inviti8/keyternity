@@ -1,9 +1,9 @@
 //! Canvas navigation maths (docs/TOPOLOGY_TOOLS.md §3), checked against the
 //! renderer's own world-to-screen transform.
 
-use skelform_lib::navigation;
-use skelform_lib::renderer::{world_camera, world_vert};
-use skelform_lib::shared::*;
+use keyternity_lib::navigation;
+use keyternity_lib::renderer::{world_camera, world_vert};
+use keyternity_lib::shared::*;
 
 const EPS: f32 = 1e-2;
 

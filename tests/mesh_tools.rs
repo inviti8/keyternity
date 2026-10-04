@@ -1,7 +1,7 @@
 //! Eraser picking and erasing (docs/TOPOLOGY_TOOLS.md §6).
 
-use skelform_lib::mesh_tools::{self, Pick};
-use skelform_lib::shared::*;
+use keyternity_lib::mesh_tools::{self, Pick};
+use keyternity_lib::shared::*;
 
 const WINDOW: Vec2 = Vec2 { x: 1000., y: 1000. };
 
@@ -83,7 +83,7 @@ fn erase_dissolves_or_deletes() {
     // deleting it removes both triangles, which here would empty the mesh
     let mut bone = quad_bone();
     let err = mesh_tools::erase(&mut bone, Pick::Edge(0, 2), true);
-    assert_eq!(err, Err(skelform_lib::topology::TopoError::LastTriangle));
+    assert_eq!(err, Err(keyternity_lib::topology::TopoError::LastTriangle));
     assert_eq!(bone.indices.len(), 6);
 
     // deleting a corner removes its one triangle
@@ -95,8 +95,8 @@ fn erase_dissolves_or_deletes() {
 
 // --- Pen targeting ---
 
-use skelform_lib::mesh_tools::{PenSnapping, PenTarget, UvMap};
-use skelform_lib::pen::Snap;
+use keyternity_lib::mesh_tools::{PenSnapping, PenTarget, UvMap};
+use keyternity_lib::pen::Snap;
 
 /// The 200 px square, carrying UVs: (100,100) is uv (0,0), (300,300) is (1,1).
 fn textured_square() -> (Vec<Vertex>, Vec<u32>) {
