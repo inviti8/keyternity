@@ -1,0 +1,134 @@
+# Keyternity release pipeline.
+#
+# Push a version tag (v0.1.0, or v0.2.0-rc1 for a pre-release) to build
+# Windows, macOS and Linux in parallel, then collect everything into a draft
+# GitHub Release to review and publish. tools/create_release.py suggests and
+# pushes the next tag.
+#
+# The tag must match Cargo.toml's version: the app shows that version and its
+# update check compares it with the latest release's tag.
+
+name: Release
+
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to (re)build, e.g. v0.1.0'
+        required: true
+        type: string
+
+permissions:
+  contents: write  # to create the release
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      prerelease: ${{ steps.check.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
+      - id: check
+        name: Tag matches Cargo.toml
+        run: |
+          version="${TAG#v}"
+          base="${version%%-*}"
+          cargo=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          if [ "$base" != "$cargo" ]; then
+            echo "::error::Tag $TAG doesn't match Cargo.toml's version $cargo. Bump Cargo.toml (and Cargo.lock), or tag v$cargo."
+            exit 1
+          fi
+          echo "version=$base" >> "$GITHUB_OUTPUT"
+          if [ "$version" != "$base" ]; then echo "prerelease=true" >> "$GITHUB_OUTPUT"; else echo "prerelease=false" >> "$GITHUB_OUTPUT"; fi
+
+  build:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows
+          - os: macos-latest
+            name: macos
+          - os: ubuntu-latest
+            name: linux
+    runs-on: ${{ matrix.os }}
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Inno Setup
+        if: matrix.name == 'windows'
+        run: choco install innosetup -y --no-progress
+
+      - name: Build (Windows)
+        if: matrix.name == 'windows'
+        shell: bash
+        working-directory: release
+        run: |
+          python release.py -nd --version "$VERSION"
+          mkdir -p ../dist-release
+          mv Output/Keyternity_Install.exe "../dist-release/Keyternity-$TAG-windows-setup.exe"
+          mv keyternity_windows.zip "../dist-release/Keyternity-$TAG-windows.zip"
+
+      - name: Build (macOS)
+        if: matrix.name == 'macos'
+        working-directory: release
+        run: |
+          python3 release.py -nd -dmg --version "$VERSION"
+          mkdir -p ../dist-release
+          arch=$(uname -m)
+          mv Keyternity.dmg "../dist-release/Keyternity-$TAG-macos-$arch.dmg"
+          mv Keyternity.app.zip "../dist-release/Keyternity-$TAG-macos-$arch.app.zip"
+
+      - name: Build (Linux)
+        if: matrix.name == 'linux'
+        working-directory: release
+        run: |
+          python3 release.py -nd --ubuntudeps --version "$VERSION"
+          mkdir -p ../dist-release
+          mv keyternity_linux.zip "../dist-release/Keyternity-$TAG-linux-x86_64.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: keyternity-${{ matrix.name }}
+          path: dist-release/*
+          if-no-files-found: error
+
+  release:
+    needs: [ version, build ]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist-release
+          merge-multiple: true
+
+      - name: Draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: Keyternity ${{ env.TAG }}
+          draft: true
+          prerelease: ${{ needs.version.outputs.prerelease == 'true' }}
+          generate_release_notes: true
+          files: dist-release/*

@@ -3,7 +3,10 @@
 ; Non-commercial use only.
 
 #define MyAppName "Keyternity"
-#define MyAppVersion "0.1.0"
+; release.py passes /DMyAppVersion=<version> from the release tag
+#ifndef MyAppVersion
+  #define MyAppVersion "0.1.0"
+#endif
 #define MyAppPublisher "HEAVYMETA"
 #define MyAppURL "https://github.com/inviti8/keyternity"
 #define EscapeConstArgument(Value) StringChange(StringChange(StringChange(Value, "%", "%25"), ",", "%2c"), "}", "%7d")

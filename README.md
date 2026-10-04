@@ -161,7 +161,26 @@ Notable arguments:
 
 ### Native desktop release
 
-See the `release` folder.
+`release/release.py` builds a distribution for the platform it runs on: a zip
+and an installer (Inno Setup) on Windows, `Keyternity.app` and a `.dmg` on
+macOS, a zip on Linux. Run it from the `release` folder; `-nd` skips building
+SkelForm's user and dev docs.
+
+### Releasing
+
+Releases are built by GitHub Actions (`.github/workflows/release.yml`) when a
+version tag is pushed. The tag must match `Cargo.toml`'s version, since the
+app's update check compares the two.
+
+- `python tools/create_release.py` shows the tag it would push
+- `python tools/create_release.py --push` tags the current version and pushes it
+- `python tools/create_release.py --bump patch --push` raises the version
+  first (also `minor` or `major`), commits that, then tags and pushes
+- `--suffix rc1` makes a pre-release tag such as `v0.1.0-rc1`
+
+The workflow builds Windows, macOS and Linux in parallel and collects them into
+a draft release on GitHub, to review and publish. Every push to `main` also
+builds and runs the quick test suites (`.github/workflows/ci.yml`).
 
 ### App icons
 
