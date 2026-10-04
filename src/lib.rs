@@ -135,7 +135,7 @@ impl ApplicationHandler for App {
 
         #[cfg(target_os = "windows")]
         {
-            let file_bytes = include_bytes!("../assets/skf_icon.png");
+            let file_bytes = include_bytes!("../assets/icon.png");
             let diffuse_image = image::load_from_memory(file_bytes).unwrap();
             let rgba = diffuse_image.to_rgba8();
             let pixels = rgba.as_bytes().to_vec();

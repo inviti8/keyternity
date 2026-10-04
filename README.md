@@ -126,8 +126,7 @@ SkelForm's runtimes as is.
 
 Keyternity is under active development, and there's no release yet. The first
 release is planned as `v0.1.0`; Keyternity versions start fresh rather than
-continuing SkelForm's. The app icon is still SkelForm's until Keyternity's own
-is ready.
+continuing SkelForm's.
 
 Keyternity keeps its settings in its own folder (`keyternity`), separate from an
 installed SkelForm, and installs alongside it rather than over it. Rig files stay
@@ -163,6 +162,12 @@ Notable arguments:
 ### Native desktop release
 
 See the `release` folder.
+
+### App icons
+
+`assets/icon_SRC.svg` is the master. After changing it, regenerate the window
+icon, the Windows `.ico` (also the web favicon) and the macOS `.icns` with
+`uv run tools/regen_icons.py` (needs ImageMagick's `magick` on PATH).
 
 ### Tests
 
