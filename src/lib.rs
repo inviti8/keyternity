@@ -66,6 +66,7 @@ pub mod export_modal;
 pub mod file_reader;
 pub mod keyframe_editor;
 pub mod keyframe_panel;
+pub mod mesh_tools;
 pub mod modal;
 pub mod navigation;
 pub mod renderer;

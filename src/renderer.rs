@@ -23,6 +23,7 @@ pub fn render(
         return;
     }
     let sel = selections.clone();
+    let raw_input = input;
 
     // no edits are being made if the LMB isn't down
     if !input.left_down && (edit_mode.is_moving || edit_mode.is_rotating || edit_mode.is_scaling) {
@@ -216,7 +217,8 @@ pub fn render(
                 pos /= tb.scale;
 
                 // editing this bone's mesh, add this as new vertex candidate
-                if edit_mode.editing_mesh && input.left_clicked && new_vert == None {
+                let mesh_tool = edit_mode.tool.edits_mesh();
+                if edit_mode.editing_mesh && !mesh_tool && input.left_clicked && new_vert == None {
                     new_vert = Some((vert(Some(pos), None, Some(uv)), VertSite::Tri(t)));
                     break;
                 }
@@ -338,6 +340,16 @@ pub fn render(
         let mouse = mouse_world_vert;
         let wv = bone.world_verts.clone();
 
+        // Pen and Eraser handle the mouse themselves: the usual click, drag and
+        // right-click mesh edits see an idle mouse
+        let mesh_tool = edit_mode.tool.edits_mesh();
+        let idle_input = InputStates {
+            mouse: input.mouse,
+            mouse_prev: input.mouse_prev,
+            ..Default::default()
+        };
+        let input = if mesh_tool { &idle_input } else { input };
+
         // prepare drawing buffers for vertex points and lines
         let current_hover_id = selections.hovering_vert_id;
         #[rustfmt::skip]
@@ -357,8 +369,8 @@ pub fn render(
         add_offseted_indices(&mut indices, &mut lines_i);
 
         // draw hovered triangle if neither a vertex nor a line is hovered
-        let (idx, mut hovering_tri) = bone_triangle(&bone, &mouse, wv);
-        if hovering_tri.len() > 0 && on_vert == -1 && !on_line && !camera.on_ui {
+        let (idx, mut hovering_tri) = bone_triangle(&bone, &mouse, wv.clone());
+        if hovering_tri.len() > 0 && on_vert == -1 && !on_line && !camera.on_ui && !mesh_tool {
             is_hovering_tri = true;
             hovering_tri[0].color = Color::new(0, 200, 0, 100);
             hovering_tri[1].color = Color::new(0, 200, 0, 100);
@@ -379,6 +391,12 @@ pub fn render(
             }
         }
         hovered_vert = on_vert != -1 && !camera.on_ui;
+
+        if edit_mode.tool == Tool::Eraser {
+            let (mut ov, mut oi) = eraser(&bone, &wv, &mouse, raw_input, camera, config, edit_mode, renderer, events);
+            lines_v.append(&mut ov);
+            add_offseted_indices(&mut oi, &mut lines_i);
+        }
 
         // draw vertex points and lines
         setup_render_buffer(&mut renderer.meshframe_buffer, &lines_v, &lines_i, queue);
@@ -1595,6 +1613,74 @@ pub fn bone_vertices(
     }
 
     (all_verts, all_indices, hovering_vert_id)
+}
+
+/// Eraser tool on the selected mesh (docs/TOPOLOGY_TOOLS.md §6): highlights the
+/// vertex or edge under the cursor and erases what a held left button passes over.
+/// Returns the highlight's geometry.
+fn eraser(
+    bone: &Bone,
+    world_verts: &Vec<Vertex>,
+    mouse: &Vertex,
+    input: &InputStates,
+    camera: &Camera,
+    config: &Config,
+    edit_mode: &EditMode,
+    renderer: &mut Renderer,
+    events: &mut EventState,
+) -> (Vec<Vertex>, Vec<u32>) {
+    if !input.left_down {
+        renderer.erasing = false;
+    }
+    if camera.on_ui {
+        return (vec![], vec![]);
+    }
+
+    // a stroke starts on press; its first erase takes the undo snapshot
+    if input.left_pressed {
+        renderer.erasing = true;
+        renderer.erase_last = None;
+    }
+
+    let pick = mesh_tools::pick(world_verts, &bone.indices, mouse.pos, camera.window);
+    let Some(pick) = pick else {
+        return (vec![], vec![]);
+    };
+
+    if renderer.erasing {
+        let spacing = mesh_tools::ERASE_SPACING_PX;
+        let moved = renderer.erase_last.map_or(true, |last| (input.mouse - last).mag() > spacing);
+        if moved {
+            if renderer.erase_last == None {
+                events.erase_start();
+            }
+            // Ctrl swaps dissolve and delete for this stroke
+            let delete = edit_mode.eraser_delete != input.holding_mod;
+            renderer.erase_pick = Some((pick, delete));
+            renderer.erase_last = Some(input.mouse);
+            events.erase_mesh();
+        }
+    }
+
+    // highlight what would be erased
+    let red = Color::new(230, 60, 60, 255);
+    match pick {
+        mesh_tools::Pick::Vertex(v) => {
+            let pos = world_verts[v as usize].pos;
+            let size = config.center_point_radius * camera.zoom * 1.8;
+            let v2z = Vec2::ZERO;
+            draw_point(&pos, camera, config, &v2z, red, v2z, 45. * 3.14 / 180., size)
+        }
+        mesh_tools::Pick::Edge(i, j) => {
+            let (v0, v1) = (world_verts[i as usize], world_verts[j as usize]);
+            let dir = v0.pos - v1.pos;
+            let base = utils::rotate(&Vec2::new(0.006, 0.006), dir.y.atan2(dir.x));
+            #[rustfmt::skip]
+            macro_rules! vert { ($pos:expr) => { Vertex { pos: $pos, color: red, ..v0 } }; }
+            let verts = vec![vert!(v0.pos + base), vert!(v0.pos - base), vert!(v1.pos + base), vert!(v1.pos - base)];
+            (verts, vec![0, 1, 2, 1, 2, 3])
+        }
+    }
 }
 
 fn bone_triangle(tb: &Bone, mouse_world_vert: &Vertex, wv: Vec<Vertex>) -> (u32, Vec<Vertex>) {

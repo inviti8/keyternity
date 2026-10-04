@@ -390,10 +390,38 @@ pub fn simple_event(
         Events::EditModeScale => set_transform_tool(edit_mode, EditModes::Scale),
         Events::SetTool => {
             edit_mode.tool = Tool::from_repr(value as usize).unwrap_or_default();
-            if edit_mode.tool.edits_mesh() && !edit_mode.editing_mesh {
+            if edit_mode.tool.edits_mesh() {
+                // a selection would be dragged by the stroke
                 edit_mode.editing_mesh = true;
                 selections.vert_ids = vec![];
             }
+        }
+        Events::SetEraserDelete => edit_mode.eraser_delete = value == 1.,
+        Events::EraseStart => {
+            undo_states.new_undo_bone(&armature.bones[selections.bone_idx]);
+        }
+        Events::EraseMesh => {
+            let Some((pick, delete)) = renderer.erase_pick.take() else {
+                return;
+            };
+            let bone = armature.sel_bone_mut(&selections).unwrap();
+            match mesh_tools::erase(bone, pick, delete) {
+                Ok(()) => bone.verts_edited = true,
+                Err(topology::TopoError::LastTriangle) => {
+                    // end the stroke, so the modal doesn't reopen as it continues
+                    renderer.erasing = false;
+                    let msg = match pick {
+                        mesh_tools::Pick::Vertex(_) => "vert_limit",
+                        mesh_tools::Pick::Edge(..) => "indices_limit",
+                    };
+                    open_modal(ui, false, ui.loc(msg));
+                }
+                // a concave quad can't flip its diagonal; leave the edge as it is
+                Err(_) => {}
+            }
+            let bone = armature.sel_bone(&selections).unwrap();
+            let ids: Vec<usize> = bone.vertices.iter().map(|v| v.id as usize).collect();
+            selections.vert_ids.retain(|id| ids.contains(id));
         }
         Events::UnselectAll => unselect_all(selections, edit_mode, ui),
         Events::Undo => {

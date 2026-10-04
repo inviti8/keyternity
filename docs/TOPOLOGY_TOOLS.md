@@ -6,7 +6,7 @@
 Eraser meaningful, the triangles a user draws become the mesh: the editor stops
 re-triangulating the whole mesh on every vertex edit.
 
-**Status:** steps 1–3 of §10 implemented (§0). Decisions are in §11.
+**Status:** steps 1–4 of §10 implemented (§0). Decisions are in §11.
 
 
 ## 0. As built
@@ -55,6 +55,23 @@ re-triangulating the whole mesh on every vertex edit.
   20% margin. A bone with no texture is centred at the current zoom.
 - The Zoom tool's options area shows the zoom as a percentage (100% is a new
   armature's 2000), and it can be edited.
+
+**Step 4 (Eraser)**: hit-testing is in `src/mesh_tools.rs`, the canvas side is
+`renderer::eraser`, and the tests are in `tests/mesh_tools.rs`.
+- Shift+K, or the toolbar button, which is enabled when the selected bone has a
+  texture. Picking it turns on Edit Vertices and clears the vertex selection, so
+  a stroke can't drag vertices.
+- Picking happens in screen pixels: a vertex within 9 px, otherwise an edge within
+  6 px. What would be erased is drawn in red.
+- A stroke erases each time the cursor has moved 8 px since its last erase, so
+  holding still over edges a dissolve just made doesn't keep erasing. The
+  stroke's first erase takes the undo snapshot (`EraseStart`), so a press that
+  erases nothing leaves no undo step.
+- Dissolve (the default) or Delete in the options area. Ctrl swaps them for the
+  stroke. Erasing the last triangle shows the limit modal and ends the stroke. A
+  concave edge that can't flip is left as it is.
+- While Pen or Eraser is active, the usual mesh clicks (add a vertex, select,
+  drag, right-click delete) see an idle mouse.
 
 > SkelForm facts below are from this repo's `src/` at `de5b6c31`. Blender behaviour
 > is from the Knife tool (`K` in Edit Mode), which the Pen is modelled on.

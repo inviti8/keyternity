@@ -585,6 +585,7 @@ fn keyboard(ui: &mut egui::Ui, shared_ui: &mut crate::Ui) {
         key!("toggle_bone_fold",     keys.toggle_bone_fold,     true);
         key!("toggle_edit_vertices", keys.toggle_edit_vertices, true);
         key!("tool_pan",             keys.tool_pan,             true);
+        key!("tool_eraser",          keys.tool_eraser,          true);
         key!("fit_view",             keys.fit_view,             true);
         ui.add_space(10.);
         ui.heading(shared_ui.loc("settings_modal.keyboard.sections.keyframe_editor"));

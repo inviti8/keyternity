@@ -938,6 +938,7 @@ pub struct KeyboardConfig {
     pub toggle_bone_fold: egui::KeyboardShortcut,
     pub toggle_edit_vertices: egui::KeyboardShortcut,
     pub tool_pan: egui::KeyboardShortcut,
+    pub tool_eraser: egui::KeyboardShortcut,
     pub fit_view: egui::KeyboardShortcut,
 }
 
@@ -1032,6 +1033,7 @@ impl Default for KeyboardConfig {
             toggle_bone_fold:     regular_key!(egui::Key::C),
             toggle_edit_vertices: regular_key!(egui::Key::V),
             tool_pan:             regular_key!(egui::Key::H),
+            tool_eraser:          shortcut_key!(egui::Modifiers::SHIFT, egui::Key::K),
             fit_view:             regular_key!(egui::Key::Home),
         }
     }
@@ -2147,6 +2149,8 @@ pub type PoseSnapshot = Vec<(i32, Vec2, f32, Vec2)>;
 #[derive(Default, Clone)]
 pub struct EditMode {
     pub tool: Tool,
+    /// Eraser mode: delete (leave a hole) instead of dissolve (keep the surface).
+    pub eraser_delete: bool,
     pub current: EditModes,
     pub temporary: Option<EditModes>,
     pub is_moving: bool,
@@ -2331,6 +2335,12 @@ pub struct Renderer {
     /// Zoom tool press: (anchor in screen px, zoom at press).
     pub zoom_drag: Option<(Vec2, f32)>,
     pub zoom_dragged: bool,
+    /// Eraser: a stroke is in progress (left button held since a press on the canvas).
+    pub erasing: bool,
+    /// Eraser: cursor position (screen px) of the stroke's last erase.
+    pub erase_last: Option<Vec2>,
+    /// Eraser: the hit for the pending EraseMesh event, and whether it deletes.
+    pub erase_pick: Option<(crate::mesh_tools::Pick, bool)>,
     pub started_dragging_verts: bool,
     pub temp_bones: Vec<Bone>,
     pub render_points: bool,
@@ -2394,6 +2404,9 @@ pub enum Events {
     RetriangulateVerts,
     SetTool,
     FitView,
+    EraseStart,
+    EraseMesh,
+    SetEraserDelete,
     DeleteKeyframesByFrame,
     DeleteKeyframeLine,
 
@@ -2562,6 +2575,9 @@ impl EventState {
     generic_event!(retriangulate_verts, Events::RetriangulateVerts);
     event_with_value!(set_tool, E::SetTool, tool, usize);
     generic_event!(fit_view, Events::FitView);
+    generic_event!(erase_start, Events::EraseStart);
+    generic_event!(erase_mesh, Events::EraseMesh);
+    event_with_value!(set_eraser_delete, E::SetEraserDelete, delete, usize);
     generic_event!(cancel_pending_texture, Events::CancelPendingTexture);
     generic_event!(reset_vertices, Events::ResetVertices);
     generic_event!(set_bind_pose, Events::SetBindPose);

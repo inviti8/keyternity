@@ -869,6 +869,13 @@ pub fn kb_inputs(
     if input.consume_shortcut(&config.keys.tool_pan) {
         events.set_tool(Tool::Pan as usize);
     }
+    // consumed before Pen's K would be, since it's K plus a modifier
+    if input.consume_shortcut(&config.keys.tool_eraser) {
+        let bone = armature.sel_bone(selections);
+        if bone != None && armature.tex_of(bone.unwrap().id) != None {
+            events.set_tool(Tool::Eraser as usize);
+        }
+    }
     if input.consume_shortcut(&config.keys.fit_view) {
         events.fit_view();
     }
@@ -1815,11 +1822,23 @@ fn toolbar(
             }
             sep!();
 
-            // topology tools: not built yet (§5, §6)
+            // topology tools, on the selected bone's mesh
             let soon = shared_ui.loc("toolbar.coming_soon");
-            for (icon, name) in [(ToolIcon::Pen, "toolbar.pen"), (ToolIcon::Eraser, "toolbar.eraser")] {
-                let hover = format!("{}\n\n{}", shared_ui.loc(name), soon);
-                tool_button(ui, shared_ui, config, icon, false, false, hover);
+            let hover = format!("{}\n\n{}", shared_ui.loc("toolbar.pen"), soon);
+            tool_button(ui, shared_ui, config, ToolIcon::Pen, false, false, hover);
+
+            let mut hover = format!(
+                "{} ({})\n\n{}",
+                shared_ui.loc("toolbar.eraser"),
+                keys.tool_eraser.display(),
+                shared_ui.loc("toolbar.eraser_desc")
+            );
+            if !has_tex {
+                hover += &format!("\n\n{}", shared_ui.loc("toolbar.needs_texture"));
+            }
+            let selected = edit_mode.tool == Tool::Eraser;
+            if tool_button(ui, shared_ui, config, ToolIcon::Eraser, selected, has_tex, hover).clicked() {
+                events.set_tool(Tool::Eraser as usize);
             }
 
             // mesh actions, while editing the selected bone's mesh
@@ -1888,6 +1907,26 @@ fn tool_options(
     shared_ui: &mut crate::Ui,
     config: &Config,
 ) {
+    // eraser mode; Ctrl swaps it for one stroke
+    if edit_mode.tool == Tool::Eraser {
+        let mut col = config.colors.text;
+        col -= Color::new(50, 50, 50, 0);
+        let hint = shared_ui.loc("toolbar.eraser_swap");
+        ui.label(egui::RichText::new(hint).color(col));
+        ui.add_space(6.);
+        let delete = shared_ui.loc("toolbar.eraser_delete");
+        let delete_desc = shared_ui.loc("toolbar.eraser_delete_desc");
+        if selection_button(delete, edit_mode.eraser_delete, ui).on_hover_text(delete_desc).clicked() {
+            events.set_eraser_delete(1);
+        }
+        let dissolve = shared_ui.loc("toolbar.eraser_dissolve");
+        let dissolve_desc = shared_ui.loc("toolbar.eraser_dissolve_desc");
+        if selection_button(dissolve, !edit_mode.eraser_delete, ui).on_hover_text(dissolve_desc).clicked() {
+            events.set_eraser_delete(0);
+        }
+        return;
+    }
+
     // zoom level: 100% is the default zoom of a new armature
     if edit_mode.tool == Tool::Zoom {
         let percent = DEFAULT_ZOOM / camera.zoom * 100.;
