@@ -2,6 +2,7 @@
 
 use crate::*;
 use image::GenericImageView;
+use topology::VertSite;
 use utils::shortest_angle_delta;
 use wgpu::{BindGroup, BindGroupLayout, Device, Queue, RenderPass};
 
@@ -118,7 +119,7 @@ pub fn render(
     next_arm.bones.sort_by(|a, b| b.zindex.cmp(&a.zindex));
 
     // many fight for spot of newest vertex; only one will emerge victorious.
-    let mut new_vert: Option<Vertex> = None;
+    let mut new_vert: Option<(Vertex, VertSite)> = None;
     let mut hovered_vert = false;
 
     let mut hovering_bone_id = -1;
@@ -195,7 +196,7 @@ pub fn render(
             && renderer.render_textures
         {
             let wv = &temp_arm.bones[b].world_verts;
-            for (_, chunk) in temp_arm.bones[b].indices.chunks_exact(3).enumerate() {
+            for (t, chunk) in temp_arm.bones[b].indices.chunks_exact(3).enumerate() {
                 let c0 = chunk[0] as usize;
                 let c1 = chunk[1] as usize;
                 let c2 = chunk[2] as usize;
@@ -216,7 +217,7 @@ pub fn render(
 
                 // editing this bone's mesh, add this as new vertex candidate
                 if edit_mode.editing_mesh && input.left_clicked && new_vert == None {
-                    new_vert = Some(vert(Some(pos), None, Some(uv)));
+                    new_vert = Some((vert(Some(pos), None, Some(uv)), VertSite::Tri(t)));
                     break;
                 }
 
@@ -374,11 +375,7 @@ pub fn render(
 
             // remove this triangle if right-clicking
             if edit_mode.editing_mesh && input.right_clicked {
-                if armature.sel_bone(&sel).unwrap().indices.len() == 6 {
-                    events.open_modal("indices_limit", false);
-                } else {
-                    events.delete_triangle(idx as usize * 3);
-                }
+                events.delete_triangle(idx as usize * 3);
             }
         }
         hovered_vert = on_vert != -1 && !camera.on_ui;
@@ -492,8 +489,9 @@ pub fn render(
         draw(&renderer.meshframe_buffer, render_pass, 0, indices.len());
     }
 
-    if new_vert != None {
-        renderer.new_vert = new_vert;
+    if let Some((vert, site)) = new_vert {
+        renderer.new_vert = Some(vert);
+        renderer.new_vert_site = site;
         events.select_vertex(-1, false);
         events.new_vertex();
     }
@@ -1575,12 +1573,8 @@ pub fn bone_vertices(
         let (mut verts, mut indices) = point!(wv, col, size, rot);
         add_point!(verts, indices, wv);
         if input.right_clicked {
-            if world_verts.len() <= 4 {
-                events.open_modal("vert_limit", false);
-            } else {
-                events.delete_vertex(wv);
-                break;
-            }
+            events.delete_vertex(wv);
+            break;
         }
 
         if input.left_pressed {
@@ -1628,7 +1622,7 @@ pub fn vert_lines(
     bone: &Bone,
     bones: &Vec<Bone>,
     mouse_world_vert: &Vertex,
-    new_vert: &mut Option<Vertex>,
+    new_vert: &mut Option<(Vertex, VertSite)>,
     editable: bool,
     hovering_vert: bool,
     camera: &Camera,
@@ -1722,7 +1716,8 @@ pub fn vert_lines(
                     let wv0 = utils::rotate(&(v[i0 as usize].pos - bone.pos), -bone.rot);
                     let wv1 = utils::rotate(&(v[i1 as usize].pos - bone.pos), -bone.rot);
                     let pos = wv0 + (wv1 - wv0) * interp;
-                    *new_vert = Some(vert(Some(pos / bone.scale), None, Some(uv)));
+                    let site = VertSite::Edge(i0, i1);
+                    *new_vert = Some((vert(Some(pos / bone.scale), None, Some(uv)), site));
                     added_vert = true;
                 }
             }

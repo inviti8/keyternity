@@ -40,7 +40,7 @@ pub fn iterate_events(
             E::DeleteSelectedKeyframes | E::DeleteKeyframeLine | E::PasteKeyframesOnFrame => {
                 undo_states.new_undo_anim(armature.sel_anim(&selections).unwrap())
             }
-            E::ResetVertices | E::CenterBoneVerts | E::DeleteVertex | E::TraceBoneVerts | E::NewVertex | E::DeleteTriangle => {
+            E::ResetVertices | E::CenterBoneVerts | E::DeleteVertex | E::TraceBoneVerts | E::NewVertex | E::DeleteTriangle | E::RetriangulateVerts => {
                 undo_states.new_undo_bone(&armature.bones[selections.bone_idx])
             }
             _ => {}
@@ -676,35 +676,14 @@ pub fn simple_event(
             armature.set_bone_tex(value as i32, str_value.clone(), selections.anim, frame);
         }
         Events::DeleteVertex => {
-            let sel = selections;
-            #[rustfmt::skip]
-            macro_rules! verts {() => { armature.sel_bone_mut(&sel).unwrap().vertices }}
-            let vert_id = verts!()[value as usize].id;
-
-            let tex_img = renderer::sel_tex_img(&armature.sel_bone(&sel).unwrap(), &armature);
-            verts!().remove(value as usize);
-            verts!() = sort_vertices(verts!().clone());
-            let verts = verts!().clone();
-            let bone = armature.sel_bone_mut(&sel).unwrap();
-            bone.indices = triangulate(&verts, &tex_img);
-            remove_blacklisted_tris(&mut bone.indices, &bone.vertices, &mut bone.blacklist);
-            cleanup_vertices(bone);
-
-            // remove vertex from selected IDs
-            let idx = sel.vert_ids.iter().position(|id| (*id) == vert_id as usize);
-            if idx != None {
-                sel.vert_ids.remove(idx.unwrap());
+            // right-click on a vertex dissolves it: the hole is filled from its neighbours
+            let bone = armature.sel_bone_mut(&selections).unwrap();
+            let vert_id = bone.vertices[value as usize].id as usize;
+            if topology::dissolve_vertex(bone, value as u32).is_err() {
+                open_modal(ui, false, ui.loc("vert_limit"));
+                return;
             }
-
-            // remove this vert from its binds
-            'bind: for bind in &mut armature.sel_bone_mut(&sel).unwrap().binds {
-                for v in 0..bind.verts.len() {
-                    if bind.verts[v].id == vert_id as i32 {
-                        bind.verts.remove(v);
-                        continue 'bind;
-                    }
-                }
-            }
+            selections.vert_ids.retain(|id| *id != vert_id);
         }
         Events::DragVertex => {
             let bones = &renderer.temp_bones;
@@ -838,41 +817,40 @@ pub fn simple_event(
             }
         }
         Events::DeleteTriangle => {
-            let bone = &mut armature.sel_bone_mut(&selections).unwrap();
-            bone.blacklist
-                .push(bone.vertices[bone.indices[value as usize + 0] as usize].id);
-            bone.blacklist
-                .push(bone.vertices[bone.indices[value as usize + 1] as usize].id);
-            bone.blacklist
-                .push(bone.vertices[bone.indices[value as usize + 2] as usize].id);
-            remove_blacklisted_tris(&mut bone.indices, &bone.vertices, &mut bone.blacklist);
+            let bone = armature.sel_bone_mut(&selections).unwrap();
+            if topology::remove_triangle(bone, value as usize / 3).is_err() {
+                open_modal(ui, false, ui.loc("indices_limit"));
+                return;
+            }
+            let ids: Vec<usize> = bone.vertices.iter().map(|v| v.id as usize).collect();
+            selections.vert_ids.retain(|id| ids.contains(id));
         }
         Events::NewVertex => {
             // remove drag vertex action, since it's always triggered
             undo_states.undo_actions.pop();
             undo_states.new_undo_bone(&armature.bones[selections.bone_idx]);
 
-            let sel = &selections;
-            let tex_img = renderer::sel_tex_img(armature.sel_bone(sel).unwrap(), &armature);
-            let bone_mut = armature.sel_bone_mut(sel).unwrap();
-
-            // give unique ID to vertex
-            bone_mut.vertices.push(renderer.new_vert.unwrap());
-            let ids: Vec<i32> = bone_mut.vertices.iter().map(|v| v.id as i32).collect();
-            bone_mut.vertices.last_mut().unwrap().id = generate_id(ids) as u32;
-
-            // add vertex to mesh
-            bone_mut.vertices = sort_vertices(bone_mut.vertices.clone());
-            bone_mut.indices = triangulate(&mut bone_mut.vertices, &tex_img);
-            remove_blacklisted_tris(
-                &mut bone_mut.indices,
-                &bone_mut.vertices,
-                &mut bone_mut.blacklist,
-            );
-            cleanup_vertices(bone_mut);
-
-            // set this bone as having a mesh
-            bone_mut.verts_edited = true;
+            // split the triangle or edge it was placed on (docs/TOPOLOGY_TOOLS.md §4)
+            let bone_mut = armature.sel_bone_mut(&selections).unwrap();
+            let site = renderer.new_vert_site;
+            if topology::add_vertex(bone_mut, renderer.new_vert.unwrap(), site).is_ok() {
+                bone_mut.verts_edited = true;
+            }
+        }
+        Events::RetriangulateVerts => {
+            // the old automatic behaviour, on demand: Delaunay over the vertices
+            let tex_img = renderer::sel_tex_img(armature.sel_bone(&selections).unwrap(), &armature);
+            let bone = armature.sel_bone_mut(&selections).unwrap();
+            let indices = triangulate(&bone.vertices, &tex_img);
+            if indices.is_empty() {
+                open_modal(ui, false, ui.loc("retriangulate_failed"));
+                return;
+            }
+            bone.indices = indices;
+            bone.verts_edited = true;
+            cleanup_vertices(bone);
+            let ids: Vec<usize> = bone.vertices.iter().map(|v| v.id as usize).collect();
+            selections.vert_ids.retain(|id| ids.contains(id));
         }
         Events::AdjustKeyframesByFPS => {
             let anim_mut = armature.sel_anim_mut(selections).unwrap();
@@ -989,7 +967,6 @@ pub fn simple_event(
             bone.vertices = verts;
             bone.indices = indices;
             bone.binds = vec![];
-            bone.blacklist = vec![];
             bone.verts_edited = true;
             cleanup_vertices(bone);
             selections.bind = -1;
@@ -2027,43 +2004,6 @@ fn tri_point(p: &Vec2, a: &Vec2, b: &Vec2, c: &Vec2) -> (f32, f32, f32, f32) {
     }
 
     (-1., -1., -1., -1.)
-}
-
-pub fn remove_blacklisted_tris(
-    indices: &mut Vec<u32>,
-    verts: &Vec<Vertex>,
-    blacklist: &mut Vec<u32>,
-) {
-    // remove blacklists with vertices that don't exist (prevents lingering triangles)
-    let ids: Vec<u32> = verts.iter().map(|v| v.id).collect();
-    for (b, raw_bl_chunk) in blacklist.clone().chunks_exact_mut(3).enumerate().rev() {
-        let mut chunk = vec![raw_bl_chunk[0], raw_bl_chunk[1], raw_bl_chunk[2]];
-        chunk.sort();
-        if !ids.contains(&chunk[0]) || !ids.contains(&chunk[1]) || !ids.contains(&chunk[2]) {
-            blacklist.remove(b * 3);
-            blacklist.remove(b * 3);
-            blacklist.remove(b * 3);
-        }
-    }
-
-    for (_, raw_bl_chunk) in blacklist.chunks_exact(3).enumerate() {
-        let mut bl_chunk = vec![raw_bl_chunk[0], raw_bl_chunk[1], raw_bl_chunk[2]];
-        bl_chunk.sort();
-        for (ref mut i, raw_chunk) in indices.clone().chunks_exact(3).enumerate() {
-            let mut chunk = vec![
-                verts[raw_chunk[0] as usize].id,
-                verts[raw_chunk[1] as usize].id,
-                verts[raw_chunk[2] as usize].id,
-            ];
-            chunk.sort();
-            if chunk == bl_chunk {
-                indices.remove(*i * 3);
-                indices.remove(*i * 3);
-                indices.remove(*i * 3);
-                break;
-            }
-        }
-    }
 }
 
 pub fn copy_bone(

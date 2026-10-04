@@ -725,22 +725,6 @@ pub fn prepare_files(
         }
     }
 
-    // index blacklist IDs
-    for b in 0..armature_copy.bones.len() {
-        let bone = &mut armature_copy.bones[b];
-
-        // only keep IDs that point to existing vertices
-        bone.blacklist
-            .retain(|id| bone.vertices.iter().position(|v| v.id == *id) != None);
-
-        for i in 0..bone.blacklist.len() {
-            let id = bone.blacklist[i];
-            if let Some(idx) = bone.vertices.iter().position(|v| v.id == id) {
-                bone.blacklist[i] = idx as u32;
-            }
-        }
-    }
-
     for b in 0..armature_copy.bones.len() {
         // if it's a regular rect, empty verts and indices
         let bone = &armature_copy.bones[b];
@@ -886,7 +870,6 @@ pub fn prepare_files(
             ik_disabled: bone.ik_disabled,
             locked: bone.locked,
             group_color: bone.group_color,
-            blacklist: bone.blacklist.clone(),
             anim_folded: bone.anim_folded,
             // bone ids are re-indexed on save, so store the owner's index
             bind_owner: bone
@@ -1148,7 +1131,6 @@ pub fn import<R: Read + std::io::Seek>(
                 bone.ik_disabled = ed_bone.ik_disabled;
                 bone.locked = ed_bone.locked;
                 bone.group_color = ed_bone.group_color;
-                bone.blacklist = ed_bone.blacklist.clone();
                 bone.bind_owner = Some(ed_bone.bind_owner).filter(|id| *id != -1);
                 bone.bind_pose = ed_bone.bind_pose;
             }

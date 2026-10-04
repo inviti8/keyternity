@@ -1225,8 +1225,6 @@ pub struct Bone {
     #[serde(skip)]
     pub group_color: Color,
     #[serde(skip)]
-    pub blacklist: Vec<u32>,
-    #[serde(skip)]
     pub anim_folded: bool,
     /// Bind Pose helper: id of the mesh bone it serves (see `bind_pose.rs`).
     /// Editor-only; saved in editor.json.
@@ -1276,7 +1274,6 @@ pub struct EditorBone {
     pub effects_folded: bool,
     pub ik_disabled: bool,
     pub locked: bool,
-    pub blacklist: Vec<u32>,
     #[serde(default = "default_0_alpha")]
     pub group_color: Color,
     pub anim_folded: bool,
@@ -2295,6 +2292,7 @@ pub struct Renderer {
     pub bone_init_rot: f32,
     pub bone_init_pivot_rot: f32,
     pub new_vert: Option<Vertex>,
+    pub new_vert_site: crate::topology::VertSite,
     pub started_dragging_verts: bool,
     pub temp_bones: Vec<Bone>,
     pub render_points: bool,
@@ -2355,6 +2353,7 @@ pub enum Events {
     DeleteStyle,
     DeleteVertex,
     DeleteTriangle,
+    RetriangulateVerts,
     DeleteKeyframesByFrame,
     DeleteKeyframeLine,
 
@@ -2520,6 +2519,7 @@ impl EventState {
     generic_event!(edit_mode_scale, Events::EditModeScale);
     generic_event!(new_armature, Events::NewArmature);
     generic_event!(new_vertex, Events::NewVertex);
+    generic_event!(retriangulate_verts, Events::RetriangulateVerts);
     generic_event!(cancel_pending_texture, Events::CancelPendingTexture);
     generic_event!(reset_vertices, Events::ResetVertices);
     generic_event!(set_bind_pose, Events::SetBindPose);
