@@ -69,6 +69,7 @@ pub mod keyframe_panel;
 pub mod mesh_tools;
 pub mod modal;
 pub mod navigation;
+pub mod pen;
 pub mod renderer;
 pub mod settings_modal;
 pub mod shared;

@@ -92,3 +92,115 @@ fn erase_dissolves_or_deletes() {
     assert_eq!(bone.indices.len(), 3);
     assert_eq!(bone.vertices.len(), 3);
 }
+
+// --- Pen targeting ---
+
+use skelform_lib::mesh_tools::{PenSnapping, PenTarget, UvMap};
+use skelform_lib::pen::Snap;
+
+/// The 200 px square, carrying UVs: (100,100) is uv (0,0), (300,300) is (1,1).
+fn textured_square() -> (Vec<Vertex>, Vec<u32>) {
+    let (mut verts, indices) = square();
+    let uvs = [(0., 0.), (1., 0.), (1., 1.), (0., 1.)];
+    for (v, (u, w)) in verts.iter_mut().zip(uvs) {
+        v.uv = Vec2::new(u, w);
+    }
+    (verts, indices)
+}
+
+fn snap_on() -> PenSnapping {
+    PenSnapping { snap: true, midpoint: false, angle_lock: false }
+}
+
+fn close_to(a: Vec2, b: Vec2) -> bool {
+    (a - b).mag() < 1e-4
+}
+
+#[test]
+fn uv_map_round_trips_inside_and_outside() {
+    let (verts, indices) = textured_square();
+    let map = UvMap::new(&verts, &indices);
+    // inside: exact
+    assert!(close_to(map.uv_at(mouse(150., 250.)).unwrap(), Vec2::new(0.25, 0.75)));
+    // outside: from the fitted layout
+    assert!(close_to(map.uv_at(mouse(400., 200.)).unwrap(), Vec2::new(1.5, 0.5)));
+    assert!(close_to(map.pos_of(Vec2::new(1.5, 0.5)).unwrap(), mouse(400., 200.)));
+}
+
+#[test]
+fn pen_snaps_to_vertices_then_edges() {
+    let (verts, indices) = textured_square();
+    let map = UvMap::new(&verts, &indices);
+    let target = |x, y, s| mesh_tools::pen_target(&verts, &indices, &map, mouse(x, y), WINDOW, &[], s);
+
+    match target(298., 302., snap_on()) {
+        Some(PenTarget::Place(p, _)) => assert_eq!(p.snap, Snap::Vertex(2)),
+        t => panic!("{t:?}"),
+    }
+    match target(150., 103., snap_on()) {
+        Some(PenTarget::Place(p, pos)) => {
+            assert_eq!(p.snap, Snap::Edge);
+            assert!(close_to(p.uv, Vec2::new(0.25, 0.)));
+            assert!(close_to(pos, mouse(150., 100.)), "drawn on the edge");
+        }
+        t => panic!("{t:?}"),
+    }
+    let midpoint = PenSnapping { midpoint: true, ..snap_on() };
+    match target(150., 103., midpoint) {
+        Some(PenTarget::Place(p, _)) => assert!(close_to(p.uv, Vec2::new(0.5, 0.))),
+        t => panic!("{t:?}"),
+    }
+    // snapping off: a free point where the cursor is
+    match target(150., 103., PenSnapping::default()) {
+        Some(PenTarget::Place(p, _)) => {
+            assert_eq!(p.snap, Snap::Free);
+            assert!(close_to(p.uv, Vec2::new(0.25, 0.015)));
+        }
+        t => panic!("{t:?}"),
+    }
+}
+
+#[test]
+fn pen_free_points_stay_on_the_texture() {
+    let (verts, indices) = textured_square();
+    let map = UvMap::new(&verts, &indices);
+    let t = mesh_tools::pen_target(&verts, &indices, &map, mouse(500., 200.), WINDOW, &[], snap_on());
+    match t {
+        Some(PenTarget::Place(p, pos)) => {
+            assert!(close_to(p.uv, Vec2::new(1., 0.5)), "clamped to the texture's edge");
+            assert!(close_to(pos, mouse(300., 200.)));
+        }
+        t => panic!("{t:?}"),
+    }
+}
+
+#[test]
+fn pen_closes_and_finishes_cuts() {
+    let (verts, indices) = textured_square();
+    let map = UvMap::new(&verts, &indices);
+    let active = [mouse(150., 150.), mouse(250., 150.), mouse(250., 250.)];
+    let target = |x, y| mesh_tools::pen_target(&verts, &indices, &map, mouse(x, y), WINDOW, &active, snap_on());
+    assert_eq!(target(152., 151.), Some(PenTarget::Close));
+    assert_eq!(target(249., 252.), Some(PenTarget::Finish));
+    // two points can't close yet: the first point is just a place
+    let two = &active[..2];
+    let t = mesh_tools::pen_target(&verts, &indices, &map, mouse(152., 151.), WINDOW, two, snap_on());
+    assert!(matches!(t, Some(PenTarget::Place(..))));
+}
+
+#[test]
+fn pen_angle_lock_keeps_45_degree_steps() {
+    let (verts, indices) = textured_square();
+    let map = UvMap::new(&verts, &indices);
+    let active = [mouse(150., 150.)];
+    let lock = PenSnapping { snap: false, midpoint: false, angle_lock: true };
+    // nearly diagonal: snaps onto the 45° line
+    let t = mesh_tools::pen_target(&verts, &indices, &map, mouse(210., 200.), WINDOW, &active, lock);
+    match t {
+        Some(PenTarget::Place(_, pos)) => {
+            let px = mesh_tools::to_screen(pos, WINDOW);
+            assert!(((px.x - 150.) - (px.y - 150.)).abs() < 1e-2, "{px:?}");
+        }
+        t => panic!("{t:?}"),
+    }
+}

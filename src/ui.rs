@@ -319,6 +319,7 @@ pub fn draw(
             Tool::Pan => shared_ui.cursor_icon = egui::CursorIcon::Grab,
             Tool::Zoom if input.holding_alt => shared_ui.cursor_icon = egui::CursorIcon::ZoomOut,
             Tool::Zoom => shared_ui.cursor_icon = egui::CursorIcon::ZoomIn,
+            Tool::Pen => shared_ui.cursor_icon = egui::CursorIcon::Crosshair,
             _ => {}
         }
     }
@@ -696,6 +697,9 @@ pub fn kb_inputs(
             shared_ui.modal = false;
         } else if shared_ui.polar_modal {
             shared_ui.polar_modal = false;
+        } else if !modal_open && edit_mode.tool == Tool::Pen {
+            // discards pending cuts; with none, unselects as usual
+            events.pen_cancel();
         } else if modal_open {
             shared_ui.styles_modal = false;
             shared_ui.settings_modal = false;
@@ -711,6 +715,19 @@ pub fn kb_inputs(
 
     if shared_ui.feedback_modal {
         return;
+    }
+
+    // Pen keys, ahead of the shortcuts they'd otherwise trigger (Backspace, C)
+    if edit_mode.tool == Tool::Pen && !modal_open {
+        if input.consume_key(egui::Modifiers::NONE, egui::Key::Enter) {
+            events.pen_apply();
+        }
+        if input.consume_shortcut(&config.keys.delete) {
+            events.pen_backspace();
+        }
+        if input.consume_key(egui::Modifiers::NONE, egui::Key::C) {
+            events.toggle_pen_angle_lock();
+        }
     }
 
     if input.consume_shortcut(&config.keys.undo) {
@@ -870,11 +887,12 @@ pub fn kb_inputs(
         events.set_tool(Tool::Pan as usize);
     }
     // consumed before Pen's K would be, since it's K plus a modifier
-    if input.consume_shortcut(&config.keys.tool_eraser) {
-        let bone = armature.sel_bone(selections);
-        if bone != None && armature.tex_of(bone.unwrap().id) != None {
-            events.set_tool(Tool::Eraser as usize);
-        }
+    let has_tex = armature.sel_bone(selections).map_or(false, |b| armature.tex_of(b.id) != None);
+    if input.consume_shortcut(&config.keys.tool_eraser) && has_tex {
+        events.set_tool(Tool::Eraser as usize);
+    }
+    if input.consume_shortcut(&config.keys.tool_pen) && has_tex {
+        events.set_tool(Tool::Pen as usize);
     }
     if input.consume_shortcut(&config.keys.fit_view) {
         events.fit_view();
@@ -1823,9 +1841,19 @@ fn toolbar(
             sep!();
 
             // topology tools, on the selected bone's mesh
-            let soon = shared_ui.loc("toolbar.coming_soon");
-            let hover = format!("{}\n\n{}", shared_ui.loc("toolbar.pen"), soon);
-            tool_button(ui, shared_ui, config, ToolIcon::Pen, false, false, hover);
+            let mut hover = format!(
+                "{} ({})\n\n{}",
+                shared_ui.loc("toolbar.pen"),
+                keys.tool_pen.display(),
+                shared_ui.loc("toolbar.pen_desc")
+            );
+            if !has_tex {
+                hover += &format!("\n\n{}", shared_ui.loc("toolbar.needs_texture"));
+            }
+            let selected = edit_mode.tool == Tool::Pen;
+            if tool_button(ui, shared_ui, config, ToolIcon::Pen, selected, has_tex, hover).clicked() {
+                events.set_tool(Tool::Pen as usize);
+            }
 
             let mut hover = format!(
                 "{} ({})\n\n{}",
@@ -1907,6 +1935,26 @@ fn tool_options(
     shared_ui: &mut crate::Ui,
     config: &Config,
 ) {
+    // pen: snapping and angle lock, and how to finish
+    if edit_mode.tool == Tool::Pen {
+        let mut col = config.colors.text;
+        col -= Color::new(50, 50, 50, 0);
+        let hint = shared_ui.loc("toolbar.pen_hint");
+        ui.label(egui::RichText::new(hint).color(col));
+        ui.add_space(6.);
+        let angle = shared_ui.loc("toolbar.pen_angle");
+        let angle_desc = shared_ui.loc("toolbar.pen_angle_desc");
+        if selection_button(angle, edit_mode.pen_angle_lock, ui).on_hover_text(angle_desc).clicked() {
+            events.toggle_pen_angle_lock();
+        }
+        let snap = shared_ui.loc("toolbar.pen_snap");
+        let snap_desc = shared_ui.loc("toolbar.pen_snap_desc");
+        if selection_button(snap, !edit_mode.pen_no_snap, ui).on_hover_text(snap_desc).clicked() {
+            events.toggle_pen_snap();
+        }
+        return;
+    }
+
     // eraser mode; Ctrl swaps it for one stroke
     if edit_mode.tool == Tool::Eraser {
         let mut col = config.colors.text;

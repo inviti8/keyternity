@@ -939,6 +939,7 @@ pub struct KeyboardConfig {
     pub toggle_edit_vertices: egui::KeyboardShortcut,
     pub tool_pan: egui::KeyboardShortcut,
     pub tool_eraser: egui::KeyboardShortcut,
+    pub tool_pen: egui::KeyboardShortcut,
     pub fit_view: egui::KeyboardShortcut,
 }
 
@@ -1034,6 +1035,7 @@ impl Default for KeyboardConfig {
             toggle_edit_vertices: regular_key!(egui::Key::V),
             tool_pan:             regular_key!(egui::Key::H),
             tool_eraser:          shortcut_key!(egui::Modifiers::SHIFT, egui::Key::K),
+            tool_pen:             regular_key!(egui::Key::K),
             fit_view:             regular_key!(egui::Key::Home),
         }
     }
@@ -2151,6 +2153,10 @@ pub struct EditMode {
     pub tool: Tool,
     /// Eraser mode: delete (leave a hole) instead of dissolve (keep the surface).
     pub eraser_delete: bool,
+    /// Pen: don't snap to vertices and edges (Shift held does the same).
+    pub pen_no_snap: bool,
+    /// Pen: keep segments at multiples of 45°.
+    pub pen_angle_lock: bool,
     pub current: EditModes,
     pub temporary: Option<EditModes>,
     pub is_moving: bool,
@@ -2341,6 +2347,15 @@ pub struct Renderer {
     pub erase_last: Option<Vec2>,
     /// Eraser: the hit for the pending EraseMesh event, and whether it deletes.
     pub erase_pick: Option<(crate::mesh_tools::Pick, bool)>,
+    /// Pen: the cuts placed so far, applied together on Enter.
+    pub pen_cuts: Vec<crate::pen::PenCut>,
+    /// Pen: the last cut is still being drawn (the next click extends it).
+    pub pen_open: bool,
+    /// Pen: bumped whenever `pen_cuts` changes, to refresh the preview.
+    pub pen_rev: u64,
+    /// Pen: the preview's key (rev, bone id, vertex and index counts), the
+    /// resulting mesh, and its report.
+    pub pen_preview: Option<((u64, i32, usize, usize), Bone, crate::pen::CutReport)>,
     pub started_dragging_verts: bool,
     pub temp_bones: Vec<Bone>,
     pub render_points: bool,
@@ -2407,6 +2422,11 @@ pub enum Events {
     EraseStart,
     EraseMesh,
     SetEraserDelete,
+    PenApply,
+    PenCancel,
+    PenBackspace,
+    TogglePenAngleLock,
+    TogglePenSnap,
     DeleteKeyframesByFrame,
     DeleteKeyframeLine,
 
@@ -2578,6 +2598,11 @@ impl EventState {
     generic_event!(erase_start, Events::EraseStart);
     generic_event!(erase_mesh, Events::EraseMesh);
     event_with_value!(set_eraser_delete, E::SetEraserDelete, delete, usize);
+    generic_event!(pen_apply, Events::PenApply);
+    generic_event!(pen_cancel, Events::PenCancel);
+    generic_event!(pen_backspace, Events::PenBackspace);
+    generic_event!(toggle_pen_angle_lock, Events::TogglePenAngleLock);
+    generic_event!(toggle_pen_snap, Events::TogglePenSnap);
     generic_event!(cancel_pending_texture, Events::CancelPendingTexture);
     generic_event!(reset_vertices, Events::ResetVertices);
     generic_event!(set_bind_pose, Events::SetBindPose);

@@ -25,6 +25,13 @@ pub fn render(
     let sel = selections.clone();
     let raw_input = input;
 
+    // pending Pen cuts only live while the Pen is out (D7)
+    if edit_mode.tool != Tool::Pen && !renderer.pen_cuts.is_empty() {
+        renderer.pen_cuts.clear();
+        renderer.pen_open = false;
+        renderer.pen_preview = None;
+    }
+
     // no edits are being made if the LMB isn't down
     if !input.left_down && (edit_mode.is_moving || edit_mode.is_rotating || edit_mode.is_scaling) {
         events.update_current_editing(1);
@@ -394,6 +401,13 @@ pub fn render(
 
         if edit_mode.tool == Tool::Eraser {
             let (mut ov, mut oi) = eraser(&bone, &wv, &mouse, raw_input, camera, config, edit_mode, renderer, events);
+            lines_v.append(&mut ov);
+            add_offseted_indices(&mut oi, &mut lines_i);
+        }
+        if edit_mode.tool == Tool::Pen {
+            let sel_bone = armature.sel_bone(&sel).unwrap();
+            #[rustfmt::skip]
+            let (mut ov, mut oi) = pen_tool(&bone, sel_bone, armature, &wv, &mouse, raw_input, camera, config, edit_mode, renderer);
             lines_v.append(&mut ov);
             add_offseted_indices(&mut oi, &mut lines_i);
         }
@@ -1681,6 +1695,183 @@ fn eraser(
             (verts, vec![0, 1, 2, 1, 2, 3])
         }
     }
+}
+
+/// A thick line from `a` to `b` in renderer space, as two triangles.
+fn segment_quad(a: Vec2, b: Vec2, width: f32, color: Color) -> (Vec<Vertex>, Vec<u32>) {
+    let dir = a - b;
+    let base = utils::rotate(&Vec2::new(width, width), dir.y.atan2(dir.x));
+    #[rustfmt::skip]
+    macro_rules! v { ($pos:expr) => { Vertex { pos: $pos, color, ..Default::default() } }; }
+    (vec![v!(a + base), v!(a - base), v!(b + base), v!(b - base)], vec![0, 1, 2, 1, 2, 3])
+}
+
+/// Pen tool on the selected mesh (docs/TOPOLOGY_TOOLS.md §5): places points on
+/// click, ends a cut on right-click, and draws the cuts, the segment to the
+/// cursor, the snap target, and a preview of the faces Enter would add.
+fn pen_tool(
+    bone: &Bone,
+    sel_bone: &Bone,
+    armature: &Armature,
+    world_verts: &Vec<Vertex>,
+    mouse: &Vertex,
+    input: &InputStates,
+    camera: &Camera,
+    config: &Config,
+    edit_mode: &EditMode,
+    renderer: &mut Renderer,
+) -> (Vec<Vertex>, Vec<u32>) {
+    use mesh_tools::PenTarget;
+    let map = mesh_tools::UvMap::new(world_verts, &bone.indices);
+    let point_pos = |p: &pen::PenPoint| mesh_tools::pen_point_pos(p, world_verts, &map);
+
+    // the cut being drawn, in renderer space
+    let active: Vec<Vec2> = match (renderer.pen_open, renderer.pen_cuts.last()) {
+        (true, Some(cut)) => cut.points.iter().filter_map(|p| point_pos(p)).collect(),
+        _ => vec![],
+    };
+    let snapping = mesh_tools::PenSnapping {
+        snap: !edit_mode.pen_no_snap && !input.holding_shift,
+        midpoint: input.holding_mod,
+        angle_lock: edit_mode.pen_angle_lock,
+    };
+    let target = if camera.on_ui {
+        None
+    } else {
+        #[rustfmt::skip]
+        let t = mesh_tools::pen_target(world_verts, &bone.indices, &map, mouse.pos, camera.window, &active, snapping);
+        t
+    };
+
+    // clicks place points; right-click ends the cut being drawn
+    if !camera.on_ui && input.left_clicked {
+        match target {
+            Some(PenTarget::Close) => {
+                renderer.pen_cuts.last_mut().unwrap().closed = true;
+                renderer.pen_open = false;
+            }
+            Some(PenTarget::Finish) => renderer.pen_open = false,
+            Some(PenTarget::Place(point, _)) => {
+                if !renderer.pen_open {
+                    renderer.pen_cuts.push(pen::PenCut::default());
+                    renderer.pen_open = true;
+                }
+                renderer.pen_cuts.last_mut().unwrap().points.push(point);
+            }
+            None => {}
+        }
+        renderer.pen_rev += 1;
+    }
+    if !camera.on_ui && input.right_clicked && renderer.pen_open {
+        renderer.pen_open = false;
+        renderer.pen_rev += 1;
+    }
+
+    // the result of applying the cuts as they are, cached until they change
+    let key = (renderer.pen_rev, sel_bone.id, sel_bone.vertices.len(), sel_bone.indices.len());
+    if renderer.pen_preview.as_ref().map_or(true, |(k, ..)| *k != key) {
+        renderer.pen_preview = None;
+        if !renderer.pen_cuts.is_empty() {
+            let mut result = sel_bone.clone();
+            let tex_size = armature.tex_of(sel_bone.id).map(|t| t.size).unwrap_or_default();
+            if let Ok(report) = pen::apply_cuts(&mut result, &renderer.pen_cuts, tex_size) {
+                renderer.pen_preview = Some((key, result, report));
+            }
+        }
+    }
+
+    let mut verts: Vec<Vertex> = vec![];
+    let mut indices: Vec<u32> = vec![];
+    macro_rules! add {
+        ($geo:expr) => {{
+            let (mut v, mut i) = $geo;
+            let offset = verts.len() as u32;
+            for idx in &mut i {
+                *idx += offset;
+            }
+            verts.append(&mut v);
+            indices.append(&mut i);
+        }};
+    }
+
+    // preview: the faces Enter would add
+    let mut dropped = vec![];
+    if let Some((_, result, report)) = &renderer.pen_preview {
+        let key = |ids: [u32; 3]| {
+            let mut k = ids;
+            k.sort();
+            k
+        };
+        let ids = |b: &Bone, t: &[u32]| key([0, 1, 2].map(|k| b.vertices[t[k] as usize].id));
+        let before: Vec<[u32; 3]> = sel_bone.indices.chunks_exact(3).map(|t| ids(sel_bone, t)).collect();
+        let fill = Color::new(80, 210, 120, 70);
+        for t in result.indices.chunks_exact(3) {
+            if before.contains(&ids(result, t)) {
+                continue;
+            }
+            let corners: Vec<Vec2> =
+                t.iter().filter_map(|i| map.pos_of(result.vertices[*i as usize].uv)).collect();
+            if corners.len() == 3 {
+                let tri = corners.iter().map(|p| Vertex { pos: *p, color: fill, ..Default::default() });
+                add!((tri.collect::<Vec<_>>(), vec![0, 1, 2]));
+            }
+        }
+        dropped = report.dropped.clone();
+    }
+
+    // the cuts: segments that will produce nothing are drawn dim red
+    let width = 0.004;
+    let live = Color::new(240, 200, 60, 255);
+    let dead = Color::new(230, 60, 60, 150);
+    let point_size = config.center_point_radius * camera.zoom * 1.2;
+    let v2z = Vec2::ZERO;
+    for (c, cut) in renderer.pen_cuts.iter().enumerate() {
+        let n = cut.points.len();
+        let mut pairs: Vec<(usize, usize)> = (1..n).map(|k| (k - 1, k)).collect();
+        if cut.closed && n > 2 {
+            pairs.push((n - 1, 0));
+        }
+        for (a, b) in pairs {
+            let (Some(pa), Some(pb)) = (point_pos(&cut.points[a]), point_pos(&cut.points[b])) else {
+                continue;
+            };
+            let gone = dropped.contains(&(c, a)) || dropped.contains(&(c, b));
+            add!(segment_quad(pa, pb, width, if gone { dead } else { live }));
+        }
+        for (k, p) in cut.points.iter().enumerate() {
+            if let Some(pos) = point_pos(p) {
+                let col = if dropped.contains(&(c, k)) { dead } else { live };
+                add!(draw_point(&pos, camera, config, &v2z, col, v2z, 0., point_size));
+            }
+        }
+    }
+
+    // the segment to the cursor, and what a click would hit
+    let white = Color::new(255, 255, 255, 220);
+    match target {
+        Some(PenTarget::Place(point, pos)) => {
+            if let Some(last) = active.last() {
+                add!(segment_quad(*last, pos, width * 0.6, Color::new(255, 255, 255, 140)));
+            }
+            let col = match point.snap {
+                pen::Snap::Vertex(_) => white,
+                pen::Snap::Edge => Color::new(80, 200, 255, 255),
+                pen::Snap::Free => live,
+            };
+            add!(draw_point(&pos, camera, config, &v2z, col, v2z, 45. * 3.14 / 180., point_size * 1.4));
+        }
+        Some(PenTarget::Close) => {
+            let green = Color::new(80, 230, 120, 255);
+            add!(draw_point(&active[0], camera, config, &v2z, green, v2z, 0., point_size * 2.));
+        }
+        Some(PenTarget::Finish) => {
+            let last = *active.last().unwrap();
+            add!(draw_point(&last, camera, config, &v2z, white, v2z, 0., point_size * 2.));
+        }
+        None => {}
+    }
+
+    (verts, indices)
 }
 
 fn bone_triangle(tb: &Bone, mouse_world_vert: &Vertex, wv: Vec<Vertex>) -> (u32, Vec<Vertex>) {

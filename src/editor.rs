@@ -40,7 +40,7 @@ pub fn iterate_events(
             E::DeleteSelectedKeyframes | E::DeleteKeyframeLine | E::PasteKeyframesOnFrame => {
                 undo_states.new_undo_anim(armature.sel_anim(&selections).unwrap())
             }
-            E::ResetVertices | E::CenterBoneVerts | E::DeleteVertex | E::TraceBoneVerts | E::NewVertex | E::DeleteTriangle | E::RetriangulateVerts => {
+            E::ResetVertices | E::CenterBoneVerts | E::DeleteVertex | E::TraceBoneVerts | E::NewVertex | E::DeleteTriangle | E::RetriangulateVerts | E::PenApply => {
                 undo_states.new_undo_bone(&armature.bones[selections.bone_idx])
             }
             _ => {}
@@ -390,6 +390,10 @@ pub fn simple_event(
         Events::EditModeScale => set_transform_tool(edit_mode, EditModes::Scale),
         Events::SetTool => {
             edit_mode.tool = Tool::from_repr(value as usize).unwrap_or_default();
+            // pending cuts are discarded on leaving the Pen (D7)
+            if edit_mode.tool != Tool::Pen {
+                clear_pen(renderer);
+            }
             if edit_mode.tool.edits_mesh() {
                 // a selection would be dragged by the stroke
                 edit_mode.editing_mesh = true;
@@ -397,6 +401,48 @@ pub fn simple_event(
             }
         }
         Events::SetEraserDelete => edit_mode.eraser_delete = value == 1.,
+        Events::TogglePenAngleLock => edit_mode.pen_angle_lock = !edit_mode.pen_angle_lock,
+        Events::TogglePenSnap => edit_mode.pen_no_snap = !edit_mode.pen_no_snap,
+        Events::PenApply => {
+            if renderer.pen_cuts.is_empty() {
+                return;
+            }
+            let bone = armature.sel_bone(&selections).unwrap();
+            let tex_size = armature.tex_of(bone.id).map(|t| t.size).unwrap_or_default();
+            let bone = armature.sel_bone_mut(&selections).unwrap();
+            match pen::apply_cuts(bone, &renderer.pen_cuts, tex_size) {
+                Ok(_) => clear_pen(renderer),
+                Err(topology::TopoError::Degenerate) => {
+                    open_modal(ui, false, ui.loc("pen_degenerate"));
+                }
+                Err(_) => open_modal(ui, false, ui.loc("pen_failed")),
+            }
+            let bone = armature.sel_bone(&selections).unwrap();
+            let ids: Vec<usize> = bone.vertices.iter().map(|v| v.id as usize).collect();
+            selections.vert_ids.retain(|id| ids.contains(id));
+        }
+        Events::PenCancel => {
+            if renderer.pen_cuts.is_empty() {
+                unselect_all(selections, edit_mode, ui);
+            } else {
+                clear_pen(renderer);
+            }
+        }
+        Events::PenBackspace => {
+            if let Some(cut) = renderer.pen_cuts.last_mut() {
+                if cut.closed {
+                    cut.closed = false;
+                } else {
+                    cut.points.pop();
+                }
+                if cut.points.is_empty() {
+                    renderer.pen_cuts.pop();
+                }
+                // carry on drawing the cut that's now last
+                renderer.pen_open = !renderer.pen_cuts.is_empty();
+                renderer.pen_rev += 1;
+            }
+        }
         Events::EraseStart => {
             undo_states.new_undo_bone(&armature.bones[selections.bone_idx]);
         }
@@ -1745,6 +1791,12 @@ fn edit_bone(
         .1;
     anim[anim_id].keyframes[frame].value = value;
     anim[anim_id].keyframes[frame].value_str = value_str;
+}
+
+fn clear_pen(renderer: &mut crate::Renderer) {
+    renderer.pen_cuts.clear();
+    renderer.pen_open = false;
+    renderer.pen_rev += 1;
 }
 
 fn set_transform_tool(edit_mode: &mut EditMode, mode: EditModes) {

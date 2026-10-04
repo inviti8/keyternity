@@ -6,7 +6,7 @@
 Eraser meaningful, the triangles a user draws become the mesh: the editor stops
 re-triangulating the whole mesh on every vertex edit.
 
-**Status:** steps 1–4 of §10 implemented (§0). Decisions are in §11.
+**Status:** steps 1–5 of §10 implemented (§0). Decisions are in §11.
 
 
 ## 0. As built
@@ -72,6 +72,49 @@ re-triangulating the whole mesh on every vertex edit.
   concave edge that can't flip is left as it is.
 - While Pen or Eraser is active, the usual mesh clicks (add a vertex, select,
   drag, right-click delete) see an idle mouse.
+
+**Step 5 (Pen)**: the cut algorithm is `pen::apply_cuts` (`src/pen.rs`, tests in
+`tests/pen.rs`). Placement and snapping are in `src/mesh_tools.rs` (tests in
+`tests/mesh_tools.rs`), and the canvas side is `renderer::pen_tool`.
+- The algorithm follows §5.3:
+  - Edge-snapped points are inserted first with `topology::add_vertex`, so they
+    sit exactly on their edge.
+  - Every vertex and free point goes into a spade CDT in UV space. Every existing
+    edge is added with `try_add_constraint`; a failure means the mesh overlaps
+    itself in UV, which is reported as `TopoError::Degenerate`.
+  - Cut segments are added with `add_constraint_and_split`.
+  - Faces are classified as follows:
+    - Faces inside an original triangle are kept.
+    - An empty region (connected across non-constraint edges) is filled if all
+      three hold: no non-constraint side opens onto the outer face, it touches a
+      cut, and either the area was outside the mesh before the cut or it is
+      bounded by cuts alone. "Before the cut" is a second flood that also
+      crosses cut-only edges.
+  - Surviving triangles keep their corners and order; new ones follow, wound
+    like the majority.
+- **Placing points outside the mesh (refines §5.2):** both UV and bone position
+  come from a least-squares affine fit of the mesh's own layout, rather than the
+  texture rect. That works for traced and imported meshes whose UV-to-position
+  layout isn't the rect's. The rect is only the fallback when the vertices are
+  collinear. Inside a triangle, placement is barycentric. Free points are clamped
+  to the texture (UV 0..1).
+- **Interaction:**
+  - Click to place.
+  - Clicking the cut's first point (once it has 3 or more points) closes it, and
+    clicking its last point ends it, which is how a double-click works.
+  - Right-click ends the cut.
+  - Enter applies all cuts as one undo step (`PenApply`).
+  - Esc discards them; with nothing pending, Esc unselects as usual.
+  - Backspace removes the last point (or reopens a closed cut). In the Pen it
+    never deletes a bone.
+  - Shift places freely, and Ctrl snaps to the edge midpoint.
+  - C toggles the 45° lock while the Pen is active, which takes over the
+    bone-fold key. Snap and 45° are also buttons in the options area.
+  - Leaving the Pen discards pending cuts (D7).
+- **Preview (departure from §5.4):** after each click the cuts are applied to a
+  copy of the mesh, cached until they change. New faces are tinted green.
+  Segments and points that would be dropped are drawn dim red, not dashed, and
+  applying doesn't show a toast, because the preview already shows it.
 
 > SkelForm facts below are from this repo's `src/` at `de5b6c31`. Blender behaviour
 > is from the Knife tool (`K` in Edit Mode), which the Pen is modelled on.

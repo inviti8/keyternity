@@ -31,6 +31,8 @@ pub enum TopoError {
     NonManifold,
     /// Flipping the edge would fold its quad over (the quad is concave).
     Concave,
+    /// The mesh can't be cut: it overlaps itself, or repeats a point, in UV space.
+    Degenerate,
 }
 
 /// Add `vert` to the mesh at `site`, splitting the triangle (into 3) or the
@@ -215,7 +217,7 @@ fn third(corners: [u32; 3], i: u32, j: u32) -> u32 {
     *corners.iter().find(|c| **c != i && **c != j).unwrap()
 }
 
-fn cross(o: Vec2, a: Vec2, b: Vec2) -> f32 {
+pub(crate) fn cross(o: Vec2, a: Vec2, b: Vec2) -> f32 {
     (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
 }
 
@@ -242,7 +244,7 @@ fn oriented(bone: &Bone, corners: [u32; 3], sign: f32) -> [u32; 3] {
 
 /// Barycentric weights of `p` in triangle (a, b, c). Falls back to equal weights
 /// for a degenerate triangle.
-fn barycentric(p: Vec2, a: Vec2, b: Vec2, c: Vec2) -> (f32, f32, f32) {
+pub(crate) fn barycentric(p: Vec2, a: Vec2, b: Vec2, c: Vec2) -> (f32, f32, f32) {
     let area = cross(a, b, c);
     if area.abs() < EPS {
         return (1. / 3., 1. / 3., 1. / 3.);
@@ -272,7 +274,7 @@ fn segments_cross(p1: Vec2, p2: Vec2, q1: Vec2, q2: Vec2) -> bool {
 }
 
 /// Weight binds of a new vertex: per bind, the corners' weights blended by `weights`.
-fn interpolate_binds(bone: &mut Bone, id: i32, weights: &[(u32, f32)]) {
+pub(crate) fn interpolate_binds(bone: &mut Bone, id: i32, weights: &[(u32, f32)]) {
     let corner_ids: Vec<(i32, f32)> =
         weights.iter().map(|(v, w)| (bone.vertices[*v as usize].id as i32, *w)).collect();
     for bind in &mut bone.binds {
@@ -412,7 +414,7 @@ fn ear_clip(bone: &Bone, poly: &[u32], sign: f32) -> Option<Vec<u32>> {
     Some(out)
 }
 
-fn in_triangle(p: Vec2, a: Vec2, b: Vec2, c: Vec2) -> bool {
+pub(crate) fn in_triangle(p: Vec2, a: Vec2, b: Vec2, c: Vec2) -> bool {
     let d1 = cross(a, b, p);
     let d2 = cross(b, c, p);
     let d3 = cross(c, a, p);
