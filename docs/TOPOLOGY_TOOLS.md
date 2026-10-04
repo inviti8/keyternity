@@ -6,7 +6,7 @@
 Eraser meaningful, the triangles a user draws become the mesh: the editor stops
 re-triangulating the whole mesh on every vertex edit.
 
-**Status:** steps 1 and 2 of §10 implemented (§0). Decisions are in §11.
+**Status:** steps 1–3 of §10 implemented (§0). Decisions are in §11.
 
 
 ## 0. As built
@@ -37,6 +37,24 @@ re-triangulating the whole mesh on every vertex edit.
   `EditMode.current`.
 - Icons: `assets/toolbar_icons.svg` is the placeholder art. It's exported to
   `toolbar_icons.png` (64 px cells) and tinted with the theme's text color.
+
+**Step 3 (navigation)** is in `src/navigation.rs`, with tests in
+`tests/navigation.rs`. The tests check the maths against the renderer's own
+`world_vert`, in all three layouts.
+- Pan (H) and Zoom take the left button: `navigate` runs before the renderer,
+  which then sees the left button as released, so these tools can't select or
+  edit anything. Right-drag still pans in every tool. The cursor shows a
+  grab/grabbing hand for Pan and zoom-in/zoom-out for Zoom.
+- Zoom, scroll and `=`/`-` are multiplicative (×1.25 a step; scroll is
+  `exp(-0.001 · delta)`). The Zoom tool and scroll are anchored on the cursor.
+  This replaces the per-layout x nudge in `CamZoomScroll`. The layouts' fixed
+  camera offset (`world_camera`) is a pure translation, so it cancels out of
+  anchoring.
+- Fit (Home) frames the selected bone, or every visible bone, inside
+  `ctx.available_rect()` after all panels (stored as `Ui.canvas_rect`), with a
+  20% margin. A bone with no texture is centred at the current zoom.
+- The Zoom tool's options area shows the zoom as a percentage (100% is a new
+  armature's 2000), and it can be edited.
 
 > SkelForm facts below are from this repo's `src/` at `de5b6c31`. Blender behaviour
 > is from the Knife tool (`K` in Edit Mode), which the Pen is modelled on.

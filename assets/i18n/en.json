@@ -388,6 +388,10 @@
       "prev_bone": "Previous Bone",
       "toggle_bone_fold": "Toggle Bone Fold",
       "toggle_edit_vertices": "Toggle Editing Vertices",
+      "tool_pan": "Pan Tool",
+      "tool_pan_desc": "Drag with the left mouse button to move the view. Right-drag pans in every tool.",
+      "fit_view": "Fit View",
+      "fit_view_desc": "Frame the selected bone, or the whole armature if none is selected.",
       "sections": {
         "general": "General",
         "editing": "Editing",
@@ -510,7 +514,9 @@
   "toolbar": {
     "pan": "Pan",
     "zoom": "Zoom",
+    "zoom_desc": "Zoom\n\nClick to zoom in, Alt+click to zoom out, or drag left and right.",
     "fit": "Fit View",
+    "fit_desc": "Fit View: frame the selected bone, or the whole armature",
     "pen": "Pen",
     "eraser": "Eraser",
     "retriangulate": "Re-triangulate",

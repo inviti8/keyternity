@@ -308,7 +308,19 @@ pub fn draw(
     draw_resizable_panel(bone_panel_id, panel, events, context, camera);
 
     if !shared_ui.startup_window {
-        toolbar(context, armature, selections, edit_mode, events, shared_ui, config);
+        toolbar(context, armature, selections, edit_mode, events, camera, shared_ui, config);
+    }
+    shared_ui.canvas_rect = Some(context.available_rect());
+
+    // navigation tool cursors, over the canvas
+    if !camera.on_ui {
+        match edit_mode.tool {
+            Tool::Pan if input.left_down => shared_ui.cursor_icon = egui::CursorIcon::Grabbing,
+            Tool::Pan => shared_ui.cursor_icon = egui::CursorIcon::Grab,
+            Tool::Zoom if input.holding_alt => shared_ui.cursor_icon = egui::CursorIcon::ZoomOut,
+            Tool::Zoom => shared_ui.cursor_icon = egui::CursorIcon::ZoomIn,
+            _ => {}
+        }
     }
 
     // adjust bar positions
@@ -526,6 +538,7 @@ pub fn process_inputs(
     context.input_mut(|i| {
         input.holding_mod = i.modifiers.command;
         input.holding_shift = i.modifiers.shift;
+        input.holding_alt = i.modifiers.alt;
         if shared_ui.rename_id == "" {
             kb_inputs(
                 i, shared_ui, events, config, selections, edit_mode, armature, camera,
@@ -851,6 +864,13 @@ pub fn kb_inputs(
         if *bone != None {
             events.toggle_bone_folded(selections.bone_idx, !bone.unwrap().folded);
         }
+    }
+
+    if input.consume_shortcut(&config.keys.tool_pan) {
+        events.set_tool(Tool::Pan as usize);
+    }
+    if input.consume_shortcut(&config.keys.fit_view) {
+        events.fit_view();
     }
 
     if input.consume_shortcut(&config.keys.toggle_edit_vertices) {
@@ -1688,6 +1708,9 @@ fn menu_edit_button(
     });
 }
 
+/// `Camera.zoom` of a new armature, shown as 100% by the Zoom tool.
+const DEFAULT_ZOOM: f32 = 2000.;
+
 /// Icons in `assets/toolbar_icons.png`, in strip order.
 #[derive(Clone, Copy)]
 enum ToolIcon {
@@ -1714,6 +1737,7 @@ fn toolbar(
     selections: &SelectionState,
     edit_mode: &EditMode,
     events: &mut EventState,
+    camera: &Camera,
     shared_ui: &mut crate::Ui,
     config: &Config,
 ) {
@@ -1767,17 +1791,33 @@ fn toolbar(
             }
             sep!();
 
-            // navigation and topology tools: not built yet (§3, §5, §6)
-            let soon = shared_ui.loc("toolbar.coming_soon");
+            // navigation
+            let keys = &config.keys;
             #[rustfmt::skip]
-            let later = [
-                (ToolIcon::Pan, "toolbar.pan"), (ToolIcon::Zoom, "toolbar.zoom"), (ToolIcon::Fit, "toolbar.fit"),
-                (ToolIcon::Pen, "toolbar.pen"), (ToolIcon::Eraser, "toolbar.eraser"),
+            let nav = [
+                (ToolIcon::Pan, Tool::Pan, shared_ui.loc("toolbar.pan"), Some(keys.tool_pan)),
+                (ToolIcon::Zoom, Tool::Zoom, shared_ui.loc("toolbar.zoom_desc"), None),
             ];
-            for (i, (icon, name)) in later.into_iter().enumerate() {
-                if i == 3 {
-                    sep!();
+            for (icon, tool, name, key) in nav {
+                let hover = match key {
+                    Some(key) => format!("{} ({})", name, key.display()),
+                    None => name,
+                };
+                let selected = edit_mode.tool == tool;
+                if tool_button(ui, shared_ui, config, icon, selected, true, hover).clicked() {
+                    events.set_tool(tool as usize);
                 }
+            }
+            let fit = shared_ui.loc("toolbar.fit_desc");
+            let hover = format!("{} ({})", fit, keys.fit_view.display());
+            if tool_button(ui, shared_ui, config, ToolIcon::Fit, false, true, hover).clicked() {
+                events.fit_view();
+            }
+            sep!();
+
+            // topology tools: not built yet (§5, §6)
+            let soon = shared_ui.loc("toolbar.coming_soon");
+            for (icon, name) in [(ToolIcon::Pen, "toolbar.pen"), (ToolIcon::Eraser, "toolbar.eraser")] {
                 let hover = format!("{}\n\n{}", shared_ui.loc(name), soon);
                 tool_button(ui, shared_ui, config, icon, false, false, hover);
             }
@@ -1830,7 +1870,7 @@ fn toolbar(
 
             // the active tool's options, right-aligned
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                tool_options(ui, edit_mode, has_ik, editing_mesh, events, shared_ui, config);
+                tool_options(ui, edit_mode, has_ik, editing_mesh, events, camera, shared_ui, config);
             });
         });
     });
@@ -1844,9 +1884,22 @@ fn tool_options(
     has_ik: bool,
     editing_mesh: bool,
     events: &mut EventState,
+    camera: &Camera,
     shared_ui: &mut crate::Ui,
     config: &Config,
 ) {
+    // zoom level: 100% is the default zoom of a new armature
+    if edit_mode.tool == Tool::Zoom {
+        let percent = DEFAULT_ZOOM / camera.zoom * 100.;
+        let (edited, value, _) =
+            ui.float_input("zoom_percent".to_string(), shared_ui, percent.round(), 1., None);
+        if edited && value > 0. {
+            events.edit_camera(camera.pos.x, camera.pos.y, DEFAULT_ZOOM * 100. / value);
+        }
+        ui.label("%");
+        return;
+    }
+
     // tracing parameters (moved from the bone panel)
     if editing_mesh && shared_ui.tracing {
         let md = "bone_panel.mesh_deformation";

@@ -395,6 +395,7 @@ pub struct InputStates {
     pub right_down: bool,
     pub holding_mod: bool,
     pub holding_shift: bool,
+    pub holding_alt: bool,
     pub mouse_init: Option<Vec2>,
     pub scroll_delta: f32,
 
@@ -532,6 +533,8 @@ pub struct Ui {
     pub keyframe_panel_rect: Option<egui::Rect>,
     pub top_panel_rect: Option<egui::Rect>,
     pub toolbar_rect: Option<egui::Rect>,
+    /// What's left of the window for the canvas, after all panels (egui points).
+    pub canvas_rect: Option<egui::Rect>,
 
     pub rename_id: String,
     // the initial value of what is being edited via input
@@ -934,6 +937,8 @@ pub struct KeyboardConfig {
     pub prev_bone: egui::KeyboardShortcut,
     pub toggle_bone_fold: egui::KeyboardShortcut,
     pub toggle_edit_vertices: egui::KeyboardShortcut,
+    pub tool_pan: egui::KeyboardShortcut,
+    pub fit_view: egui::KeyboardShortcut,
 }
 
 pub trait Display {
@@ -1026,6 +1031,8 @@ impl Default for KeyboardConfig {
             prev_bone:            regular_key!(egui::Key::X),
             toggle_bone_fold:     regular_key!(egui::Key::C),
             toggle_edit_vertices: regular_key!(egui::Key::V),
+            tool_pan:             regular_key!(egui::Key::H),
+            fit_view:             regular_key!(egui::Key::Home),
         }
     }
 }
@@ -2119,6 +2126,11 @@ impl Tool {
     pub fn edits_mesh(&self) -> bool {
         matches!(self, Tool::Pen | Tool::Eraser)
     }
+
+    /// Pan and Zoom use the left button to move the camera.
+    pub fn navigates(&self) -> bool {
+        matches!(self, Tool::Pan | Tool::Zoom)
+    }
 }
 
 #[derive(Default, PartialEq, Clone, FromRepr, serde::Serialize, serde::Deserialize, Debug)]
@@ -2316,6 +2328,9 @@ pub struct Renderer {
     pub bone_init_pivot_rot: f32,
     pub new_vert: Option<Vertex>,
     pub new_vert_site: crate::topology::VertSite,
+    /// Zoom tool press: (anchor in screen px, zoom at press).
+    pub zoom_drag: Option<(Vec2, f32)>,
+    pub zoom_dragged: bool,
     pub started_dragging_verts: bool,
     pub temp_bones: Vec<Bone>,
     pub render_points: bool,
@@ -2378,6 +2393,7 @@ pub enum Events {
     DeleteTriangle,
     RetriangulateVerts,
     SetTool,
+    FitView,
     DeleteKeyframesByFrame,
     DeleteKeyframeLine,
 
@@ -2545,6 +2561,7 @@ impl EventState {
     generic_event!(new_vertex, Events::NewVertex);
     generic_event!(retriangulate_verts, Events::RetriangulateVerts);
     event_with_value!(set_tool, E::SetTool, tool, usize);
+    generic_event!(fit_view, Events::FitView);
     generic_event!(cancel_pending_texture, Events::CancelPendingTexture);
     generic_event!(reset_vertices, Events::ResetVertices);
     generic_event!(set_bind_pose, Events::SetBindPose);

@@ -67,6 +67,7 @@ pub mod file_reader;
 pub mod keyframe_editor;
 pub mod keyframe_panel;
 pub mod modal;
+pub mod navigation;
 pub mod renderer;
 pub mod settings_modal;
 pub mod shared;
@@ -939,12 +940,26 @@ impl BackendRenderer {
             );
         }
 
+        // Pan and Zoom take the left button; the canvas sees it as released
+        let navigating = shared.edit_mode.tool.navigates();
+        let left = (shared.input.left_clicked, shared.input.left_pressed, shared.input.left_down);
+        if navigating {
+            #[rustfmt::skip]
+            navigation::navigate(&shared.camera, &shared.input, &shared.edit_mode, &mut shared.renderer, &mut shared.events);
+            shared.input.left_clicked = false;
+            shared.input.left_pressed = false;
+            shared.input.left_down = false;
+        }
+
         // core rendering logic handled in renderer.rs
         #[rustfmt::skip]
         renderer::render(
             render_pass, &self.gpu.queue, &shared.camera, &shared.input, &mut shared.armature,
             &shared.config, &shared.edit_mode, &mut shared.selections, &mut shared.renderer, &mut shared.events,
         );
+        if navigating {
+            (shared.input.left_clicked, shared.input.left_pressed, shared.input.left_down) = left;
+        }
 
         shared.ui.warnings = warnings::check_warnings(&shared.armature);
     }

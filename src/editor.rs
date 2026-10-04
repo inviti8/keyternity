@@ -371,8 +371,20 @@ pub fn simple_event(
     config: &mut crate::Config,
 ) {
     match event {
-        Events::CamZoomIn => camera.zoom = MIN_ZOOM.max(camera.zoom - 10.),
-        Events::CamZoomOut => camera.zoom += 10.,
+        Events::CamZoomIn => camera.zoom = MIN_ZOOM.max(camera.zoom / navigation::ZOOM_STEP),
+        Events::CamZoomOut => camera.zoom *= navigation::ZOOM_STEP,
+        Events::FitView => {
+            // the selected bone, or every bone if none is selected
+            let ids = armature.sel_bone(selections).map(|bone| vec![bone.id]);
+            let bones = &renderer.temp_bones;
+            let bounds = navigation::bones_bounds(bones, armature, ids.as_deref());
+            if let (Some((min, max)), Some(canvas)) = (bounds, ui.canvas_rect) {
+                let canvas_min = Vec2::new(canvas.min.x, canvas.min.y) * ui.scale;
+                let canvas_max = Vec2::new(canvas.max.x, canvas.max.y) * ui.scale;
+                let offset = renderer::world_camera(camera, config).pos - camera.pos;
+                *camera = navigation::fit(camera, min, max, canvas_min, canvas_max, offset);
+            }
+        }
         Events::EditModeMove => set_transform_tool(edit_mode, EditModes::Move),
         Events::EditModeRotate => set_transform_tool(edit_mode, EditModes::Rotate),
         Events::EditModeScale => set_transform_tool(edit_mode, EditModes::Scale),
@@ -456,12 +468,7 @@ pub fn simple_event(
             armature.sel_bone_mut(&selections).unwrap().effects_folded = value == 1.
         }
         Events::CamZoomScroll => {
-            camera.zoom = MIN_ZOOM.max(camera.zoom - input.scroll_delta);
-            match config.layout {
-                UiLayout::Right => camera.pos.x -= input.scroll_delta * 0.5,
-                UiLayout::Left => camera.pos.x += input.scroll_delta * 0.5,
-                _ => {}
-            }
+            *camera = navigation::zoom_scroll(camera, input.mouse, input.scroll_delta);
         }
         Events::ToggleAnimPanelOpen => {
             edit_mode.anim_open = value == 1.;
