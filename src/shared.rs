@@ -880,27 +880,55 @@ impl Default for Config {
 impl Default for ColorConfig {
     fn default() -> Self {
         ColorConfig {
-            main: Color::new(32, 25, 46, 255),
-            light_accent: Color::new(65, 46, 105, 255),
-            dark_accent: Color::new(44, 36, 64, 255),
+            // Keyternity's teal, from the app icon (#014b6b), at the lightness of
+            // SkelForm's purples; see `retire_skelform_purples`
+            main: Color::new(25, 40, 46, 255),
+            light_accent: Color::new(28, 67, 84, 255),
+            dark_accent: Color::new(36, 57, 66, 255),
             text: Color::new(180, 180, 180, 255),
-            frameline: Color::new(80, 60, 130, 255),
-            gradient: Color::new(28, 20, 42, 255),
+            frameline: Color::new(48, 116, 145, 255),
+            gradient: Color::new(19, 32, 37, 255),
             background: Color::new(50, 50, 50, 255),
             gridline: Color::new(128, 128, 128, 255),
             center_point: Color::new(0, 255, 0, 175),
             inactive_center_point: Color::new(0, 255, 0, 50),
-            link: Color::new(193, 165, 221, 255),
+            link: Color::new(163, 206, 224, 255),
             warning_text: Color::new(214, 168, 0, 0),
             meshdef: Color::new(0, 125, 20, 255),
             texture: Color::new(200, 200, 200, 255),
             inverse_kinematics: Color::new(188, 188, 0, 255),
             ik_target: Color::new(90, 90, 150, 255),
-            transform_rings: Color::new(173, 123, 255, 255),
+            // canvas highlights in the icon's brown (#a1632c), brightened
+            transform_rings: Color::new(240, 153, 76, 255),
             mesh_base: Color::new(0, 255, 0, 255),
-            bound_vert: Color::new(184, 110, 251, 255),
+            bound_vert: Color::new(217, 128, 51, 255),
             attachment_point: Color::new(255, 210, 0, 255),
         }
+    }
+}
+
+impl ColorConfig {
+    /// Swap colours still at SkelForm's purple defaults for Keyternity's. Saved
+    /// settings override defaults, so without this anyone who ran Keyternity
+    /// before the palette change would keep the purples. Colours someone changed
+    /// are left alone.
+    pub fn retire_skelform_purples(&mut self) {
+        let new = ColorConfig::default();
+        macro_rules! swap {
+            ($field:ident, $r:expr, $g:expr, $b:expr) => {
+                if self.$field == Color::new($r, $g, $b, 255) {
+                    self.$field = new.$field;
+                }
+            };
+        }
+        swap!(main, 32, 25, 46);
+        swap!(light_accent, 65, 46, 105);
+        swap!(dark_accent, 44, 36, 64);
+        swap!(frameline, 80, 60, 130);
+        swap!(gradient, 28, 20, 42);
+        swap!(link, 193, 165, 221);
+        swap!(transform_rings, 173, 123, 255);
+        swap!(bound_vert, 184, 110, 251);
     }
 }
 

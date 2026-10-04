@@ -78,6 +78,9 @@ Modifications (GPLv3 section 5a)
     assets/icon.png, assets/icon.ico,
     release/Keyternity.app/Contents/Resources/keyternity.icns, build.rs,
     src/lib.rs, web_build.py, release/Keyternity.app/Contents/Info.plist
+  Teal palette from the app icon replaces SkelForm's purple theme; saved
+  settings still on the purple defaults are updated once
+    src/shared.rs, src/main.rs, index.html, tests/palette.rs
 
 The user-facing strings for all of the above are in assets/i18n/en.json.
 

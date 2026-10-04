@@ -182,6 +182,7 @@ fn init_shared(shared: &mut Shared) {
         if let Ok(data) = serde_json::from_str(&utils::config_keys_str()) {
             shared.config.keys = data;
         }
+        shared.config.colors.retire_skelform_purples();
         utils::save_config(&shared.config);
     }
     #[cfg(target_arch = "wasm32")]
@@ -189,6 +190,7 @@ fn init_shared(shared: &mut Shared) {
         if let Ok(data) = serde_json::from_str(&utils::config_str()) {
             shared.config = data;
         }
+        shared.config.colors.retire_skelform_purples();
         utils::save_config(&shared.config);
         // prevents calling utils::bin_path (crashes on web)
         shared.ui.use_system_ffmpeg = true;
