@@ -427,6 +427,7 @@ pub enum PolarId {
     NewUpdate,
     OpenCrashlog,
     ImportedPsd,
+    Retriangulate,
 }
 enum_string!(PolarId);
 
@@ -530,6 +531,7 @@ pub struct Ui {
     pub armature_panel_rect: Option<egui::Rect>,
     pub keyframe_panel_rect: Option<egui::Rect>,
     pub top_panel_rect: Option<egui::Rect>,
+    pub toolbar_rect: Option<egui::Rect>,
 
     pub rename_id: String,
     // the initial value of what is being edited via input
@@ -690,6 +692,7 @@ pub struct Ui {
     pub timeline_offset: Vec2,
     pub dragged_keyframe: Keyframe,
     pub icon_images: Vec<egui::TextureHandle>,
+    pub toolbar_icons: Vec<egui::TextureHandle>,
     pub deleting_line_bone_id: i32,
     pub deleting_line_element: AnimElement,
     pub selected_keyframes: Vec<Keyframe>,
@@ -2099,6 +2102,25 @@ pub enum EditModes {
     Other,
 }
 
+/// The canvas toolbar's active tool (docs/TOPOLOGY_TOOLS.md §2.3). Move, Rotate and
+/// Scale are all `Transform`; which one is `EditMode.current`.
+#[derive(Default, PartialEq, Clone, Copy, Debug, FromRepr)]
+pub enum Tool {
+    #[default]
+    Transform,
+    Pan,
+    Zoom,
+    Pen,
+    Eraser,
+}
+
+impl Tool {
+    /// Pen and Eraser edit the selected bone's mesh topology.
+    pub fn edits_mesh(&self) -> bool {
+        matches!(self, Tool::Pen | Tool::Eraser)
+    }
+}
+
 #[derive(Default, PartialEq, Clone, FromRepr, serde::Serialize, serde::Deserialize, Debug)]
 pub enum ExportImgFormat {
     #[default]
@@ -2112,6 +2134,7 @@ pub type PoseSnapshot = Vec<(i32, Vec2, f32, Vec2)>;
 
 #[derive(Default, Clone)]
 pub struct EditMode {
+    pub tool: Tool,
     pub current: EditModes,
     pub temporary: Option<EditModes>,
     pub is_moving: bool,
@@ -2354,6 +2377,7 @@ pub enum Events {
     DeleteVertex,
     DeleteTriangle,
     RetriangulateVerts,
+    SetTool,
     DeleteKeyframesByFrame,
     DeleteKeyframeLine,
 
@@ -2520,6 +2544,7 @@ impl EventState {
     generic_event!(new_armature, Events::NewArmature);
     generic_event!(new_vertex, Events::NewVertex);
     generic_event!(retriangulate_verts, Events::RetriangulateVerts);
+    event_with_value!(set_tool, E::SetTool, tool, usize);
     generic_event!(cancel_pending_texture, Events::CancelPendingTexture);
     generic_event!(reset_vertices, Events::ResetVertices);
     generic_event!(set_bind_pose, Events::SetBindPose);

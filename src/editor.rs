@@ -373,9 +373,16 @@ pub fn simple_event(
     match event {
         Events::CamZoomIn => camera.zoom = MIN_ZOOM.max(camera.zoom - 10.),
         Events::CamZoomOut => camera.zoom += 10.,
-        Events::EditModeMove => edit_mode.current = EditModes::Move,
-        Events::EditModeRotate => edit_mode.current = EditModes::Rotate,
-        Events::EditModeScale => edit_mode.current = EditModes::Scale,
+        Events::EditModeMove => set_transform_tool(edit_mode, EditModes::Move),
+        Events::EditModeRotate => set_transform_tool(edit_mode, EditModes::Rotate),
+        Events::EditModeScale => set_transform_tool(edit_mode, EditModes::Scale),
+        Events::SetTool => {
+            edit_mode.tool = Tool::from_repr(value as usize).unwrap_or_default();
+            if edit_mode.tool.edits_mesh() && !edit_mode.editing_mesh {
+                edit_mode.editing_mesh = true;
+                selections.vert_ids = vec![];
+            }
+        }
         Events::UnselectAll => unselect_all(selections, edit_mode, ui),
         Events::Undo => {
             undo_redo(true, undo_states, armature, selections);
@@ -412,6 +419,9 @@ pub fn simple_event(
         }
         Events::ToggleEditingMesh => {
             edit_mode.editing_mesh = !edit_mode.editing_mesh;
+            if !edit_mode.editing_mesh && edit_mode.tool.edits_mesh() {
+                edit_mode.tool = Tool::Transform;
+            }
 
             // unselect all verts when switching modes
             selections.vert_ids = vec![]
@@ -1275,6 +1285,9 @@ fn select_bone(
 ) {
     edit_mode.showing_mesh = false;
     edit_mode.editing_mesh = false;
+    if edit_mode.tool.edits_mesh() {
+        edit_mode.tool = Tool::Transform;
+    }
     edit_mode.sel_time = 0.;
     edit_mode.temporary = None;
     sel.vert_ids = vec![];
@@ -1697,6 +1710,11 @@ fn edit_bone(
         .1;
     anim[anim_id].keyframes[frame].value = value;
     anim[anim_id].keyframes[frame].value_str = value_str;
+}
+
+fn set_transform_tool(edit_mode: &mut EditMode, mode: EditModes) {
+    edit_mode.current = mode;
+    edit_mode.tool = Tool::Transform;
 }
 
 // remove vertices that are not in any triangle

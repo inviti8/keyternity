@@ -487,6 +487,7 @@
     "delete_style": "Are you sure to delete this style?",
     "unsaved": "Quit and discard unsaved changes?\n\n(Click 'Yes' to confirm)",
     "delete_keyframe_line": "Are you sure to delete this keyframe line?",
+    "retriangulate": "Replace this mesh's triangles with an automatic triangulation?\n\nHand-made topology will be lost.",
     "yes": "Yes",
     "no": "No"
   },
@@ -505,6 +506,16 @@
     "EmptyStyles": "Styles with no textures:",
     "UnusedTextures": "Unused textures:",
     "ClassicMultiBind": "$bone has $count vertices in more than one bind. Classic binds place these out of position; turn on Bind Pose for this mesh (in the mesh panel) before binding to blend them correctly."
+  },
+  "toolbar": {
+    "pan": "Pan",
+    "zoom": "Zoom",
+    "fit": "Fit View",
+    "pen": "Pen",
+    "eraser": "Eraser",
+    "retriangulate": "Re-triangulate",
+    "retriangulate_desc": "Replace the triangles with an automatic (Delaunay) triangulation of the current vertices",
+    "coming_soon": "Not available yet."
   },
   "edit_bar": {
     "move": {

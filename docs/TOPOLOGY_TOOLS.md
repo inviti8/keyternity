@@ -6,7 +6,37 @@
 Eraser meaningful, the triangles a user draws become the mesh: the editor stops
 re-triangulating the whole mesh on every vertex edit.
 
-**Status:** design draft for review, not implemented. Decisions are in §11.
+**Status:** steps 1 and 2 of §10 implemented (§0). Decisions are in §11.
+
+
+## 0. As built
+
+**Step 1 (model change)** is in `src/topology.rs`, with tests in `tests/topology.rs`.
+- Click-to-add splits a triangle into 3, or the 1–2 triangles on an edge into 2 each.
+  Right-click on a vertex dissolves it, and right-click on a triangle removes it.
+  The blacklist and edit-time `sort_vertices` are gone. Re-triangulate is
+  `Events::RetriangulateVerts`, behind a yes/no confirmation.
+- **Departure from §5.5:** new vertices only get interpolated weights on
+  **bind-posed** meshes. Classic binds store `Vertex.pos` in the bind bone's frame,
+  so a new vertex added to a classic bind without that offset would jump. Those
+  vertices stay unbound, as before.
+- The DragonBones round-trip test from §9 isn't written yet: the import tests
+  need external sample rigs and are `#[ignore]`d. The "untouched triangles
+  survive a split" property is covered on a synthetic grid instead.
+
+**Step 2 (toolbar shell)** is `toolbar()` in `src/ui.rs`, drawn as a
+`TopBottomPanel` after the side panels.
+- Move, Rotate and Scale work. The snap hints moved to the options area, and
+  `edit_mode_bar` is gone.
+- Trace, Center, Reset and Re-triangulate appear while editing a mesh, and the
+  Trace gap and padding inputs moved to the options area. The bone panel keeps
+  the Edit Vertices toggle and the bind UI.
+- Pan, Zoom, Fit, Pen and Eraser are shown **disabled** ("Not available yet")
+  until steps 3–5. Their shortcuts are added with them.
+- `Tool` is on `EditMode`. Move, Rotate and Scale are `Tool::Transform` plus
+  `EditMode.current`.
+- Icons: `assets/toolbar_icons.svg` is the placeholder art. It's exported to
+  `toolbar_icons.png` (64 px cells) and tinted with the theme's text color.
 
 > SkelForm facts below are from this repo's `src/` at `de5b6c31`. Blender behaviour
 > is from the Knife tool (`K` in Edit Mode), which the Pen is modelled on.

@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Canvas toolbar icons (docs/TOPOLOGY_TOOLS.md §2.5). Placeholder art.
+  One 24x24 cell per icon, left to right, in the order of `ToolIcon` (src/ui.rs).
+  White on transparent; the app tints them with the theme's text color.
+  Export: magick -background none -density 256 toolbar_icons.svg toolbar_icons.png
+  (64 px per icon).
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="312" height="24" viewBox="0 0 312 24"
+     fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <!-- 0 move -->
+  <g transform="translate(0 0)">
+    <path d="M12 3v18M3 12h18"/>
+    <path d="M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3"/>
+  </g>
+  <!-- 1 rotate -->
+  <g transform="translate(24 0)">
+    <path d="M19.5 9A8 8 0 1 0 20 13"/>
+    <path d="M20 4v5h-5"/>
+  </g>
+  <!-- 2 scale -->
+  <g transform="translate(48 0)">
+    <rect x="3" y="11" width="10" height="10" rx="1"/>
+    <path d="M13 3h8v8M21 3l-8 8"/>
+  </g>
+  <!-- 3 pan -->
+  <g transform="translate(72 0)">
+    <path d="M7 12V6.5M10 11V4.5M13 11V4.5M16 12V6.5"/>
+    <path d="M5 11.5v2.5c0 4 3 7 7 7s7-3 7-7V10"/>
+  </g>
+  <!-- 4 zoom -->
+  <g transform="translate(96 0)">
+    <circle cx="10" cy="10" r="6.5"/>
+    <path d="M15 15l6 6M7.5 10h5M10 7.5v5"/>
+  </g>
+  <!-- 5 fit -->
+  <g transform="translate(120 0)">
+    <path d="M3 8V3h5M16 3h5v5M21 16v5h-5M8 21H3v-5"/>
+    <rect x="8.5" y="8.5" width="7" height="7" rx="1"/>
+  </g>
+  <!-- 6 pen -->
+  <g transform="translate(144 0)">
+    <path d="M4 20l1.5-5.5L15 5l4 4-9.5 9.5z"/>
+    <path d="M13 7l4 4"/>
+    <circle cx="4" cy="20" r="1" fill="#ffffff"/>
+  </g>
+  <!-- 7 eraser -->
+  <g transform="translate(168 0)">
+    <path d="M8.5 20L4 15.5 14.5 5 20 10.5 10.5 20z"/>
+    <path d="M9 10.5l5.5 5.5M8.5 20H20"/>
+  </g>
+  <!-- 8 trace -->
+  <g transform="translate(192 0)">
+    <path d="M12 3l8 5-1 9-8 4-7-6 1-8z" stroke-dasharray="2.5 2.5"/>
+    <g fill="#ffffff" stroke="none">
+      <circle cx="12" cy="3" r="1.6"/><circle cx="20" cy="8" r="1.6"/><circle cx="19" cy="17" r="1.6"/>
+      <circle cx="11" cy="21" r="1.6"/><circle cx="4" cy="15" r="1.6"/><circle cx="5" cy="7" r="1.6"/>
+    </g>
+  </g>
+  <!-- 9 center -->
+  <g transform="translate(216 0)">
+    <circle cx="12" cy="12" r="6.5"/>
+    <path d="M12 2v4M12 18v4M2 12h4M18 12h4"/>
+    <circle cx="12" cy="12" r="1" fill="#ffffff"/>
+  </g>
+  <!-- 10 reset -->
+  <g transform="translate(240 0)">
+    <path d="M4.5 9A8 8 0 1 1 4 13"/>
+    <path d="M4 4v5h5"/>
+  </g>
+  <!-- 11 re-triangulate -->
+  <g transform="translate(264 0)">
+    <rect x="3.5" y="3.5" width="17" height="17"/>
+    <path d="M12 3.5v17M3.5 12h17M3.5 12L12 3.5M12 12l8.5-8.5M3.5 20.5L12 12M12 20.5l8.5-8.5"/>
+  </g>
+  <!-- 12 snap -->
+  <g transform="translate(288 0)">
+    <path d="M6 3v9a6 6 0 0 0 12 0V3"/>
+    <path d="M6 7h3.5M14.5 7H18M9.5 3v9a2.5 2.5 0 0 0 5 0V3"/>
+  </g>
+</svg>

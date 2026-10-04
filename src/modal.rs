@@ -150,6 +150,9 @@ pub fn polar_modal(
                 PolarId::ImportedPsd => {
                     events.import_psd_armature();
                 }
+                PolarId::Retriangulate => {
+                    events.retriangulate_verts();
+                }
             }
         },
     );

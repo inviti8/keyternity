@@ -102,6 +102,21 @@ pub fn draw(
     load_png(&mut shared_ui.ik_img, ik_bytes, "lucysir_ik", context);
     let lock_bytes = include_bytes!("../assets/lock.png");
     load_png(&mut shared_ui.lock_img, lock_bytes, "lock", context);
+    if shared_ui.toolbar_icons.is_empty() {
+        let bytes = include_bytes!("../assets/toolbar_icons.png");
+        let strip = image::load_from_memory(bytes).unwrap();
+        let size = strip.height();
+        for i in 0..strip.width() / size {
+            let img = strip.crop_imm(i * size, 0, size, size).into_rgba8();
+            let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                [img.width() as usize, img.height() as usize],
+                img.as_flat_samples().as_slice(),
+            );
+            let name = format!("toolbar_icon_{i}");
+            let tex = context.load_texture(name, color_image, Default::default());
+            shared_ui.toolbar_icons.push(tex);
+        }
+    }
     let icon_size = 200;
     if shared_ui.icon_images.len() == 0 {
         // default animation icon file (baked-in)
@@ -292,9 +307,14 @@ pub fn draw(
     });
     draw_resizable_panel(bone_panel_id, panel, events, context, camera);
 
+    if !shared_ui.startup_window {
+        toolbar(context, armature, selections, edit_mode, events, shared_ui, config);
+    }
+
     // adjust bar positions
     let bone_panel = shared_ui.bone_panel_rect.unwrap();
-    let top_panel = shared_ui.top_panel_rect.unwrap();
+    // bars sit under the toolbar, which sits under the menu bar
+    let top_panel = shared_ui.toolbar_rect.or(shared_ui.top_panel_rect).unwrap();
     let armature_panel = shared_ui.armature_panel_rect.unwrap();
     let keyframe_panel = shared_ui.keyframe_panel_rect;
     match config.layout {
@@ -358,9 +378,6 @@ pub fn draw(
     }
 
     if selections.bone_idx != usize::MAX {
-        edit_mode_bar(
-            context, armature, selections, edit_mode, events, shared_ui, config,
-        );
         bone_pivot_bar(
             context, armature, selections, edit_mode, events, shared_ui, config,
         );
@@ -1671,7 +1688,27 @@ fn menu_edit_button(
     });
 }
 
-fn edit_mode_bar(
+/// Icons in `assets/toolbar_icons.png`, in strip order.
+#[derive(Clone, Copy)]
+enum ToolIcon {
+    Move,
+    Rotate,
+    Scale,
+    Pan,
+    Zoom,
+    Fit,
+    Pen,
+    Eraser,
+    Trace,
+    Center,
+    Reset,
+    Retriangulate,
+}
+
+/// The canvas toolbar (docs/TOPOLOGY_TOOLS.md §2): tools on the left, the active
+/// tool's options on the right. A panel, so it only spans the canvas when drawn
+/// after the side panels.
+fn toolbar(
     egui_ctx: &egui::Context,
     armature: &Armature,
     selections: &SelectionState,
@@ -1680,105 +1717,230 @@ fn edit_mode_bar(
     shared_ui: &mut crate::Ui,
     config: &Config,
 ) {
-    let has_ik;
-    let sel = selections.clone();
-    let bone = armature.sel_bone(&sel);
-    if bone != None {
-        has_ik = bone.unwrap().ik_family_id != -1
-            && !bone.unwrap().ik_disabled
-            && armature.bone_eff(bone.unwrap().id) != JointEffector::Start;
-    } else {
+    let bone = armature.sel_bone(&selections);
+    let has_ik = bone.map_or(false, |bone| {
+        bone.ik_family_id != -1
+            && !bone.ik_disabled
+            && armature.bone_eff(bone.id) != JointEffector::Start
+    });
+    let has_tex = bone.map_or(false, |bone| armature.tex_of(bone.id) != None);
+    let editing_mesh = edit_mode.editing_mesh && has_tex;
+
+    let panel = egui::TopBottomPanel::top("toolbar").frame(egui::Frame {
+        fill: config.colors.main.into(),
+        stroke: Stroke::new(1., config.colors.dark_accent),
+        inner_margin: egui::Margin::symmetric(6, 3),
+        ..Default::default()
+    });
+    let panel = panel.show(egui_ctx, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.;
+            macro_rules! sep {
+                () => {
+                    ui.add_space(4.);
+                    ui.separator();
+                    ui.add_space(4.);
+                };
+            }
+
+            // transform tools
+            type E = EditModes;
+            let transform = edit_mode.tool == Tool::Transform;
+            let can_transform = bone != None && !edit_mode.showing_mesh && !has_ik;
+            #[rustfmt::skip]
+            let transforms = [
+                (ToolIcon::Move, E::Move, "edit_bar.move.heading", config.keys.transform_move),
+                (ToolIcon::Rotate, E::Rotate, "edit_bar.rotate.heading", config.keys.transform_rotate),
+                (ToolIcon::Scale, E::Scale, "edit_bar.scale.heading", config.keys.transform_scale),
+            ];
+            for (icon, mode, name, key) in transforms {
+                let selected = transform && edit_mode.current == mode;
+                let hover = format!("{} ({})", shared_ui.loc(name), key.display());
+                if tool_button(ui, shared_ui, config, icon, selected, can_transform, hover).clicked()
+                {
+                    match mode {
+                        E::Move => events.edit_mode_move(),
+                        E::Rotate => events.edit_mode_rotate(),
+                        _ => events.edit_mode_scale(),
+                    }
+                }
+            }
+            sep!();
+
+            // navigation and topology tools: not built yet (§3, §5, §6)
+            let soon = shared_ui.loc("toolbar.coming_soon");
+            #[rustfmt::skip]
+            let later = [
+                (ToolIcon::Pan, "toolbar.pan"), (ToolIcon::Zoom, "toolbar.zoom"), (ToolIcon::Fit, "toolbar.fit"),
+                (ToolIcon::Pen, "toolbar.pen"), (ToolIcon::Eraser, "toolbar.eraser"),
+            ];
+            for (i, (icon, name)) in later.into_iter().enumerate() {
+                if i == 3 {
+                    sep!();
+                }
+                let hover = format!("{}\n\n{}", shared_ui.loc(name), soon);
+                tool_button(ui, shared_ui, config, icon, false, false, hover);
+            }
+
+            // mesh actions, while editing the selected bone's mesh
+            if editing_mesh {
+                sep!();
+                let bone = bone.unwrap();
+                let md = "bone_panel.mesh_deformation";
+                let trace_desc = if shared_ui.tracing {
+                    format!("{md}.trace_finish_desc")
+                } else {
+                    format!("{md}.trace_desc")
+                };
+                let trace = shared_ui.loc(&format!("{md}.trace"));
+                let hover = format!("{}\n\n{}", trace, shared_ui.loc(&trace_desc));
+                let tracing = shared_ui.tracing;
+                if tool_button(ui, shared_ui, config, ToolIcon::Trace, tracing, true, hover).clicked()
+                {
+                    shared_ui.tracing = !shared_ui.tracing;
+                    if shared_ui.tracing {
+                        let idx = armature.bones.iter().position(|b| b.id == bone.id);
+                        events.save_bone(idx.unwrap());
+                        events.trace_bone_verts();
+                    }
+                }
+
+                macro_rules! action {
+                    ($icon:expr, $name:expr, $desc:expr, $enabled:expr) => {{
+                        let name = shared_ui.loc(&$name);
+                        let hover = format!("{}\n\n{}", name, shared_ui.loc(&$desc));
+                        tool_button(ui, shared_ui, config, $icon, false, $enabled, hover).clicked()
+                    }};
+                }
+                let (center, center_desc) = (format!("{md}.center"), format!("{md}.center_desc"));
+                if action!(ToolIcon::Center, center, center_desc, true) {
+                    events.center_bone_verts();
+                }
+                let (reset, reset_desc) = (format!("{md}.reset"), format!("{md}.reset_desc"));
+                let can_reset = selections.bind == -1;
+                if action!(ToolIcon::Reset, reset, reset_desc, can_reset) {
+                    events.reset_vertices();
+                }
+                let retri = "toolbar.retriangulate";
+                if action!(ToolIcon::Retriangulate, retri, "toolbar.retriangulate_desc", true) {
+                    let str = shared_ui.loc("polar.retriangulate");
+                    events.open_polar_modal(PolarId::Retriangulate, str);
+                }
+            }
+
+            // the active tool's options, right-aligned
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                tool_options(ui, edit_mode, has_ik, editing_mesh, events, shared_ui, config);
+            });
+        });
+    });
+    shared_ui.toolbar_rect = Some(panel.response.rect);
+}
+
+/// Laid out right to left, so items are added in reverse.
+fn tool_options(
+    ui: &mut egui::Ui,
+    edit_mode: &EditMode,
+    has_ik: bool,
+    editing_mesh: bool,
+    events: &mut EventState,
+    shared_ui: &mut crate::Ui,
+    config: &Config,
+) {
+    // tracing parameters (moved from the bone panel)
+    if editing_mesh && shared_ui.tracing {
+        let md = "bone_panel.mesh_deformation";
+        let padding = shared_ui.tracing_padding;
+        let (edited, value, _) =
+            ui.float_input("padding".to_string(), shared_ui, padding, 1., None);
+        if edited {
+            shared_ui.tracing_padding = value;
+            events.trace_bone_verts();
+        }
+        ui.label(shared_ui.loc(&format!("{md}.padding")))
+            .on_hover_text(shared_ui.loc(&format!("{md}.padding_desc")));
+        ui.add_space(8.);
+        let gap = shared_ui.tracing_gap;
+        let (edited, value, _) = ui.float_input("gap".to_string(), shared_ui, gap, 1., None);
+        if edited {
+            shared_ui.tracing_gap = value.max(1.);
+            events.trace_bone_verts();
+        }
+        ui.label(shared_ui.loc(&format!("{md}.gap")))
+            .on_hover_text(shared_ui.loc(&format!("{md}.gap_desc")));
         return;
     }
 
-    // edit mode window
-    #[rustfmt::skip]
-    let window = egui::Window::new("Mode").resizable(false).title_bar(false).max_width(100.).movable(false)
-        .current_pos(egui::Pos2::new(
-            shared_ui.edit_bar.pos.x + 7.5,
-            shared_ui.edit_bar.pos.y - 1.,
-        ));
-    window.show(egui_ctx, |ui| {
-        let keys = &config.keys;
-        ui.horizontal(|ui| {
-            macro_rules! edit_mode_button {
-                ($label:expr, $edit_mode:expr, $event:ident, $check:expr, $key:expr) => {
-                    ui.add_enabled_ui($check, |ui| {
-                        let mut str = egui::text::LayoutJob::default();
-                        ui::job_text(&format!("{} ", $label), None, &mut str);
-                        let mut col = config.colors.text;
-                        col -= Color::new(50, 50, 50, 0);
-                        ui::job_text(&$key, Some(col.into()), &mut str);
-                        if selection_button(str, edit_mode.current == $edit_mode, ui).clicked() {
-                            events.$event()
-                        };
-                    })
-                };
-            }
-            let ikd = !edit_mode.showing_mesh && !has_ik;
-            type E = EditModes;
-
-            let key_move = keys.transform_move.display();
-            let key_rotate = keys.transform_rotate.display();
-            let key_scale = keys.transform_scale.display();
-            let move_str = &shared_ui.loc("edit_bar.move.heading");
-            let rotate_str = &shared_ui.loc("edit_bar.rotate.heading");
-            let scale_str = &shared_ui.loc("edit_bar.scale.heading");
-            edit_mode_button!(move_str, E::Move, edit_mode_move, ikd, key_move);
-            edit_mode_button!(rotate_str, E::Rotate, edit_mode_rotate, ikd, key_rotate);
-            edit_mode_button!(scale_str, E::Scale, edit_mode_scale, ikd, key_scale);
-        });
-        shared_ui.edit_bar.scale = ui.min_rect().size().into();
-
-        // display edit features via shortcuts (snapping, etc) when actively editing
-        macro_rules! edit_feature {
-            ($str:expr, $key:expr, $pressed:expr) => {
-                ui.horizontal(|ui| {
-                    let col = if $pressed {
-                        let mut col = config.colors.light_accent;
-                        col -= Color::new(10, 10, 10, 0);
-                        col
-                    } else {
-                        config.colors.main
-                    };
-                    egui::Frame::new().fill(col.into()).show(ui, |ui| {
-                        ui.label($str);
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label($key.display());
-                        });
-                    });
-                });
+    // snapping hints while dragging a transform (the shortcuts do nothing on IK bones)
+    if edit_mode.tool != Tool::Transform || has_ik {
+        return;
+    }
+    if edit_mode.is_moving || edit_mode.is_rotating || edit_mode.is_scaling {
+        shared_ui.cursor_icon = egui::CursorIcon::Crosshair;
+    }
+    macro_rules! edit_feature {
+        ($str:expr, $key:expr, $pressed:expr) => {
+            let col = if $pressed {
+                let mut col = config.colors.light_accent;
+                col -= Color::new(10, 10, 10, 0);
+                col
+            } else {
+                config.colors.dark_accent
             };
-        }
+            let frame = egui::Frame::new().fill(col.into());
+            frame.inner_margin(egui::Margin::symmetric(4, 1)).show(ui, |ui| {
+                ui.label(format!("{}  {}", $str, $key.display()));
+            });
+        };
+    }
+    if edit_mode.is_moving {
+        let str = shared_ui.loc("edit_bar.move.snap");
+        edit_feature!(str, config.keys.edit_snap, edit_mode.holding_edit_snap);
+    } else if edit_mode.is_rotating {
+        let loc = shared_ui.loc("edit_bar.rotate.snap");
+        let str = format!("{} {}°", loc, config.rot_snap_step);
+        edit_feature!(str, config.keys.edit_snap, edit_mode.holding_edit_snap);
+    } else if edit_mode.is_scaling {
+        let str = shared_ui.loc("edit_bar.scale.ratio");
+        edit_feature!(str, config.keys.edit_modifier, edit_mode.holding_edit_mod);
+        let str = shared_ui.loc("edit_bar.scale.snap");
+        edit_feature!(str, config.keys.edit_snap, edit_mode.holding_edit_snap);
+    }
+}
 
-        // shortcuts won't do anything on IK bones, so don't show
-        if has_ik {
-            return;
-        }
-
-        if edit_mode.is_moving || edit_mode.is_rotating || edit_mode.is_scaling {
-            shared_ui.cursor_icon = egui::CursorIcon::Crosshair;
-        }
-
-        let space = if bone.unwrap().tex != "" { 40. } else { 0. };
-
-        if edit_mode.is_moving {
-            ui.add_space(space);
-            let str = shared_ui.loc("edit_bar.move.snap");
-            edit_feature!(str, config.keys.edit_snap, edit_mode.holding_edit_snap);
-        } else if edit_mode.is_rotating {
-            ui.add_space(space);
-            let loc = shared_ui.loc("edit_bar.rotate.snap");
-            let str = format!("{} {}°", loc, config.rot_snap_step);
-            edit_feature!(&str, config.keys.edit_snap, edit_mode.holding_edit_snap);
-        } else if edit_mode.is_scaling {
-            ui.add_space(space);
-            let str = shared_ui.loc("edit_bar.scale.snap");
-            edit_feature!(str, config.keys.edit_snap, edit_mode.holding_edit_snap);
-            let str = shared_ui.loc("edit_bar.scale.ratio");
-            edit_feature!(str, config.keys.edit_modifier, edit_mode.holding_edit_mod);
-        }
-    });
+fn tool_button(
+    ui: &mut egui::Ui,
+    shared_ui: &crate::Ui,
+    config: &Config,
+    icon: ToolIcon,
+    selected: bool,
+    enabled: bool,
+    hover: String,
+) -> egui::Response {
+    let Some(tex) = shared_ui.toolbar_icons.get(icon as usize) else {
+        return ui.label("?");
+    };
+    let image = egui::Image::new(tex)
+        .fit_to_exact_size(egui::vec2(18., 18.))
+        .tint(config.colors.text);
+    let mut fill = Color32::TRANSPARENT;
+    if selected {
+        fill = ui.visuals().widgets.active.weak_bg_fill + Color32::from_rgb(20, 20, 20);
+    }
+    let button = egui::Button::image(image)
+        .fill(fill)
+        .min_size(egui::vec2(26., 24.))
+        .corner_radius(egui::CornerRadius::same(3));
+    let response = ui.add_enabled(enabled, button);
+    let cursor = if selected {
+        egui::CursorIcon::Default
+    } else {
+        egui::CursorIcon::PointingHand
+    };
+    response
+        .on_hover_text(&hover)
+        .on_disabled_hover_text(&hover)
+        .on_hover_cursor(cursor)
 }
 
 fn bone_pivot_bar(
@@ -1801,7 +1963,7 @@ fn bone_pivot_bar(
     let window = egui::Window::new("BonePivot").resizable(false).title_bar(false).max_width(100.).movable(false)
         .current_pos(egui::Pos2::new(
             shared_ui.edit_bar.pos.x + 7.5,
-            shared_ui.edit_bar.pos.y + 30.,
+            shared_ui.edit_bar.pos.y + 6.,
         ));
     window.show(egui_ctx, |ui| {
         ui.horizontal(|ui| {
@@ -1828,6 +1990,8 @@ fn bone_pivot_bar(
             let str = format!("{}", config.keys.toggle_edit_pivot.display());
             ui.label(egui::RichText::new(str).color(col));
         });
+        // the Right layout places this bar by its width
+        shared_ui.edit_bar.scale = ui.min_rect().size().into();
     });
 }
 
