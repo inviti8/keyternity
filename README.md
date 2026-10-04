@@ -2,6 +2,7 @@
 	<h1>Keyternity</h1>
 	<h3>A 2D skeletal animator built for artists</h3>
 	<p>
+		<a href="docs/TOPOLOGY_TOOLS.md">✏️ Toolbar &amp; Topology Tools</a> -
 		<a href="docs/BIND_POSE.md">🦴 Bind Pose Skinning</a> -
 		<a href="docs/DRAGONBONES_IMPORT.md">📥 DragonBones Import</a> -
 		<a href="docs/DRAGONBONES_EXPORT.md">📤 DragonBones Export</a> -
@@ -45,6 +46,28 @@ SkelForm's runtimes as is.
 
 ## What Keyternity adds on top of SkelForm
 
+- **Canvas toolbar** — a toolbar above the canvas with Move, Rotate and Scale,
+  the navigation tools, the mesh tools, and the mesh actions (Trace, Center,
+  Reset, Re-triangulate). The active tool's options sit on its right
+  ([design](docs/TOPOLOGY_TOOLS.md))
+- **Hand-made mesh topology** — the triangles you make are the mesh. Adding a
+  vertex splits only the triangle or edge it lands on; nothing re-triangulates
+  the whole mesh behind your back, so imported and hand-built topology survives
+  editing. Right-click dissolves a vertex (filling the gap) or removes a
+  triangle; Re-triangulate runs the old automatic triangulation on demand
+- **Pen tool** (K) — draw edges on a mesh, modelled on Blender's Knife. Click to
+  place points, each joined to the last. A cut across the mesh splits the
+  triangles it crosses; a closed loop outside it, or a cut out from its edge and
+  back, fills new area; holes stay holes. A live preview shows the new faces
+  before Enter applies them. Snaps to vertices and edges (Ctrl: an edge's
+  midpoint, Shift: free), with a 45° lock (C)
+- **Eraser tool** (Shift+K) — click or drag over vertices and edges to erase
+  them. Dissolve (the default) keeps the surface and fills the gap; Delete leaves
+  a hole. Ctrl swaps the two for a stroke, and each stroke is one undo step
+- **Navigation tools** — Pan (H), Zoom (click, Alt+click, or drag), and Fit
+  (Home) to frame the selected bone or the whole rig. Zooming, including with the
+  scroll wheel, keeps the point under the cursor still, and steps by the same
+  ratio at any zoom level
 - **DragonBones import** — File › Open a `<name>_ske.json`, with its
   `_tex.json`/`_tex.png` atlas pages. You get bones, slots and display swaps,
   draw order, color, eased and curved keyframes, IK, and weighted meshes; trimmed
@@ -143,6 +166,9 @@ See the `release` folder.
 
 ### Tests
 
+- `cargo test --test topology`, `--test pen`, `--test mesh_tools`,
+  `--test navigation` (mesh topology, Pen cuts, Pen and Eraser picking, camera
+  maths)
 - `cargo test --test bind_pose`
 - `cargo test --test dragonbones_export`
 - `cargo test --test dragonbones_import -- --ignored` (opt-in; needs MSVC and a

@@ -6,7 +6,7 @@
 Eraser meaningful, the triangles a user draws become the mesh: the editor stops
 re-triangulating the whole mesh on every vertex edit.
 
-**Status:** steps 1–5 of §10 implemented (§0). Decisions are in §11.
+**Status:** implemented (§0); user-facing summary in the README. Decisions are in §11.
 
 
 ## 0. As built

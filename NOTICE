@@ -58,6 +58,22 @@ Modifications (GPLv3 section 5a)
     src/modal.rs, src/utils.rs, src/startup_window.rs, assets/startup.json,
     index.html, web_build.py, release/, .gitignore, tests/
 
+2026-10-04
+  Canvas toolbar (transform, navigation and mesh tools; mesh actions moved
+  out of the bone panel; placeholder toolbar icons)
+    src/ui.rs, src/bone_panel.rs, src/modal.rs, src/shared.rs,
+    src/settings_modal.rs, assets/toolbar_icons.svg, assets/toolbar_icons.png
+  Hand-made mesh topology: local vertex insertion, dissolve and delete; the
+  triangle blacklist and automatic re-triangulation on edit removed
+    src/topology.rs, src/editor.rs, src/renderer.rs, src/utils.rs,
+    tests/topology.rs
+  Pan, Zoom and Fit tools; cursor-anchored, multiplicative zoom
+    src/navigation.rs, src/editor.rs, src/lib.rs, tests/navigation.rs
+  Eraser and Pen tools
+    src/mesh_tools.rs, src/pen.rs, src/renderer.rs, src/editor.rs,
+    tests/mesh_tools.rs, tests/pen.rs
+  Design: docs/TOPOLOGY_TOOLS.md
+
 The user-facing strings for all of the above are in assets/i18n/en.json.
 
 
