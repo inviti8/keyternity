@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # /// script
-# dependencies = ["icnsutil"]
+# dependencies = ["icnsutil", "resvg-py"]
 # ///
 """
 Regenerate Keyternity's app icons from the master SVG (assets/icon_SRC.svg).
@@ -10,10 +10,14 @@ match across sizes:
   1. Rasterize icon_SRC.svg once at 2048x2048 (alpha kept) in a temp dir.
   2. Lanczos-resample every derivative from that master.
 
+The SVG is rasterized with resvg, not magick: magick's SVG coders (its own
+MSVG, or a bundled librsvg 2.40) ignore `paint-order`, which the icon relies
+on to tuck strokes behind fills, so strokes came out on top and too heavy.
+
 The ICO is a true multi-image container, built by handing magick all the
 per-size PNGs. The ICNS is packed with icnsutil, because magick's ICNS coder
 writes a single frame; OSTypes are declared explicitly since 1x and 2x
-variants share pixel sizes. The PEP 723 header lets `uv run` install it.
+variants share pixel sizes. The PEP 723 header lets `uv run` install both.
 
 Outputs (relative to the repo root):
   assets/icon.png                                      256x256, window icon (src/lib.rs)
@@ -96,18 +100,21 @@ def display(p: Path) -> str:
 
 
 def rasterize_master(dest: Path) -> bool:
-    """SVG -> 2048 px PNG with alpha. -background and -density precede the
-    input so they apply to rasterizing the SVG."""
-    return run_magick(
-        [
-            "-background", "none",
-            "-density", "1536",
-            str(MASTER_SVG),
-            "-resize", f"{MASTER_RASTER_SIZE}x{MASTER_RASTER_SIZE}",
-            f"PNG32:{dest}",
-        ],
-        f"-> master ({MASTER_RASTER_SIZE}x{MASTER_RASTER_SIZE}, transparent)",
-    )
+    """SVG -> 2048 px PNG with alpha, rendered by resvg."""
+    import resvg_py  # only needed past --check
+
+    print(f"  -> master ({MASTER_RASTER_SIZE}x{MASTER_RASTER_SIZE}, transparent)")
+    try:
+        png = resvg_py.svg_to_bytes(
+            svg_path=str(MASTER_SVG),
+            width=MASTER_RASTER_SIZE,
+            height=MASTER_RASTER_SIZE,
+        )
+    except Exception as e:
+        print(f"    ERROR: resvg failed: {e}", file=sys.stderr)
+        return False
+    dest.write_bytes(bytes(png))
+    return True
 
 
 def resample_png(master: Path, size: int, dest: Path) -> bool:
