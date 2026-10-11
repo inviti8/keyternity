@@ -348,7 +348,7 @@ pub fn read_psd(
             let mut img = image::DynamicImage::ImageRgba8(image.0.clone());
 
             // create empty image (1x1) if layer is empty
-            if img.dimensions().0 == 0 || img.dimensions().0 == 0 {
+            if img.dimensions().0 == 0 || img.dimensions().1 == 0 {
                 img = image::DynamicImage::new(1, 1, image::ColorType::Rgba8);
                 dims = Vec2::new(1., 1.);
             }

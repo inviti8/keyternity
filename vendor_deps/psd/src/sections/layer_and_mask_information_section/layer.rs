@@ -428,24 +428,23 @@ impl IntoRgba for PsdLayer {
     /// above it.
     ///
     /// So we transform the pixel's index based on the layer's left and top
-    /// position within the PSD.
+    /// position within the PSD. Pixels outside the PSD's canvas (a layer can
+    /// extend past it on any side) have no index, rather than wrapping into
+    /// a neighbouring row.
     fn rgba_idx(&self, idx: usize) -> Option<usize> {
         let left_in_layer = idx % self.width() as usize;
-        let left_in_psd = self.layer_properties.layer_left + left_in_layer as i32;
+        let left_in_psd = self.layer_properties.layer_left as i64 + left_in_layer as i64;
 
         let top_in_layer = idx / self.width() as usize;
-        let top_in_psd = self.layer_properties.layer_top + top_in_layer as i32;
+        let top_in_psd = self.layer_properties.layer_top as i64 + top_in_layer as i64;
 
-        let idx = top_in_psd
-            .checked_mul(self.layer_properties.psd_width as i32)
-            .unwrap()
-            + left_in_psd;
-
-        if idx < 0 {
-            None
-        } else {
-            Some(idx as usize)
+        let psd_width = self.layer_properties.psd_width as i64;
+        let psd_height = self.layer_properties.psd_height as i64;
+        if left_in_psd < 0 || left_in_psd >= psd_width || top_in_psd < 0 || top_in_psd >= psd_height {
+            return None;
         }
+
+        Some((top_in_psd * psd_width + left_in_psd) as usize)
     }
 
     fn red(&self) -> &ChannelBytes {

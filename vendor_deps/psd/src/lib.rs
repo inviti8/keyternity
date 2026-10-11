@@ -252,17 +252,24 @@ impl Psd {
         // to perform that operation again.
         let renderer = render::Renderer::new(&layers_to_flatten_top_down, self.width() as usize);
 
-        // Crop psd to layers' boundaries.
-        let mut tl_x = usize::MAX;
-        let mut tl_y = usize::MAX;
-        let mut br_x = 0 as usize;
-        let mut br_y = 0 as usize;
+        // Crop psd to layers' boundaries, clamped to the canvas: layers can
+        // extend past it (or start at negative coordinates), but their RGBA is
+        // canvas-sized. Layer right/bottom are inclusive, hence the + 1.
+        let (psd_w, psd_h) = (self.width() as i64, self.height() as i64);
+        let mut tl_x = i64::MAX;
+        let mut tl_y = i64::MAX;
+        let mut br_x = 0i64;
+        let mut br_y = 0i64;
         for layer in &layers_to_flatten_top_down {
-            tl_x = tl_x.min(layer.layer_left() as usize);
-            tl_y = tl_y.min(layer.layer_top() as usize);
-            br_x = br_x.max(layer.layer_right() as usize);
-            br_y = br_y.max(layer.layer_bottom() as usize);
+            tl_x = tl_x.min(layer.layer_left() as i64);
+            tl_y = tl_y.min(layer.layer_top() as i64);
+            br_x = br_x.max(layer.layer_right() as i64 + 1);
+            br_y = br_y.max(layer.layer_bottom() as i64 + 1);
         }
+        let tl_x = tl_x.clamp(0, psd_w) as usize;
+        let tl_y = tl_y.clamp(0, psd_h) as usize;
+        let br_x = br_x.clamp(0, psd_w) as usize;
+        let br_y = br_y.clamp(0, psd_h) as usize;
         let width = br_x.saturating_sub(tl_x);
         let height = br_y.saturating_sub(tl_y);
         let pixel_count = width * height;
