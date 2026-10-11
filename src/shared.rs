@@ -374,11 +374,20 @@ pub struct Camera {
     pub on_ui: bool,
     #[serde(skip)]
     pub window: Vec2,
+    /// Screen px per UI point (UI scale x display scale), so canvas overlays
+    /// sized in px match the UI on high-DPI displays. 0 until first set.
+    #[serde(skip)]
+    pub px_scale: f32,
 }
 
 impl Camera {
     pub fn aspect_ratio(&self) -> f32 {
         self.window.y / self.window.x
+    }
+
+    /// `px_scale`, or 1 before it's been set.
+    pub fn px(&self) -> f32 {
+        if self.px_scale > 0. { self.px_scale } else { 1. }
     }
 }
 
@@ -429,6 +438,7 @@ pub enum PolarId {
     OpenCrashlog,
     ImportedPsd,
     Retriangulate,
+    TraceWithBinds,
 }
 enum_string!(PolarId);
 
@@ -656,8 +666,15 @@ pub struct Ui {
     pub dragging_handles: bool,
 
     pub tracing: bool,
-    pub tracing_gap: f32,
-    pub tracing_padding: f32,
+    /// Trace options (docs/AUTO_MESH.md §3). `None` takes the texture's default
+    /// (`TraceOptions::for_size`) on the next trace. Density 0 is outline-only.
+    pub tracing_detail: Option<f32>,
+    pub tracing_padding: Option<f32>,
+    pub tracing_density: Option<f32>,
+    pub tracing_alpha: u8,
+    /// Trace only the outline: no interior vertices, for cutting a shape out
+    /// and drawing its topology by hand (docs/AUTO_MESH.md §3)
+    pub tracing_outline_only: bool,
 
     pub pointer_on_timeline: bool,
     pub ik_img: Option<egui::TextureHandle>,
@@ -800,6 +817,25 @@ pub enum UiLayout {
 
 enum_string!(UiLayout);
 
+#[derive(Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum EdgeStyle {
+    #[default]
+    Dotted,
+    Dashed,
+    Solid,
+}
+
+impl EdgeStyle {
+    /// On/off lengths of the pattern, in screen px. `None` for solid.
+    pub fn pattern(self) -> Option<(u32, u32)> {
+        match self {
+            EdgeStyle::Dotted => Some((2, 3)),
+            EdgeStyle::Dashed => Some((6, 4)),
+            EdgeStyle::Solid => None,
+        }
+    }
+}
+
 #[derive(Deserialize, Serialize, Clone)]
 #[serde(default)]
 pub struct Config {
@@ -820,6 +856,15 @@ pub struct Config {
     pub bone_translucency: f32,
     /// Draw textured bones as attachments (small dot + line to parent) instead of full bones
     pub attachment_display: bool,
+    /// Mesh edges (docs/MESH_DISPLAY.md §2): pattern, width in screen px, and
+    /// a faint dark outline so they read on light and dark art
+    pub mesh_edge_style: EdgeStyle,
+    pub mesh_edge_width: f32,
+    pub mesh_edge_outline: bool,
+    /// Color the selected bind's vertices by row hue and weight (MESH_DISPLAY.md §3)
+    pub bind_weight_colors: bool,
+    /// Mesh vertex markers' size, relative to bone center points
+    pub mesh_vert_size: f32,
 
     #[serde(skip)]
     pub colors: ColorConfig,
@@ -848,6 +893,7 @@ pub struct ColorConfig {
     pub ik_target: Color,
     pub transform_rings: Color,
     pub mesh_base: Color,
+    pub mesh_edge: Color,
     pub bound_vert: Color,
     pub attachment_point: Color,
 }
@@ -873,6 +919,11 @@ impl Default for Config {
             rot_snap_step: 22.5,
             bone_translucency: 0.25,
             attachment_display: false,
+            mesh_edge_style: EdgeStyle::Dotted,
+            mesh_edge_width: 1.,
+            mesh_edge_outline: true,
+            bind_weight_colors: true,
+            mesh_vert_size: 1.,
         }
     }
 }
@@ -901,6 +952,7 @@ impl Default for ColorConfig {
             // canvas highlights in the icon's brown (#a1632c), brightened
             transform_rings: Color::new(240, 153, 76, 255),
             mesh_base: Color::new(0, 255, 0, 255),
+            mesh_edge: Color::new(170, 255, 170, 230),
             bound_vert: Color::new(217, 128, 51, 255),
             attachment_point: Color::new(255, 210, 0, 255),
         }
@@ -2402,9 +2454,17 @@ pub struct Renderer {
     pub ring_bindgroup: Option<BindGroup>,
     pub selected_ring_bindgroup: Option<BindGroup>,
     pub flow_kite_bindgroup: Option<BindGroup>,
+    /// Repeating edge patterns (MESH_DISPLAY.md §2.2): dotted, dashed
+    pub edge_pattern_bindgroups: Option<[BindGroup; 2]>,
 
     // buffers
     pub meshframe_buffer: RenderBuffer,
+    /// Patterned edges of the mesh being edited, drawn before `meshframe_buffer`
+    pub edge_buffer: RenderBuffer,
+    /// Mesh wireframe view: its own buffers, so it doesn't overwrite the edit
+    /// overlay's within the same frame
+    pub wireframe_buffer: RenderBuffer,
+    pub wireframe_edge_buffer: RenderBuffer,
     pub bone_buffer: RenderBuffer,
     pub prev_onion_buffer: RenderBuffer,
     pub next_onion_buffer: RenderBuffer,

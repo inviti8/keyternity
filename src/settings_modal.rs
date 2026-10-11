@@ -350,6 +350,11 @@ fn rendering(
                 default!(config, pixel_magnification);
                 default!(config, gridline_front);
                 default!(config, attachment_display);
+                default!(config, mesh_edge_style);
+                default!(config, mesh_edge_width);
+                default!(config, mesh_edge_outline);
+                default!(config, bind_weight_colors);
+                default!(config, mesh_vert_size);
             }
         });
     });
@@ -385,6 +390,56 @@ fn rendering(
         &mut shared_ui.updated_config.attachment_display,
         config,
         false,
+    );
+
+    // mesh edges and bind vertices (docs/MESH_DISPLAY.md)
+    let str_dotted = shared_ui.loc("settings_modal.rendering.mesh_edge_dotted");
+    let str_dashed = shared_ui.loc("settings_modal.rendering.mesh_edge_dashed");
+    let str_solid = shared_ui.loc("settings_modal.rendering.mesh_edge_solid");
+    let used_str = match shared_ui.updated_config.mesh_edge_style {
+        shared::EdgeStyle::Dotted => str_dotted.clone(),
+        shared::EdgeStyle::Dashed => str_dashed.clone(),
+        shared::EdgeStyle::Solid => str_solid.clone(),
+    };
+    alt_hor(ui, config, true, |ui| {
+        ui.label(shared_ui.loc("settings_modal.rendering.mesh_edge_style"));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let combo_box = egui::ComboBox::new("mesh_edge_style", "").selected_text(used_str);
+            combo_box.show_ui(ui, |ui| {
+                let style = &mut shared_ui.updated_config.mesh_edge_style;
+                ui.selectable_value(style, shared::EdgeStyle::Dotted, str_dotted);
+                ui.selectable_value(style, shared::EdgeStyle::Dashed, str_dashed);
+                ui.selectable_value(style, shared::EdgeStyle::Solid, str_solid);
+            });
+        });
+    });
+
+    let width = shared_ui.updated_config.mesh_edge_width;
+    let width_str = "settings_modal.rendering.mesh_edge_width";
+    shared_ui.updated_config.mesh_edge_width =
+        basic_input(width_str, width, shared_ui, ui, config, false).clamp(1., 4.);
+
+    let size = shared_ui.updated_config.mesh_vert_size;
+    let size_str = "settings_modal.rendering.mesh_vert_size";
+    shared_ui.updated_config.mesh_vert_size =
+        basic_input(size_str, size, shared_ui, ui, config, true).clamp(0.1, 3.);
+
+    basic_checkbox(
+        ui,
+        &shared_ui.loc("settings_modal.rendering.mesh_edge_outline"),
+        &shared_ui.loc("settings_modal.rendering.mesh_edge_outline_desc"),
+        &mut shared_ui.updated_config.mesh_edge_outline,
+        config,
+        false,
+    );
+
+    basic_checkbox(
+        ui,
+        &shared_ui.loc("settings_modal.rendering.bind_weight_colors"),
+        &shared_ui.loc("settings_modal.rendering.bind_weight_colors_desc"),
+        &mut shared_ui.updated_config.bind_weight_colors,
+        config,
+        true,
     );
 
     ui.add_space(7.);
@@ -660,6 +715,7 @@ fn colors(ui: &mut egui::Ui, shared_ui: &mut crate::Ui) {
         color_row!("inactive_center_point", &mut colors!().inactive_center_point, true);
         color_row!("transform_rings",       &mut colors!().transform_rings,       true);
         color_row!("mesh_base",  &mut colors!().mesh_base, true);
+        color_row!("mesh_edge",  &mut colors!().mesh_edge, true);
         color_row!("bound_vert", &mut colors!().bound_vert, true);
         color_row!("attachment_point", &mut colors!().attachment_point, true);
         ui.add_space(10.);

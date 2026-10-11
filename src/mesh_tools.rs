@@ -50,6 +50,92 @@ pub fn pick(verts: &[Vertex], indices: &[u32], mouse: Vec2, window: Vec2) -> Opt
     best.map(|(_, p)| p)
 }
 
+/// The edge nearest `mouse` (renderer space) within `EDGE_PICK_PX` (times
+/// `px_scale`, screen px per UI point), and how far along it (0 at `i`, 1 at
+/// `j`) the cursor projects. Edges only: callers that let vertices win check
+/// those first (docs/MESH_DISPLAY.md §2.3).
+pub fn pick_edge(verts: &[Vertex], edges: &[(u32, u32)], mouse: Vec2, window: Vec2, px_scale: f32) -> Option<(u32, u32, f32)> {
+    let m = to_screen(mouse, window);
+    let px = |i: u32| to_screen(verts[i as usize].pos, window);
+
+    let mut best: Option<(f32, (u32, u32, f32))> = None;
+    for &(i, j) in edges {
+        let (a, b) = (px(i), px(j));
+        let d = segment_distance(m, a, b);
+        if d < EDGE_PICK_PX * px_scale && best.map_or(true, |(bd, _)| d < bd) {
+            best = Some((d, (i, j, segment_param(m, a, b))));
+        }
+    }
+    best.map(|(_, e)| e)
+}
+
+/// A line from `a` to `b` (renderer space) as a quad `width_px` wide on screen.
+/// Its uv.x runs from 0 to the line's length divided by `pattern_px`, so a
+/// repeating pattern texture keeps the same on-screen size at any zoom.
+pub fn edge_quad(a: Vec2, b: Vec2, width_px: f32, pattern_px: f32, color: Color, window: Vec2) -> [Vertex; 4] {
+    let (sa, sb) = (to_screen(a, window), to_screen(b, window));
+    let d = sb - sa;
+    let len = d.mag();
+    let n = if len == 0. { Vec2::new(0., 1.) } else { Vec2::new(-d.y / len, d.x / len) } * (width_px / 2.);
+    let u = len / pattern_px.max(1.);
+    let v = |p: Vec2, uv: Vec2| Vertex { pos: from_screen(p, window), uv, color, ..Default::default() };
+    [
+        v(sa + n, Vec2::new(0., 0.)),
+        v(sa - n, Vec2::new(0., 1.)),
+        v(sb + n, Vec2::new(u, 0.)),
+        v(sb - n, Vec2::new(u, 1.)),
+    ]
+}
+
+/// Hues (degrees) for the selected bind's vertices, by row (MESH_DISPLAY.md §3.1).
+/// Neighbouring rows contrast, and nothing sits near the green of unbound vertices.
+pub const BIND_HUES: [f32; 12] = [0., 200., 40., 280., 175., 330., 20., 240., 55., 300., 160., 260.];
+/// Hues within this many degrees of 120 (green) are reserved for unbound vertices.
+pub const BIND_HUE_GREEN_GAP: f32 = 35.;
+
+/// The full-strength color of bind row `row`.
+pub fn bind_hue(row: usize) -> Color {
+    hsv(BIND_HUES[row % BIND_HUES.len()], 1., 1.)
+}
+
+/// Bind row `row`'s vertex color at `weight`: a 25% tint of its hue at weight 0,
+/// rising to the full hue at weight 1.
+pub fn bind_vert_color(row: usize, weight: f32) -> Color {
+    hsv(BIND_HUES[row % BIND_HUES.len()], bind_saturation(weight), 1.)
+}
+
+pub fn bind_saturation(weight: f32) -> f32 {
+    let w = if weight.is_nan() { 0. } else { weight.clamp(0., 1.) };
+    0.25 + 0.75 * w
+}
+
+/// HSV (hue in degrees, saturation and value 0..1) to an opaque color.
+pub fn hsv(h: f32, s: f32, v: f32) -> Color {
+    let h = h.rem_euclid(360.) / 60.;
+    let c = v * s;
+    let x = c * (1. - (h % 2. - 1.).abs());
+    let (r, g, b) = match h as u32 {
+        0 => (c, x, 0.),
+        1 => (x, c, 0.),
+        2 => (0., c, x),
+        3 => (0., x, c),
+        4 => (x, 0., c),
+        _ => (c, 0., x),
+    };
+    let m = v - c;
+    let byte = |f: f32| ((f + m) * 255.).round() as u8;
+    Color::new(byte(r), byte(g), byte(b), 255)
+}
+
+fn segment_param(p: Vec2, a: Vec2, b: Vec2) -> f32 {
+    let d = b - a;
+    let len2 = d.x * d.x + d.y * d.y;
+    if len2 == 0. {
+        return 0.;
+    }
+    (((p.x - a.x) * d.x + (p.y - a.y) * d.y) / len2).clamp(0., 1.)
+}
+
 fn segment_distance(p: Vec2, a: Vec2, b: Vec2) -> f32 {
     let d = b - a;
     let len2 = d.x * d.x + d.y * d.y;

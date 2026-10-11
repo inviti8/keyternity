@@ -204,3 +204,65 @@ fn pen_angle_lock_keeps_45_degree_steps() {
         t => panic!("{t:?}"),
     }
 }
+
+// Mesh display (docs/MESH_DISPLAY.md §2–3)
+
+#[test]
+fn pick_edge_finds_the_nearest_edge_and_where_along_it() {
+    let (verts, indices) = square();
+    let edges = keyternity_lib::topology::edges(&indices);
+    // 4 px below the top edge, a quarter of the way along
+    let (i, j, t) = mesh_tools::pick_edge(&verts, &edges, mouse(150., 104.), WINDOW, 1.).unwrap();
+    assert_eq!((i.min(j), i.max(j)), (0, 1));
+    let along = if i == 0 { t } else { 1. - t };
+    assert!((along - 0.25).abs() < 1e-3, "t = {t}");
+}
+
+#[test]
+fn pick_edge_tolerance_is_in_screen_pixels() {
+    let (verts, indices) = square();
+    let edges = keyternity_lib::topology::edges(&indices);
+    let near = mesh_tools::EDGE_PICK_PX - 1.;
+    let far = mesh_tools::EDGE_PICK_PX + 1.;
+    assert!(mesh_tools::pick_edge(&verts, &edges, mouse(200., 100. - near), WINDOW, 1.).is_some());
+    assert!(mesh_tools::pick_edge(&verts, &edges, mouse(200., 100. - far), WINDOW, 1.).is_none());
+
+    // the same mesh twice as large on screen (zoomed in) keeps the same pixel tolerance
+    let big: Vec<Vertex> = verts.iter().map(|v| Vertex { pos: v.pos * 2. + Vec2::new(1., -1.), ..*v }).collect();
+    let top = mesh_tools::to_screen(big[0].pos, WINDOW).y;
+    assert!(mesh_tools::pick_edge(&big, &edges, mouse(400., top - near), WINDOW, 1.).is_some());
+    assert!(mesh_tools::pick_edge(&big, &edges, mouse(400., top - far), WINDOW, 1.).is_none());
+}
+
+#[test]
+fn edge_quad_has_the_screen_width_and_pattern_length() {
+    // a 100 px horizontal line, 2 px wide, with a 5 px pattern
+    let quad = mesh_tools::edge_quad(at(100., 100.).pos, at(200., 100.).pos, 2., 5., Color::default(), WINDOW);
+    let px: Vec<Vec2> = quad.iter().map(|v| mesh_tools::to_screen(v.pos, WINDOW)).collect();
+    assert!(((px[0].y - px[1].y).abs() - 2.).abs() < 1e-3);
+    assert!((quad[2].uv.x - 20.).abs() < 1e-3);
+    assert_eq!(quad[0].uv.x, 0.);
+}
+
+#[test]
+fn bind_colors_saturate_with_weight() {
+    assert_eq!(mesh_tools::bind_saturation(0.), 0.25);
+    assert_eq!(mesh_tools::bind_saturation(1.), 1.);
+    assert_eq!(mesh_tools::bind_saturation(-3.), 0.25);
+    assert_eq!(mesh_tools::bind_saturation(7.), 1.);
+    assert_eq!(mesh_tools::bind_saturation(f32::NAN), 0.25);
+
+    // row 0 is red: full at weight 1, a pale tint at weight 0
+    assert_eq!(mesh_tools::bind_vert_color(0, 1.), Color::new(255, 0, 0, 255));
+    assert_eq!(mesh_tools::bind_vert_color(0, 0.), Color::new(255, 191, 191, 255));
+    assert_eq!(mesh_tools::bind_hue(0), mesh_tools::bind_vert_color(0, 1.));
+}
+
+#[test]
+fn bind_hues_wrap_and_avoid_unbound_green() {
+    let n = mesh_tools::BIND_HUES.len();
+    assert_eq!(mesh_tools::bind_hue(n + 3), mesh_tools::bind_hue(3));
+    for h in mesh_tools::BIND_HUES {
+        assert!((h - 120.).abs() > mesh_tools::BIND_HUE_GREEN_GAP, "hue {h} too close to green");
+    }
+}

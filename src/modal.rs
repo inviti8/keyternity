@@ -153,6 +153,10 @@ pub fn polar_modal(
                 PolarId::Retriangulate => {
                     events.retriangulate_verts();
                 }
+                PolarId::TraceWithBinds => {
+                    shared_ui.tracing = true;
+                    events.trace_bone_verts();
+                }
             }
         },
     );

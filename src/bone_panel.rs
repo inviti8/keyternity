@@ -869,8 +869,33 @@ pub fn mesh_deformation(
     if bind.verts.len() == 0 {
         ui.label(shared_ui.loc("bone_panel.mesh_deformation.no_bound_verts"));
     } else {
+        // a vertex hovered on the canvas highlights its row and scrolls to it,
+        // once per hover (docs/MESH_DISPLAY.md §3.3)
+        let canvas_hover = selections.hovering_vert_id;
+        let pointer_on_panel = ui.ui_contains_pointer();
+        let scrolled_id = egui::Id::new("bind_row_scrolled_to");
+        let last_scrolled: i32 = ui.data(|d| d.get_temp(scrolled_id)).unwrap_or(-1);
+        if canvas_hover == -1 || pointer_on_panel {
+            ui.data_mut(|d| d.insert_temp(scrolled_id, -1i32));
+        }
+
         for w in 0..bind.verts.len() {
-            ui.horizontal(|ui| {
+            let row_hovered = canvas_hover != -1 && bind.verts[w].id == canvas_hover;
+            let frame = egui::Frame::new().fill(if row_hovered {
+                config.colors.light_accent.into()
+            } else {
+                egui::Color32::TRANSPARENT
+            });
+            let row = frame.show(ui, |ui| ui.horizontal(|ui| {
+                if config.bind_weight_colors {
+                    let size = egui::vec2(11., 11.);
+                    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+                    let fill = mesh_tools::bind_vert_color(w, bind.verts[w].weight);
+                    let hue = mesh_tools::bind_hue(w);
+                    ui.painter().rect_filled(rect, 2., fill);
+                    let stroke = egui::Stroke::new(1., hue);
+                    ui.painter().rect_stroke(rect, 2., stroke, egui::StrokeKind::Inside);
+                }
                 let str_label = format!("#{}:", bind.verts[w].id);
                 let cursor = egui::CursorIcon::Default;
                 if ui.label(str_label).on_hover_cursor(cursor).hovered() {
@@ -894,7 +919,11 @@ pub fn mesh_deformation(
                         events.set_bind_weight(selections.bind as u32, w, new_weight);
                     }
                 });
-            });
+            }));
+            if row_hovered && !pointer_on_panel && last_scrolled != canvas_hover {
+                row.response.scroll_to_me(Some(egui::Align::Center));
+                ui.data_mut(|d| d.insert_temp(scrolled_id, canvas_hover));
+            }
         }
     }
     is_hovering

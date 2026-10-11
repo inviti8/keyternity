@@ -13,6 +13,7 @@ fn camera(layout_x: f32) -> Camera {
         zoom: 2000.,
         on_ui: false,
         window: Vec2::new(1600., 900.),
+        px_scale: 1.,
     }
 }
 

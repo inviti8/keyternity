@@ -1,6 +1,5 @@
 use crate::*;
 use armature_window::get_all_children;
-use image::DynamicImage;
 use spade::Triangulation;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -1048,9 +1047,19 @@ pub fn simple_event(
             let tex = &armature.tex_of(bone.id).unwrap();
             let tex_data = &armature.tex_data;
             let data = tex_data.iter().find(|d| tex.data_id == d.id).unwrap();
-            let (verts, indices) = trace_mesh(&data.image, ui.tracing_gap, ui.tracing_padding);
-            if verts.len() < 4 || indices.len() < 6 {
-                open_modal(ui, false, ui.loc("tracing_high_gap"));
+            let (w, h) = (data.image.width(), data.image.height());
+            let mut opts = auto_mesh::TraceOptions::for_size(w, h);
+            // unset options take this texture's defaults; the toolbar then shows them
+            opts.detail = *ui.tracing_detail.get_or_insert(opts.detail);
+            opts.padding = *ui.tracing_padding.get_or_insert(opts.padding);
+            opts.density = *ui.tracing_density.get_or_insert(opts.density);
+            if ui.tracing_outline_only {
+                opts.density = 0.;
+            }
+            opts.alpha_threshold = ui.tracing_alpha;
+            let (verts, indices) = auto_mesh::trace(&data.image, &opts);
+            if verts.len() < 3 || indices.len() < 3 {
+                open_modal(ui, false, ui.loc("tracing_empty"));
                 return;
             }
             let bone = &mut armature.sel_bone_mut(&selections).unwrap();
@@ -1830,154 +1839,6 @@ pub fn cleanup_vertices(bone: &mut Bone) {
     }
 }
 
-pub fn trace_mesh(
-    texture: &image::DynamicImage,
-    gap: f32,
-    padding: f32,
-) -> (Vec<Vertex>, Vec<u32>) {
-    let mut poi: Vec<Vec2> = vec![];
-
-    // place points across the image where it's own pixel is fully transparent
-    let mut cursor = Vec2::default();
-    while cursor.y < texture.height() as f32 + padding {
-        let out_of_bounds =
-            cursor.x >= texture.width() as f32 || cursor.y >= texture.height() as f32;
-        if out_of_bounds
-            || image::GenericImageView::get_pixel(texture, cursor.x as u32, cursor.y as u32).0[3]
-                == 0
-        {
-            poi.push(cursor);
-        }
-        cursor.x += gap;
-        if cursor.x > texture.width() as f32 + padding {
-            cursor.x = 0.;
-            cursor.y += gap;
-        }
-    }
-
-    // remove points which have 8 neighbours, keeping only points
-    // that are closest to the image
-    let poi_clone = poi.clone();
-    poi.retain(|point| {
-        let left = Vec2::new(point.x - gap, point.y);
-        let right = Vec2::new(point.x + gap, point.y);
-        let up = Vec2::new(point.x, point.y + gap);
-        let down = Vec2::new(point.x, point.y - gap);
-
-        let lt = Vec2::new(point.x - gap, point.y + gap);
-        let lb = Vec2::new(point.x - gap, point.y - gap);
-        let rt = Vec2::new(point.x + gap, point.y + gap);
-        let rb = Vec2::new(point.x + gap, point.y - gap);
-
-        macro_rules! p {
-            ($dir:expr) => {
-                !poi_clone.contains($dir)
-                    && $dir.x > 0.
-                    && $dir.y > 0.
-                    && $dir.x < texture.width() as f32
-                    && $dir.y < texture.height() as f32
-            };
-        }
-
-        p!(&left) || p!(&right) || p!(&up) || p!(&down) || p!(&lt) || p!(&lb) || p!(&rt) || p!(&rb)
-    });
-
-    if poi.len() == 0 {
-        return (vec![], vec![]);
-    }
-
-    // sort points in any winding order
-    poi = winding_sort(poi);
-
-    let uv_x = poi[0].x / texture.width() as f32;
-    let uv_y = poi[0].y / texture.height() as f32;
-    let pos = Vec2::new(poi[0].x, -poi[0].y);
-    let mut verts = vec![vert(Some(pos), None, Some(Vec2::new(uv_x, uv_y)))];
-    let mut curr_poi = 0;
-
-    // get last point that current one has light of sight on
-    // if next point checked happens to be first and there's line of sight, tracing is over
-    for p in 0..poi.len() {
-        if p == poi.len() - 1 {
-            break;
-        }
-        if line_of_sight(&texture, poi[curr_poi], poi[(p + 1) % (poi.len() - 1)]) {
-            continue;
-        }
-        if p == 0 {
-            curr_poi = 1;
-            continue;
-        }
-
-        let tex = Vec2::new(texture.width() as f32, texture.height() as f32);
-        verts.push(Vertex {
-            pos: Vec2::new(poi[p - 1].x, -poi[p - 1].y),
-            uv: poi[p - 1] / tex,
-            id: p as u32,
-            ..Default::default()
-        });
-        curr_poi = p - 1;
-    }
-    curr_poi = 0;
-
-    // do the same line of sight checks, but in reverse (covers corners that initial side might have missed)
-    for p in (0..poi.len()).rev() {
-        if line_of_sight(&texture, poi[curr_poi], poi[(p + 1) % (poi.len() - 1)]) {
-            continue;
-        }
-        if p == 0 {
-            curr_poi = 1;
-            continue;
-        }
-
-        // don't add if it's already in vertices
-        let ids: Vec<u32> = verts.iter().map(|v| v.id).collect();
-        if ids.contains(&(p as u32)) {
-            continue;
-        }
-
-        let tex = Vec2::new(texture.width() as f32, texture.height() as f32);
-        verts.push(Vertex {
-            pos: Vec2::new(poi[p - 1].x, -poi[p - 1].y),
-            uv: poi[p - 1] / tex,
-            id: p as u32,
-            ..Default::default()
-        });
-        curr_poi = p - 1;
-    }
-
-    //for point in poi {
-    //    verts.push(Vertex {
-    //        pos: Vec2::new(point.x, -point.y),
-    //        uv: Vec2::new(
-    //            point.x / texture.width() as f32,
-    //            point.y / texture.height() as f32,
-    //        ),
-    //        ..Default::default()
-    //    });
-    //}
-
-    verts = sort_vertices(verts);
-    editor::center_verts(&mut verts);
-    (verts.clone(), triangulate(&verts, texture))
-}
-
-fn winding_sort(mut points: Vec<Vec2>) -> Vec<Vec2> {
-    let mut center = Vec2::default();
-    for p in &points {
-        center += *p;
-    }
-    center /= points.len() as f32;
-
-    points.sort_by(|a, b| {
-        let angle_a = (a.y - center.y).atan2(a.x - center.x);
-        let angle_b = (b.y - center.y).atan2(b.x - center.x);
-        angle_a.partial_cmp(&angle_b).unwrap()
-    });
-
-    points
-}
-
 /// sort vertices in cw (or ccw?) order
 pub fn sort_vertices(mut verts: Vec<Vertex>) -> Vec<Vertex> {
     let mut center = Vec2::default();
@@ -1993,15 +1854,6 @@ pub fn sort_vertices(mut verts: Vec<Vertex>) -> Vec<Vertex> {
     });
 
     verts
-}
-
-fn vert(pos: Option<Vec2>, col: Option<Color>, uv: Option<Vec2>) -> Vertex {
-    Vertex {
-        pos: pos.unwrap_or_default(),
-        color: col.unwrap_or_default(),
-        uv: uv.unwrap_or_default(),
-        ..Default::default()
-    }
 }
 
 pub fn triangulate(verts: &Vec<Vertex>, tex: &image::DynamicImage) -> Vec<u32> {
@@ -2053,38 +1905,6 @@ pub fn triangulate(verts: &Vec<Vertex>, tex: &image::DynamicImage) -> Vec<u32> {
     }
 
     indices
-}
-
-fn line_of_sight(img: &DynamicImage, mut p0: Vec2, p1: Vec2) -> bool {
-    let dx = (p1.x - p0.x).abs();
-    let sx = if p0.x < p1.x { 1 } else { -1 };
-    let dy = -(p1.y - p0.y).abs();
-    let sy = if p0.y < p1.y { 1 } else { -1 };
-    let mut err = dx + dy;
-
-    loop {
-        if p0.x >= 0. && p0.y >= 0. && p0.x < img.width() as f32 && p0.y < img.height() as f32 {
-            let px = image::GenericImageView::get_pixel(img, p0.x as u32, p0.y as u32);
-            if px[3] == 255 {
-                return false;
-            }
-        }
-
-        if p0.x == p1.x && p0.y == p1.y {
-            break;
-        }
-        let e2 = 2. * err;
-        if e2 >= dy {
-            err += dy;
-            p0.x += sx as f32;
-        }
-        if e2 <= dx {
-            err += dx;
-            p0.y += sy as f32;
-        }
-    }
-
-    true
 }
 
 fn tri_point(p: &Vec2, a: &Vec2, b: &Vec2, c: &Vec2) -> (f32, f32, f32, f32) {

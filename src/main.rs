@@ -140,8 +140,11 @@ fn init_shared(shared: &mut Shared) {
     shared.edit_mode.export_exclude_ik = true;
     shared.ui.can_quit = true;
     shared.edit_mode.onion_layers = false;
-    shared.ui.tracing_gap = 25.;
-    shared.ui.tracing_padding = 50.;
+    let trace = keyternity_lib::auto_mesh::TraceOptions::for_size(1, 1);
+    shared.ui.tracing_detail = None;
+    shared.ui.tracing_padding = None;
+    shared.ui.tracing_density = None;
+    shared.ui.tracing_alpha = trace.alpha_threshold;
     shared.ui.render_points = true;
     shared.ui.render_kites = true;
     shared.ui.render_textures = true;

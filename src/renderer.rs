@@ -360,7 +360,7 @@ pub fn render(
         // prepare drawing buffers for vertex points and lines
         let current_hover_id = selections.hovering_vert_id;
         #[rustfmt::skip]
-        let (mut verts, mut indices, on_vert) =
+        let (mut verts, indices, on_vert) =
             bone_vertices(&wv, true, selections, input, camera, config, events, armature, renderer, current_hover_id);
         if on_vert != -1 {
             new_vert = None;
@@ -369,11 +369,21 @@ pub fn render(
             renderer.clicked_vert_id = -1;
         }
         #[rustfmt::skip]
-        let (mut lines_v, mut lines_i, on_line) =
-            vert_lines(bone, &temp_arm.bones, &mouse, &mut new_vert, true, on_vert != -1, camera, input, selections, events, config);
+        let edges = vert_lines(bone, &temp_arm.bones, &mouse, &mut new_vert, true, on_vert != -1, config.colors.mesh_edge, camera, input, selections, events, config);
+        let on_line = edges.hovered;
         is_hovering_line |= on_line;
+
+        // patterned edges first, under the solid (hovered/selected) edges and the vertices
+        let (edge_v, edge_i) = &edges.patterned;
+        render_pass.set_bind_group(0, edge_bindgroup(renderer, config.mesh_edge_style), &[]);
+        setup_render_buffer(&renderer.edge_buffer, edge_v, edge_i, queue);
+        draw(&renderer.edge_buffer, render_pass, 0, edge_i.len());
+        render_pass.set_bind_group(0, &renderer.generic_bindgroup, &[]);
+
+        let (mut lines_v, mut lines_i) = edges.solid;
+        let base = lines_v.len() as u32;
         lines_v.append(&mut verts);
-        add_offseted_indices(&mut indices, &mut lines_i);
+        lines_i.extend(indices.iter().map(|i| i + base));
 
         // draw hovered triangle if neither a vertex nor a line is hovered
         let (idx, mut hovering_tri) = bone_triangle(&bone, &mouse, wv.clone());
@@ -474,6 +484,8 @@ pub fn render(
     if renderer.render_mesh_wf {
         let mut verts = vec![];
         let mut indices = vec![];
+        let mut edge_verts = vec![];
+        let mut edge_indices = vec![];
         render_pass.set_bind_group(0, &renderer.generic_bindgroup, &[]);
         for bone in &temp_arm.bones {
             let already_editing =
@@ -488,37 +500,31 @@ pub fn render(
 
             #[rustfmt::skip]
             let (mut verts_p, mut indices_p, _) = bone_vertices(&wv, false, selections, input, camera, config, events, armature, renderer, -1);
-            #[rustfmt::skip]
-            let (mut verts_l, mut indices_l, _) = vert_lines(bone, &temp_arm.bones, &mouse, nw, false, false, camera, input, selections, events, config);
 
             // color wireframes
-            if bone.group_color.a == 0 {
-                for vert in &mut verts_p {
-                    vert.color = config.colors.center_point;
-                    vert.color.a = vert.color.a.saturating_sub(75);
-                }
-                for vert in &mut verts_l {
-                    vert.color = config.colors.center_point;
-                    vert.color.a = vert.color.a.saturating_sub(125);
-                }
-            } else {
-                for vert in &mut verts_p {
-                    vert.color = bone.group_color;
-                    vert.color.a = vert.color.a.saturating_sub(75);
-                }
-                for vert in &mut verts_l {
-                    vert.color = bone.group_color;
-                    vert.color.a = vert.color.a.saturating_sub(125);
-                }
+            let mut point_color = if bone.group_color.a == 0 { config.colors.center_point } else { bone.group_color };
+            let mut line_color = point_color;
+            point_color.a = point_color.a.saturating_sub(75);
+            line_color.a = line_color.a.saturating_sub(125);
+            for vert in &mut verts_p {
+                vert.color = point_color;
             }
 
+            #[rustfmt::skip]
+            let edges = vert_lines(bone, &temp_arm.bones, &mouse, nw, false, false, line_color, camera, input, selections, events, config);
+            let (mut ev, mut ei) = edges.patterned;
+            add_offseted_indices(&mut ei, &mut edge_indices);
+            edge_verts.append(&mut ev);
+
             verts.append(&mut verts_p);
-            verts.append(&mut verts_l);
             add_offseted_indices(&mut indices_p, &mut indices);
-            add_offseted_indices(&mut indices_l, &mut indices);
         }
-        setup_render_buffer(&mut renderer.meshframe_buffer, &verts, &indices, queue);
-        draw(&renderer.meshframe_buffer, render_pass, 0, indices.len());
+        render_pass.set_bind_group(0, edge_bindgroup(renderer, config.mesh_edge_style), &[]);
+        setup_render_buffer(&renderer.wireframe_edge_buffer, &edge_verts, &edge_indices, queue);
+        draw(&renderer.wireframe_edge_buffer, render_pass, 0, edge_indices.len());
+        render_pass.set_bind_group(0, &renderer.generic_bindgroup, &[]);
+        setup_render_buffer(&renderer.wireframe_buffer, &verts, &indices, queue);
+        draw(&renderer.wireframe_buffer, render_pass, 0, indices.len());
     }
 
     if let Some((vert, site)) = new_vert {
@@ -1536,7 +1542,7 @@ pub fn bone_vertices(
     let mut hovering_vert_id = -1;
     let v2z = Vec2::ZERO;
     let sel = selections.clone();
-    let radius = config.center_point_radius;
+    let radius = config.center_point_radius * config.mesh_vert_size.clamp(0.1, 3.);
 
     #[rustfmt::skip]
     macro_rules! point {
@@ -1546,13 +1552,26 @@ pub fn bone_vertices(
     }
     macro_rules! add_point {
         ($verts:expr, $indices:expr, $wv:expr) => {
+            let base = all_verts.len() as u32;
             for i in &mut $indices {
-                *i += $wv as u32 * 4;
+                *i += base;
             }
             all_verts.append(&mut $verts);
             all_indices.append(&mut $indices);
         };
     }
+
+    // the selected bind's vertices, by id: (row in the bind panel, weight)
+    let mut bind_rows: std::collections::HashMap<i32, (usize, f32)> = Default::default();
+    let bind_idx = selections.bind as usize;
+    if selections.bind != -1 {
+        if let Some(bind) = armature.sel_bone(&sel).and_then(|bone| bone.binds.get(bind_idx)) {
+            for (row, v) in bind.verts.iter().enumerate() {
+                bind_rows.insert(v.id, (row, v.weight));
+            }
+        }
+    }
+    let white = Color::new(255, 255, 255, 255);
 
     for wv in 0..world_verts.len() {
         let size = if world_verts[wv].id == hover_id as u32 {
@@ -1561,31 +1580,33 @@ pub fn bone_vertices(
             1.
         };
 
-        // get vertices of selected bind
-        let idx = selections.bind as usize;
-        let mut verts_in_bind = vec![];
-        if let Some(bind) = armature.sel_bone(&sel).and_then(|bone| bone.binds.get(idx)) {
-            verts_in_bind = bind.verts.iter().map(|v| v.id).collect()
-        }
-
         let mut rot = 45. * 3.14 / 180.;
 
-        // yellow, square vertex if bound
-        let idx = selections.bind;
-        let bound = idx != -1 && verts_in_bind.contains(&(world_verts[wv].id as i32));
-        let white = Color::new(255, 255, 255, 255);
-        let mut col = if bound {
-            rot = 0.;
-            config.colors.bound_vert
-        } else {
-            config.colors.mesh_base
+        // square vertex if bound: colored by bind row and weight, or the single
+        // bound color (docs/MESH_DISPLAY.md §3.1)
+        let bind_row = bind_rows.get(&(world_verts[wv].id as i32)).copied();
+        let weight_colored = bind_row.is_some() && config.bind_weight_colors;
+        let mut col = match bind_row {
+            Some((row, weight)) => {
+                rot = 0.;
+                if config.bind_weight_colors {
+                    mesh_tools::bind_vert_color(row, weight)
+                } else {
+                    config.colors.bound_vert
+                }
+            }
+            None => config.colors.mesh_base,
         };
 
-        // white vertex if selected
+        // selected: white, or a white outline around a weight-colored vertex (§3.5)
         let selected = selections.vert_ids.contains(&(world_verts[wv].id as usize));
-        if selected {
+        if selected && weight_colored {
+            let (mut verts, mut indices) = point!(wv, white, size * 1.45, rot);
+            add_point!(verts, indices, wv);
+        } else if selected {
             col = white;
-        } else {
+        }
+        if !selected {
             col.a = if editable { 200 } else { 38 };
         }
 
@@ -1895,6 +1916,37 @@ fn bone_triangle(tb: &Bone, mouse_world_vert: &Vertex, wv: Vec<Vertex>) -> (u32,
     (idx as u32, hovering_tri)
 }
 
+/// Mesh edges, drawn per docs/MESH_DISPLAY.md §2.
+pub struct EdgeGeometry {
+    /// Outline and normal edges, in `config.mesh_edge_style`: draw with the
+    /// matching pattern bind group (`edge_bindgroup`), before everything else
+    pub patterned: (Vec<Vertex>, Vec<u32>),
+    /// Hovered and selected edges, always solid: draw with the generic bind group
+    pub solid: (Vec<Vertex>, Vec<u32>),
+    pub hovered: bool,
+}
+
+/// The bind group for `style`'s pattern; solid uses the plain white texture.
+pub fn edge_bindgroup(renderer: &Renderer, style: EdgeStyle) -> &BindGroup {
+    let patterns = renderer.edge_pattern_bindgroups.as_ref();
+    match (style, patterns) {
+        (EdgeStyle::Dotted, Some(p)) => &p[0],
+        (EdgeStyle::Dashed, Some(p)) => &p[1],
+        _ => renderer.generic_bindgroup.as_ref().unwrap(),
+    }
+}
+
+/// The repeating pattern for `style`, one texel per screen px: opaque white
+/// for the "on" part, transparent for the gap.
+pub fn edge_pattern_pixels(style: EdgeStyle) -> (Vec<u8>, u32) {
+    let (on, off) = style.pattern().unwrap_or((1, 0));
+    let mut px = vec![];
+    for i in 0..on + off {
+        px.extend(if i < on { [255, 255, 255, 255] } else { [255, 255, 255, 0] });
+    }
+    (px, on + off)
+}
+
 pub fn vert_lines(
     bone: &Bone,
     bones: &Vec<Bone>,
@@ -1902,134 +1954,90 @@ pub fn vert_lines(
     new_vert: &mut Option<(Vertex, VertSite)>,
     editable: bool,
     hovering_vert: bool,
+    line_color: Color,
     camera: &Camera,
     input: &InputStates,
     sel: &SelectionState,
     events: &mut EventState,
     config: &Config,
-) -> (Vec<Vertex>, Vec<u32>, bool) {
-    let mut added_vert = false;
+) -> EdgeGeometry {
+    let window = camera.window;
+    let edges = topology::edges(&bone.indices);
+    let wv = &bone.world_verts;
 
-    let mut all_verts: Vec<Vertex> = vec![];
-    let mut all_indices: Vec<u32> = vec![];
-
-    let mut indices = vec![0, 1, 2, 1, 2, 3];
-
-    let mut hovered_once = false;
-
-    // identify how many lines to create based on indices
-    let mut lines: Vec<(u32, u32)> = vec![];
-    for (_, chunk) in bone.indices.chunks_exact(3).enumerate() {
-        // don't add duplicate lines
-        macro_rules! doesnt_contain {
-            ($first:expr, $second:expr) => {
-                !lines.contains(&(chunk[$first], chunk[$second]))
-                    && !lines.contains(&(chunk[$second], chunk[$first]))
-            };
-        }
-
-        if doesnt_contain!(0, 1) {
-            lines.push((chunk[0], chunk[1]));
-        }
-        if doesnt_contain!(1, 2) {
-            lines.push((chunk[1], chunk[2]));
-        }
-        if doesnt_contain!(0, 2) {
-            lines.push((chunk[0], chunk[2]));
-        }
+    // hit-testing is by screen distance, separate from how thin the line is drawn
+    let mut hovered = None;
+    if editable && !hovering_vert && !camera.on_ui {
+        hovered = mesh_tools::pick_edge(wv, &edges, mouse_world_vert.pos, window, camera.px());
     }
-    for l in 0..lines.len() {
-        let i0 = lines[l].0;
-        let i1 = lines[l].1;
-        let v0 = bone.world_verts[i0 as usize];
-        let v1 = bone.world_verts[i1 as usize];
-        let dir = v0.pos - v1.pos;
 
-        let width = 2. * (camera.zoom / 500.);
-        let mut base = Vec2::new(width, width) / camera.zoom;
-        base = utils::rotate(&base, dir.y.atan2(dir.x));
-
-        let mut col = config.colors.mesh_base;
-        col -= Color::new(125, 125, 125, 0);
-        col.a = if editable { 200 } else { 100 };
-
-        #[rustfmt::skip]
-        macro_rules! vert { ($pos:expr, $v:expr) => { Vertex { pos: $pos, color: col, ..$v } }; }
-
-        let mut v0_top = vert!(v0.pos + base, v0);
-        let mut v0_bot = vert!(v0.pos - base, v0);
-        let mut v1_top = vert!(v1.pos + base, v1);
-        let mut v1_bot = vert!(v1.pos - base, v1);
-
-        let verts = vec![v0_top, v0_bot, v1_top, v1_bot];
-        let add_color = Color::new(50, 50, 50, 255);
-
-        let mut is_hovering = false;
-
-        if editable && !hovering_vert && !camera.on_ui {
-            for (_, chunk) in vec![0, 1, 2, 1, 2, 3].chunks_exact(3).enumerate() {
-                let c0 = chunk[0] as usize;
-                let c1 = chunk[1] as usize;
-                let c2 = chunk[2] as usize;
-                let mv = mouse_world_vert;
-                let bary = tri_point(&mv.pos, &verts[c0].pos, &verts[c1].pos, &verts[c2].pos);
-                if bary.0 == -1. {
-                    continue;
-                }
-                is_hovering = true;
-
-                let mouse_line = mouse_world_vert.pos - v0.pos;
-                let whole_line = v1.pos - v0.pos;
-                let interp = mouse_line.mag() / whole_line.mag();
-                let uv = v0.uv + (v1.uv - v0.uv) * interp;
-
-                if input.left_pressed {
-                    let verts = &bone.vertices;
-                    events.select_vertex(verts[i0 as usize].id as i32, false);
-                    events.select_vertex(verts[i1 as usize].id as i32, true);
-                } else if input.left_clicked && !added_vert {
-                    let bones = &bones;
-                    let v = &bones.iter().find(|b| b.id == bone.id).unwrap().vertices;
-                    let wv0 = utils::rotate(&(v[i0 as usize].pos - bone.pos), -bone.rot);
-                    let wv1 = utils::rotate(&(v[i1 as usize].pos - bone.pos), -bone.rot);
-                    let pos = wv0 + (wv1 - wv0) * interp;
-                    let site = VertSite::Edge(i0, i1);
-                    *new_vert = Some((vert(Some(pos / bone.scale), None, Some(uv)), site));
-                    added_vert = true;
-                }
-            }
-
-            // highlight line if it's hovered on
-            if is_hovering {
-                v0_top.add_color += add_color;
-                v0_bot.add_color += add_color;
-                v1_top.add_color += add_color;
-                v1_bot.add_color += add_color;
-            }
-
-            // highlight line if it's selected
-            let mv = &sel.vert_ids;
-            if mv.len() == 2 && mv[0] == i0 as usize && mv[1] == i1 as usize {
-                v0_top.add_color += add_color;
-                v0_bot.add_color += add_color;
-                v1_top.add_color += add_color;
-                v1_bot.add_color += add_color;
-            }
-        }
-
-        all_verts.append(&mut vec![v0_top, v0_bot, v1_top, v1_bot]);
-        all_indices.append(&mut indices.clone());
-
-        for i in &mut indices {
-            *i += 4;
-        }
-
-        if is_hovering {
-            hovered_once = true;
+    if let Some((i0, i1, t)) = hovered {
+        if input.left_pressed {
+            let verts = &bone.vertices;
+            events.select_vertex(verts[i0 as usize].id as i32, false);
+            events.select_vertex(verts[i1 as usize].id as i32, true);
+        } else if input.left_clicked {
+            let (v0, v1) = (wv[i0 as usize], wv[i1 as usize]);
+            let uv = v0.uv + (v1.uv - v0.uv) * t;
+            let v = &bones.iter().find(|b| b.id == bone.id).unwrap().vertices;
+            let lv0 = utils::rotate(&(v[i0 as usize].pos - bone.pos), -bone.rot);
+            let lv1 = utils::rotate(&(v[i1 as usize].pos - bone.pos), -bone.rot);
+            let pos = lv0 + (lv1 - lv0) * t;
+            let site = VertSite::Edge(i0, i1);
+            *new_vert = Some((vert(Some(pos / bone.scale), None, Some(uv)), site));
         }
     }
 
-    (all_verts, all_indices, hovered_once)
+    // widths and the pattern are in UI points, so they match the UI on high-DPI displays
+    let px = camera.px();
+    let width = config.mesh_edge_width.clamp(1., 4.) * px;
+    let style = config.mesh_edge_style;
+    let pattern_px = style.pattern().map_or(1., |(on, off)| (on + off) as f32) * px;
+    let mut outline_color = Color::new(0, 0, 0, (line_color.a as f32 * 0.35) as u8);
+    let bright = Color::new(50, 50, 50, 0);
+
+    let mut outlines = (vec![], vec![]);
+    let mut lines = (vec![], vec![]);
+    let mut solid = (vec![], vec![]);
+    let push = |dst: &mut (Vec<Vertex>, Vec<u32>), quad: [Vertex; 4]| {
+        let base = dst.0.len() as u32;
+        dst.0.extend(quad);
+        dst.1.extend([0, 1, 2, 1, 2, 3].map(|i| i + base));
+    };
+
+    let selected = &sel.vert_ids;
+    for (i0, i1) in edges {
+        let (a, b) = (wv[i0 as usize].pos, wv[i1 as usize].pos);
+        let is_hovered = hovered.map_or(false, |(h0, h1, _)| (h0, h1) == (i0, i1));
+        let is_selected = editable
+            && selected.len() == 2
+            && ((selected[0], selected[1]) == (i0 as usize, i1 as usize)
+                || (selected[0], selected[1]) == (i1 as usize, i0 as usize));
+
+        if config.mesh_edge_outline {
+            outline_color.a = (line_color.a as f32 * 0.35) as u8;
+            push(&mut outlines, mesh_tools::edge_quad(a, b, width + 2. * px, pattern_px, outline_color, window));
+        }
+        if is_hovered || is_selected {
+            let mut col = line_color;
+            col.a = 255;
+            let mut quad = mesh_tools::edge_quad(a, b, width + px, 1., col, window);
+            for v in &mut quad {
+                v.add_color = bright;
+            }
+            push(&mut solid, quad);
+        } else {
+            push(&mut lines, mesh_tools::edge_quad(a, b, width, pattern_px, line_color, window));
+        }
+    }
+
+    // outlines go under every line
+    let mut patterned = outlines;
+    let base = patterned.0.len() as u32;
+    patterned.0.extend(lines.0);
+    patterned.1.extend(lines.1.into_iter().map(|i| i + base));
+
+    EdgeGeometry { patterned, solid, hovered: hovered.is_some() }
 }
 
 fn draw_line(origin: Vec2, target: Vec2, color: Color) -> (Vec<Vertex>, Vec<u32>) {
@@ -2164,6 +2172,31 @@ pub fn create_texture_bind_group(
     device: &Device,
     bind_group_layout: &BindGroupLayout,
 ) -> BindGroup {
+    let clamp = wgpu::AddressMode::ClampToEdge;
+    texture_bind_group(pixels, dimensions, clamp, queue, device, bind_group_layout)
+}
+
+/// A 1-texel-high pattern `width` texels long that repeats along u (edge
+/// patterns, docs/MESH_DISPLAY.md §2.2).
+pub fn create_pattern_bind_group(
+    pixels: Vec<u8>,
+    width: u32,
+    queue: &Queue,
+    device: &Device,
+    bind_group_layout: &BindGroupLayout,
+) -> BindGroup {
+    let dims = Vec2::new(width as f32, 1.);
+    texture_bind_group(pixels, dims, wgpu::AddressMode::Repeat, queue, device, bind_group_layout)
+}
+
+fn texture_bind_group(
+    pixels: Vec<u8>,
+    dimensions: Vec2,
+    address_mode_u: wgpu::AddressMode,
+    queue: &Queue,
+    device: &Device,
+    bind_group_layout: &BindGroupLayout,
+) -> BindGroup {
     let tex_size = wgpu::Extent3d {
         width: dimensions.x as u32,
         height: dimensions.y as u32,
@@ -2201,7 +2234,7 @@ pub fn create_texture_bind_group(
     let tex_view = tex.create_view(&wgpu::TextureViewDescriptor::default());
 
     let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_u,
         address_mode_v: wgpu::AddressMode::ClampToEdge,
         address_mode_w: wgpu::AddressMode::ClampToEdge,
         mag_filter: wgpu::FilterMode::Nearest,

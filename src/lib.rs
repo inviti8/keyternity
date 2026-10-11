@@ -56,6 +56,7 @@ pub const REPO_URL: &str = "https://github.com/inviti8/keyternity";
 
 pub mod armature_window;
 pub mod atlas_modal;
+pub mod auto_mesh;
 pub mod backwards_compat;
 pub mod bind_pose;
 pub mod bone_panel;
@@ -438,6 +439,7 @@ impl ApplicationHandler for App {
                 gui_state
                     .egui_ctx()
                     .set_pixels_per_point(self.shared.ui.scale);
+                self.shared.camera.px_scale = self.shared.ui.scale;
 
                 // set hovering bone to -1 if neither the renderer nor UI have it
                 if !self.shared.renderer.is_hovering_bone && !self.shared.ui.is_hovering_bone {
@@ -1083,7 +1085,12 @@ impl BackendRenderer {
             renderer.attachment_line_buffer.init(&self.gpu.device, max);
             renderer.sel_bone_buffer.init(&self.gpu.device, max);
             renderer.gridline_buffer.init(&self.gpu.device, max);
-            renderer.meshframe_buffer.init(&self.gpu.device, max);
+            // meshes from Trace can be dense: each edge is 4 verts (8 with its outline)
+            let mesh_max = 60000;
+            renderer.meshframe_buffer.init(&self.gpu.device, mesh_max);
+            renderer.edge_buffer.init(&self.gpu.device, mesh_max);
+            renderer.wireframe_buffer.init(&self.gpu.device, mesh_max);
+            renderer.wireframe_edge_buffer.init(&self.gpu.device, mesh_max);
             renderer.ring_buffer.init(&self.gpu.device, 100);
             renderer.selected_ring_buffer.init(&self.gpu.device, 100);
             renderer.rect_buffer.init(&self.gpu.device, max);
@@ -1096,6 +1103,14 @@ impl BackendRenderer {
         self.load_bindgroup(&mut renderer.ring_bindgroup, bytes);
         let bytes = include_bytes!("../assets/selected-ring.png");
         self.load_bindgroup(&mut renderer.selected_ring_bindgroup, bytes);
+
+        if renderer.edge_pattern_bindgroups.is_none() {
+            let pattern = |style| {
+                let (px, len) = renderer::edge_pattern_pixels(style);
+                renderer::create_pattern_bind_group(px, len, &self.gpu.queue, &self.gpu.device, &self.bind_group_layout)
+            };
+            renderer.edge_pattern_bindgroups = Some([pattern(EdgeStyle::Dotted), pattern(EdgeStyle::Dashed)]);
+        }
 
         if renderer.generic_bindgroup == None {
             renderer.generic_bindgroup = Some(renderer::create_texture_bind_group(

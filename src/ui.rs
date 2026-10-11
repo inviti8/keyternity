@@ -1884,10 +1884,20 @@ fn toolbar(
                 let tracing = shared_ui.tracing;
                 if tool_button(ui, shared_ui, config, ToolIcon::Trace, tracing, true, hover).clicked()
                 {
-                    shared_ui.tracing = !shared_ui.tracing;
+                    // Trace replaces the mesh and removes its binds, so ask first if there are any
                     if shared_ui.tracing {
-                        let idx = armature.bones.iter().position(|b| b.id == bone.id);
-                        events.save_bone(idx.unwrap());
+                        shared_ui.tracing = false;
+                    } else if !bone.binds.is_empty() {
+                        shared_ui.tracing_detail = None;
+                        shared_ui.tracing_padding = None;
+                        shared_ui.tracing_density = None;
+                        let str = shared_ui.loc("polar.trace_with_binds");
+                        events.open_polar_modal(PolarId::TraceWithBinds, str);
+                    } else {
+                        shared_ui.tracing = true;
+                        shared_ui.tracing_detail = None;
+                        shared_ui.tracing_padding = None;
+                        shared_ui.tracing_density = None;
                         events.trace_bone_verts();
                     }
                 }
@@ -1989,25 +1999,48 @@ fn tool_options(
 
     // tracing parameters (moved from the bone panel)
     if editing_mesh && shared_ui.tracing {
+        // right-to-left: the last option drawn is leftmost
         let md = "bone_panel.mesh_deformation";
-        let padding = shared_ui.tracing_padding;
-        let (edited, value, _) =
-            ui.float_input("padding".to_string(), shared_ui, padding, 1., None);
-        if edited {
-            shared_ui.tracing_padding = value;
+        macro_rules! option {
+            ($id:expr, $value:expr, $key:expr) => {{
+                let (edited, value, _) = ui.float_input($id.to_string(), shared_ui, $value, 1., None);
+                ui.label(shared_ui.loc(&format!("{md}.{}", $key)))
+                    .on_hover_text(shared_ui.loc(&format!("{md}.{}_desc", $key)));
+                ui.add_space(8.);
+                edited.then_some(value)
+            }};
+        }
+        let alpha = shared_ui.tracing_alpha as f32;
+        if let Some(v) = option!("trace_alpha", alpha, "trace_alpha") {
+            shared_ui.tracing_alpha = v.clamp(1., 255.) as u8;
             events.trace_bone_verts();
         }
-        ui.label(shared_ui.loc(&format!("{md}.padding")))
-            .on_hover_text(shared_ui.loc(&format!("{md}.padding_desc")));
+        // outline-only has no interior, so no density
+        if !shared_ui.tracing_outline_only {
+            let density = shared_ui.tracing_density.unwrap_or(0.);
+            if let Some(v) = option!("trace_density", density, "trace_density") {
+                shared_ui.tracing_density = Some(v.max(0.));
+                events.trace_bone_verts();
+            }
+        }
+        let padding = shared_ui.tracing_padding.unwrap_or(0.);
+        if let Some(v) = option!("trace_padding", padding, "padding") {
+            shared_ui.tracing_padding = Some(v.max(0.));
+            events.trace_bone_verts();
+        }
+        let detail = shared_ui.tracing_detail.unwrap_or(0.);
+        if let Some(v) = option!("trace_detail", detail, "trace_detail") {
+            shared_ui.tracing_detail = Some(v.max(0.));
+            events.trace_bone_verts();
+        }
+        let mut outline = shared_ui.tracing_outline_only;
+        let desc = shared_ui.loc(&format!("{md}.trace_outline_desc"));
+        let str_outline = shared_ui.loc(&format!("{md}.trace_outline"));
+        if ui.checkbox(&mut outline, str_outline).on_hover_text(desc).changed() {
+            shared_ui.tracing_outline_only = outline;
+            events.trace_bone_verts();
+        }
         ui.add_space(8.);
-        let gap = shared_ui.tracing_gap;
-        let (edited, value, _) = ui.float_input("gap".to_string(), shared_ui, gap, 1., None);
-        if edited {
-            shared_ui.tracing_gap = value.max(1.);
-            events.trace_bone_verts();
-        }
-        ui.label(shared_ui.loc(&format!("{md}.gap")))
-            .on_hover_text(shared_ui.loc(&format!("{md}.gap_desc")));
         return;
     }
 

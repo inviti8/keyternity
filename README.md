@@ -103,6 +103,18 @@ SkelForm's runtimes as is.
   only, pinned and checked by SHA-256. The Windows installer downloads the
   official gyan.dev build; Linux and macOS use the system's ffmpeg. The repo
   carries no third-party binaries ([details](docs/FFMPEG.md))
+- **Mesh display** — mesh edges draw as thin dotted lines with a faint dark
+  outline (Settings › Rendering: dotted, dashed or solid, and width), and stay
+  easy to click. While a bind is selected, each of its vertices gets its own
+  color, matching a swatch on its row in the bind panel: a pale tint at weight 0,
+  full color at weight 1. Hovering a vertex highlights its row. Mesh vertex
+  size is adjustable ([design](docs/MESH_DISPLAY.md))
+- **Trace** — auto-meshing follows the art's real outline, including concave
+  shapes, separate pieces and holes, never covers transparent areas, and fills
+  the inside with evenly sized triangles. Detail, padding, density and alpha
+  threshold are in the toolbar, with defaults that scale to the texture.
+  *Outline* traces just the cut-out shape, to draw the topology by hand
+  ([design](docs/AUTO_MESH.md))
 - **Fixes**
   - Unused Textures no longer lists textures that animations swap in
   - "Download ffmpeg" no longer crashes when the app folder isn't writable
