@@ -35,12 +35,12 @@ fn main() -> Result<(), winit::error::EventLoopError> {
     #[cfg(not(target_arch = "wasm32"))]
     if let Ok(does) = fs::exists(utils::crashlog_file()) {
         if does {
-            let contents = fs::read_to_string(utils::crashlog_file()).unwrap();
-            let last_line = contents.lines().last().map(|s| s.to_string()).unwrap();
-            if last_line != CRASHLOG_END {
-                app.shared
-                    .events
-                    .open_polar_modal(PolarId::OpenCrashlog, app.shared.ui.loc("crashed"));
+            let contents = fs::read_to_string(utils::crashlog_file()).unwrap_or_default();
+            let last_line = contents.lines().last().unwrap_or_default();
+            if !contents.is_empty() && last_line != CRASHLOG_END {
+                let path = utils::crashlog_file().display().to_string();
+                let msg = app.shared.ui.loc("crashed").replace("$path", &path);
+                app.shared.events.open_polar_modal(PolarId::OpenCrashlog, msg);
             }
         }
     }
@@ -52,10 +52,10 @@ fn main() -> Result<(), winit::error::EventLoopError> {
             .append(true)
             .open(utils::crashlog_file());
         if let Ok(mut f) = file {
-            let contents = fs::read_to_string(utils::crashlog_file()).unwrap();
-            let last_line = contents.lines().last().map(|s| s.to_string()).unwrap();
-            if last_line != CRASHLOG_END {
-                writeln!(&mut f, "{}", CRASHLOG_END).unwrap();
+            let contents = fs::read_to_string(utils::crashlog_file()).unwrap_or_default();
+            let last_line = contents.lines().last().unwrap_or_default();
+            if !contents.is_empty() && last_line != CRASHLOG_END {
+                let _ = writeln!(&mut f, "{}", CRASHLOG_END);
             }
         }
     }
@@ -228,11 +228,16 @@ pub fn install_panic_handler() {
         eprintln!("{}", panic_info);
 
         // write error and backtrace to log file
+        let path = utils::crashlog_file();
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
         if let Ok(mut file) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(utils::crashlog_file())
+            .open(&path)
         {
+            let _ = writeln!(file, "Keyternity {}", env!("CARGO_PKG_VERSION"));
             let _ = writeln!(file, "Panic: {panic_info}");
             let bt = std::backtrace::Backtrace::force_capture();
             let _ = writeln!(file, "{bt}");

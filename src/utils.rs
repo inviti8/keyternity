@@ -1591,12 +1591,14 @@ pub fn animate_bones(armature: &mut Armature, selection: &SelectionState, edit_m
     }
 }
 
+/// The crash log lives with the config and autosave (e.g.
+/// %APPDATA%\keyternity\keyternity\data on Windows), not next to the exe:
+/// an installed exe's folder isn't writable, so logs written there were lost.
 pub fn crashlog_file() -> PathBuf {
-    let exe_path = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("."));
-    let exe_dir = exe_path
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."));
-    exe_dir.join("crash.log")
+    directories_next::ProjectDirs::from("com", "keyternity", "keyternity")
+        .map(|dirs| dirs.data_dir().to_path_buf())
+        .unwrap_or_else(std::env::temp_dir)
+        .join("crash.log")
 }
 
 // runtimes: interpolation using bezier splines

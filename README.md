@@ -106,6 +106,11 @@ SkelForm's runtimes as is.
 - **Fixes**
   - Unused Textures no longer lists textures that animations swap in
   - "Download ffmpeg" no longer crashes when the app folder isn't writable
+  - Crash logs are written to the app data folder (`crash.log` beside
+    `config.json`, e.g. `%APPDATA%\keyternity\keyternity\data` on Windows)
+    instead of the install folder, which isn't writable, so they were lost
+  - Photoshop import no longer crashes on layers that extend past the canvas
+    (as GIMP and Photoshop leave them after cropping)
 
 ## Inherited from SkelForm
 
