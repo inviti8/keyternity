@@ -149,10 +149,12 @@ Run spade's `refine` with:
 Emit every face that isn't in `excluded_faces`.
 
 ### 2.6 Output
-Build vertices and indices as `trace_mesh` does today:
+Build vertices and indices:
 - uv = point ÷ texture size
-- pos = (x, −y)
-- `center_verts`
+- pos = (x − w/2, h/2 − y), the same space as the default quad
+  (`renderer::create_tex_rect`), so the art stays where it was. The old
+  `trace_mesh` called `center_verts` here, which centered the mesh on the
+  traced outline and moved any art that wasn't centered in its texture.
 
 `trace_mesh` keeps its signature, apart from taking a `TraceOptions` struct
 instead of `gap` and `padding`, so `Events::TraceBoneVerts` barely changes.

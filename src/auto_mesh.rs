@@ -76,16 +76,18 @@ pub fn trace_alpha(alpha: &[u8], w: u32, h: u32, opts: &TraceOptions) -> (Vec<Ve
         return (vec![], vec![]);
     };
 
+    // same space as the default quad (`renderer::create_tex_rect`): the texture's
+    // center at the origin, so the art stays where it was
     let size = Vec2::new(w as f32, h as f32);
-    let mut verts: Vec<Vertex> = points
+    let half = size / 2.;
+    let verts: Vec<Vertex> = points
         .iter()
         .enumerate()
         .map(|(i, p)| {
             let px = Vec2::new(p[0] as f32, p[1] as f32);
-            Vertex { id: i as u32, pos: Vec2::new(px.x, -px.y), uv: px / size, ..Default::default() }
+            Vertex { id: i as u32, pos: Vec2::new(px.x - half.x, half.y - px.y), uv: px / size, ..Default::default() }
         })
         .collect();
-    editor::center_verts(&mut verts);
     (verts, tris)
 }
 

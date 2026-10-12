@@ -171,3 +171,23 @@ fn holes_wind_opposite_to_outer_outlines() {
     assert!(areas[0].signum() != areas[1].signum(), "{areas:?}");
     assert_eq!(areas.iter().map(|a| a.abs()).sum::<f64>(), 20.);
 }
+
+#[test]
+fn off_center_art_keeps_its_place() {
+    // art in the top-left corner only: the mesh must not be recentered on it,
+    // or the image moves when the bone's quad is replaced by the traced mesh
+    let alpha = mask(|x, y| x < 20 && y < 12);
+    let (verts, _) = auto_mesh::trace_alpha(&alpha, W, H, &opts());
+    assert!(!verts.is_empty());
+    let (rect, _) = keyternity_lib::renderer::create_tex_rect(&Vec2::new(W as f32, H as f32));
+    let to_pos = |uv: Vec2| {
+        // the default quad's mapping, interpolated from its corners
+        let tl = rect.iter().find(|v| v.uv == Vec2::new(0., 0.)).unwrap().pos;
+        let br = rect.iter().find(|v| v.uv == Vec2::new(1., 1.)).unwrap().pos;
+        tl + (br - tl) * uv
+    };
+    for v in &verts {
+        let want = to_pos(v.uv);
+        assert!((v.pos - want).mag() < 1e-3, "vertex at {:?}, uv {:?} belongs at {want:?}", v.pos, v.uv);
+    }
+}

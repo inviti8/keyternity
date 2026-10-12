@@ -1335,8 +1335,11 @@ pub fn exit_pose_mode(armature: &mut Armature, edit_mode: &mut EditMode, undo: &
 }
 
 pub fn center_verts(verts: &mut Vec<Vertex>) {
-    let mut min = Vec2::default();
-    let mut max = Vec2::default();
+    if verts.is_empty() {
+        return;
+    }
+    let mut min = verts[0].pos;
+    let mut max = verts[0].pos;
     for v in &mut *verts {
         if v.pos.x < min.x {
             min.x = v.pos.x;
