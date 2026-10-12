@@ -113,3 +113,188 @@ fn layer_inside_canvas_keeps_its_full_size() {
     assert_eq!((w, h, x, y), (2, 1, 1, 1));
     assert_eq!(px, vec![0, 0, 0, 255, 40, 0, 0, 255]);
 }
+
+// Building the rig: every visible layer is its own bone (src/psd_import.rs)
+
+use keyternity_lib::psd_import::{self, Gpu, PsdTree, TreeGroup, TreeLayer};
+use keyternity_lib::shared::*;
+
+/// A solid `w` x `h` art layer at `(x, y)`; `shade` makes its pixels distinct.
+fn art(name: &str, parent: Option<u32>, x: f32, y: f32, w: u32, h: u32, shade: u8) -> TreeLayer {
+    TreeLayer {
+        name: name.to_string(),
+        parent,
+        tl: Vec2::new(x, y),
+        size: Vec2::new(w as f32, h as f32),
+        image: Some(image::RgbaImage::from_pixel(w, h, image::Rgba([shade, 0, 0, 255]))),
+    }
+}
+
+fn marker(name: &str, parent: Option<u32>, x: f32, y: f32) -> TreeLayer {
+    TreeLayer { name: name.to_string(), parent, tl: Vec2::new(x, y), size: Vec2::new(2., 2.), image: None }
+}
+
+fn group(id: u32, name: &str, parent: Option<u32>) -> TreeGroup {
+    TreeGroup { id, name: name.to_string(), parent }
+}
+
+fn build(groups: Vec<TreeGroup>, layers: Vec<TreeLayer>) -> Armature {
+    let tree = PsdTree { width: 100, height: 100, groups, layers };
+    let mut arm = Armature::default();
+    psd_import::build_armature(&tree, &mut arm, "Default", Gpu::default());
+    arm
+}
+
+fn bone<'a>(arm: &'a Armature, name: &str) -> &'a Bone {
+    arm.bones.iter().find(|b| b.name == name).unwrap_or_else(|| panic!("no bone {name}"))
+}
+
+/// World position (rotation-aware, like `renderer::inheritance`): the
+/// parent's world position plus the local position turned by the parent's
+/// world rotation.
+fn world(arm: &Armature, name: &str) -> Vec2 {
+    world_of(arm, bone(arm, name))
+}
+
+fn world_of(arm: &Armature, b: &Bone) -> Vec2 {
+    match arm.bones.iter().find(|x| x.id == b.parent_id) {
+        None => b.pos,
+        Some(p) => world_of(arm, p) + keyternity_lib::utils::rotate(&b.pos, rot_of(arm, p)),
+    }
+}
+
+fn rot_of(arm: &Armature, b: &Bone) -> f32 {
+    let mut rot = b.rot;
+    let mut p = b.parent_id;
+    while p != -1 {
+        let pb = arm.bones.iter().find(|x| x.id == p).unwrap();
+        rot += pb.rot;
+        p = pb.parent_id;
+    }
+    rot
+}
+
+fn close(a: Vec2, b: Vec2) -> bool {
+    (a - b).mag() < 1e-3
+}
+
+#[test]
+fn layers_in_one_group_stay_separate_bones() {
+    // the Alice case: two layers in one group, top layer first
+    let arm = build(
+        vec![group(1, "alice", None)],
+        vec![art("body", Some(1), 10., 10., 40, 80, 1), art("back_arm", Some(1), 50., 20., 20, 50, 2)],
+    );
+    let g = bone(&arm, "alice");
+    assert!(g.tex.is_empty(), "group bone shouldn't have a texture");
+    for name in ["body", "back_arm"] {
+        let b = bone(&arm, name);
+        assert_eq!(b.parent_id, g.id, "{name} not under its group");
+        assert_eq!(b.tex, name);
+    }
+    let style = arm.styles.iter().find(|s| s.name == "Default").unwrap();
+    assert_eq!(style.textures.len(), 2);
+    // the top layer draws above the one below it
+    assert!(bone(&arm, "body").zindex > bone(&arm, "back_arm").zindex);
+}
+
+#[test]
+fn layers_outside_groups_are_imported() {
+    let arm = build(vec![], vec![art("loose", None, 0., 0., 10, 10, 1)]);
+    let root = bone(&arm, "Root");
+    assert_eq!(bone(&arm, "loose").parent_id, root.id);
+}
+
+#[test]
+fn bones_sit_where_the_art_was() {
+    // canvas 100x100: armature origin at the canvas center, y up
+    let arm = build(
+        vec![group(1, "arm", None), group(2, "hand", Some(1))],
+        vec![art("upper", Some(1), 10., 10., 20, 10, 1), art("palm", Some(2), 60., 70., 10, 10, 2)],
+    );
+    assert!(close(world(&arm, "upper"), Vec2::new(-30., 35.)));
+    assert!(close(world(&arm, "palm"), Vec2::new(15., -25.)));
+    assert_eq!(bone(&arm, "hand").parent_id, bone(&arm, "arm").id);
+    // a group without a $pivot sits at the center of all its art
+    assert!(close(world(&arm, "hand"), Vec2::new(15., -25.)));
+    assert!(close(world(&arm, "arm"), Vec2::new(-10., 5.)));
+}
+
+#[test]
+fn pivot_marker_places_the_group_bone() {
+    let arm = build(
+        vec![group(1, "head", None)],
+        vec![marker("$pivot", Some(1), 49., 79.), art("face", Some(1), 30., 30., 40, 40, 1)],
+    );
+    assert!(close(world(&arm, "head"), Vec2::new(0., -30.)));
+    assert!(close(world(&arm, "face"), Vec2::new(0., 0.)));
+    assert!(arm.bones.iter().all(|b| !b.name.contains('$')), "marker became a bone");
+}
+
+#[test]
+fn same_named_layers_get_their_own_textures() {
+    let arm = build(
+        vec![group(1, "left", None), group(2, "right", None)],
+        vec![art("line", Some(1), 0., 0., 10, 10, 1), art("line", Some(2), 50., 0., 10, 12, 2)],
+    );
+    let texs: Vec<&String> = arm.bones.iter().filter(|b| b.name == "line").map(|b| &b.tex).collect();
+    assert_eq!(texs.len(), 2);
+    assert_ne!(texs[0], texs[1]);
+}
+
+#[test]
+fn style_group_layers_become_variants() {
+    let arm = build(
+        vec![group(1, "head", None), group(2, "head $\"Angry\"", Some(1))],
+        vec![art("mouth", Some(2), 40., 60., 10, 4, 9), art("mouth", Some(1), 40., 60., 10, 4, 1)],
+    );
+    let angry = arm.styles.iter().find(|s| s.name == "Angry").expect("no Angry style");
+    assert_eq!(angry.textures.len(), 1);
+    assert_eq!(angry.textures[0].name, bone(&arm, "mouth").tex);
+    assert!(arm.bones.iter().all(|b| !b.name.contains("Angry")), "style group became a bone");
+    assert_eq!(arm.bones.iter().filter(|b| b.name == "mouth").count(), 1);
+}
+
+#[test]
+fn ik_chain_keeps_its_art_in_place_once_solved() {
+    // a two-joint arm going right and down, with art under each joint
+    let arm = build(
+        vec![group(1, "upper", None), group(2, "lower", Some(1))],
+        vec![
+            marker("$ik_1", Some(1), 0., 0.),
+            marker("$pivot", Some(1), 19., 19.),
+            art("upper_art", Some(1), 20., 20., 20, 20, 1),
+            marker("$ik_1", Some(2), 0., 0.),
+            marker("$pivot", Some(2), 39., 39.),
+            art("lower_art", Some(2), 40., 40., 20, 20, 2),
+        ],
+    );
+    let upper = bone(&arm, "upper");
+    let lower = bone(&arm, "lower");
+    assert_eq!((upper.ik_family_id, lower.ik_family_id), (1, 1));
+    let target = arm.bones.iter().find(|b| b.id == upper.ik_target_id).expect("no IK target");
+    assert_eq!(target.name, "upper Target");
+    assert!(close(target.pos, Vec2::new(-10., 10.)), "target at {:?}", target.pos);
+
+    // the chain lies along +x; turning each joint by the chain's angle (what the
+    // solver does here) puts every piece of art back where it was drawn
+    assert!(lower.pos.y.abs() < 1e-3);
+    let angle = (target.pos - Vec2::new(-30., 30.)).y.atan2((target.pos - Vec2::new(-30., 30.)).x);
+    let mut solved = arm.clone();
+    for b in &mut solved.bones {
+        if b.ik_family_id == 1 && b.name == "upper" {
+            b.rot = angle;
+        }
+    }
+    assert!(close(world(&solved, "upper_art"), Vec2::new(-20., 20.)), "upper art at {:?}", world(&solved, "upper_art"));
+    assert!(close(world(&solved, "lower_art"), Vec2::new(0., 0.)), "lower art at {:?}", world(&solved, "lower_art"));
+}
+
+#[test]
+fn opaque_bounds_trims_transparent_margins() {
+    let mut img = image::RgbaImage::new(10, 8);
+    img.put_pixel(3, 2, image::Rgba([1, 2, 3, 255]));
+    img.put_pixel(6, 5, image::Rgba([1, 2, 3, 1]));
+    assert_eq!(psd_import::opaque_bounds(&img), Some((3, 2, 4, 4)));
+    assert_eq!(psd_import::opaque_bounds(&image::RgbaImage::new(4, 4)), None);
+}

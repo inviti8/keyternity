@@ -71,6 +71,7 @@ pub mod mesh_tools;
 pub mod modal;
 pub mod navigation;
 pub mod pen;
+pub mod psd_import;
 pub mod renderer;
 pub mod settings_modal;
 pub mod shared;

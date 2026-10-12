@@ -1,15 +1,12 @@
 //! Reading uploaded images to turn into textures.
 // test
 
-use std::sync::Mutex;
 
 use egui::TextureHandle;
 use wgpu::*;
 
 use crate::*;
-use image::Rgba;
 
-use image::{GenericImageView, ImageBuffer};
 
 // web-only imports
 #[cfg(target_arch = "wasm32")]
@@ -211,331 +208,21 @@ pub fn read_psd(
     bind_group_layout: Option<&BindGroupLayout>,
     ctx: Option<&egui::Context>,
 ) {
-    let psd = psd::Psd::from_bytes(&bytes).unwrap();
+    let Ok(psd) = psd::Psd::from_bytes(&bytes) else {
+        let str = shared.ui.loc("import_unrecognized");
+        editor::open_modal(&mut shared.ui, false, str);
+        return;
+    };
 
-    // reset armature (but not all of it) to make way for the psd rig
-    shared.psd_armature.bones = vec![];
+    // the PSD's rig replaces the bones; its textures join the current styles
     shared.psd_armature.styles = shared.armature.styles.clone();
     shared.psd_armature.tex_data = shared.armature.tex_data.clone();
 
-    // create root bone, where all except targets will go
-    shared.psd_armature.new_bone(-1);
-    shared.psd_armature.bones[0].name = "Root".to_string();
-    shared.psd_armature.bones[0].folded = true;
-
-    // collect group ids, to be used later
-    let mut group_ids: Vec<u32> = vec![];
-    for l in 0..psd.layers().len() {
-        let layer = &psd.layers()[l];
-        if !layer.visible() || layer.parent_id() == None {
-            continue;
-        }
-        if !group_ids.contains(&layer.parent_id().unwrap()) {
-            group_ids.push(layer.parent_id().unwrap());
-        }
-    }
-
-    // add Default style, if it doesn't already exist
-    let styles = &shared.psd_armature.styles;
+    let tree = psd_import::tree_from_psd(&psd);
+    drop(psd);
     let str_default = shared.ui.loc("settings_modal.default");
-    if styles.iter().find(|s| s.name == str_default) == None {
-        let ids = shared.psd_armature.styles.iter().map(|s| s.id).collect();
-        shared.psd_armature.styles.push(Style {
-            id: generate_id(ids),
-            name: str_default.clone(),
-            textures: vec![],
-            active: true,
-        });
-    }
-
-    let mut bone_psd_id: std::collections::HashMap<u32, i32> = Default::default();
-    let mut start_eff_ids: Vec<i32> = vec![];
-    let mut ik_family_ids: Vec<i32> = vec![];
-    let dimensions = Vec2::new(psd.width() as f32, psd.height() as f32);
-
-    type ImageType = (ImageBuffer<Rgba<u8>, Vec<u8>>, Vec2);
-    let _images: Arc<Mutex<Vec<ImageType>>> = Arc::new(vec![].into());
-
-    // add images via threads (native only)
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let mut processes = vec![];
-        let cgroup_ids = group_ids.clone();
-        let cimages = Arc::clone(&_images);
-        processes.push(std::thread::spawn(move || {
-            for g in (0..cgroup_ids.len()).rev() {
-                let psd = psd::Psd::from_bytes(&bytes).unwrap();
-                let group = psd.groups()[&cgroup_ids[g]].clone();
-                cimages.lock().unwrap().push(load_psd_tex(psd, group));
-            }
-        }));
-        for process in processes {
-            process.join().unwrap();
-        }
-    }
-
-    group_ids.reverse();
-    for g in 0..group_ids.len() {
-        let group = &psd.groups()[&group_ids[g]];
-        let image: (image::ImageBuffer<Rgba<u8>, Vec<u8>>, Vec2);
-
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            image = _images.lock().unwrap()[g].clone();
-        }
-
-        // load image one-by-one (web only)
-        #[cfg(target_arch = "wasm32")]
-        {
-            let cpsd = psd::Psd::from_bytes(&bytes).unwrap();
-            let cgroup = group.clone();
-            image = load_psd_tex(cpsd, cgroup.clone());
-        }
-
-        let mut dims = Vec2::new(image.0.width() as f32, image.0.height() as f32);
-
-        // add tex if not a duplicate
-        let mut tex_idx = usize::MAX;
-        for t in 0..shared.psd_armature.styles[0].textures.len() {
-            let tex = &shared.psd_armature.styles[0].textures[t];
-            let img = &shared.psd_armature.tex_data(tex);
-            if *img == None {
-                continue;
-            }
-            if img.unwrap().image.to_rgba8().to_vec() == image.0.to_vec() {
-                tex_idx = t;
-                break;
-            }
-        }
-
-        if tex_idx == usize::MAX {
-            let styles = &shared.psd_armature.styles;
-            let str_default = str_default.clone();
-            let mut style_id = styles.iter().find(|s| s.name == str_default).unwrap().id;
-            let mut tex_name = group.name();
-
-            if group.name().contains("$\"") {
-                let split: Vec<&str> = group.name().split('"').collect();
-
-                let parent_id = &group.parent_id().unwrap();
-                tex_name = psd.groups().get(parent_id).unwrap().name();
-
-                let low = split[1].to_lowercase().trim().to_string();
-
-                // find this style. Create if it doesn't exist
-                if let Some(style) = styles.iter().find(|s| s.name.to_lowercase().trim() == low) {
-                    style_id = style.id;
-                } else {
-                    let name = split[1].to_string();
-                    let ids = shared.psd_armature.styles.iter().map(|s| s.id).collect();
-                    shared.psd_armature.styles.push(Style {
-                        id: generate_id(ids),
-                        name,
-                        active: true,
-                        textures: vec![],
-                    });
-                    style_id = shared.psd_armature.styles.last().unwrap().id;
-                }
-            }
-
-            let styles = &mut shared.psd_armature.styles;
-            let style = &mut styles.iter_mut().find(|s| s.id == style_id).unwrap();
-            let tex_name = utils::without_unicode(tex_name);
-
-            // remove existing texture with same name
-            style.textures.retain(|t| t.name != tex_name);
-
-            let mut img = image::DynamicImage::ImageRgba8(image.0.clone());
-
-            // create empty image (1x1) if layer is empty
-            if img.dimensions().0 == 0 || img.dimensions().1 == 0 {
-                img = image::DynamicImage::new(1, 1, image::ColorType::Rgba8);
-                dims = Vec2::new(1., 1.);
-            }
-
-            let arm = &mut shared.psd_armature;
-            let bgl = bind_group_layout;
-            add_texture(img, style_id, dims, tex_name, arm, queue, device, bgl, ctx);
-
-            let styles = &shared.psd_armature.styles;
-            let str_default = str_default.clone();
-            let default_style = &styles.iter().find(|s| s.name == str_default).unwrap();
-            tex_idx = default_style.textures.len() - 1;
-        }
-
-        if group.name().contains("$\"") {
-            continue;
-        }
-
-        // create texture bone
-        let bone_id = shared.psd_armature.new_bone(-1).0.id;
-        bone_psd_id.insert(group_ids[g] as u32, bone_id);
-
-        let styles = &shared.psd_armature.styles;
-        let str_default = str_default.clone();
-        let default_style = &styles.iter().find(|s| s.name == str_default).unwrap();
-        let tex = default_style.textures[tex_idx].clone();
-        let bone = shared.psd_armature.find_bone_mut(bone_id).unwrap();
-        bone.parent_id = 0;
-        bone.name = group.name().to_string();
-        bone.tex = tex.name.clone();
-        shared
-            .psd_armature
-            .set_bone_tex(bone_id, tex.name.clone(), usize::MAX, -1);
-
-        // check if this group has a pivot, and create it if so
-        for l in 0..psd.layers().len() {
-            let layer = &psd.layers()[l];
-            if layer.parent_id() != Some(group_ids[g]) || !layer.name().contains("$pivot") {
-                continue;
-            }
-
-            let pivot_pos = Vec2::new(
-                layer.layer_left() as f32 + layer.width() as f32 / 2.,
-                layer.layer_top() as f32 + layer.height() as f32 / 2.,
-            );
-            let bone = shared.psd_armature.find_bone_mut(bone_id).unwrap();
-            let pivot = Vec2::new(
-                -(pivot_pos.x - image.1.x - image.0.width() as f32 / 2.) / image.0.width() as f32,
-                (pivot_pos.y - image.1.y - image.0.height() as f32 / 2.) / image.0.height() as f32,
-            );
-            bone.pivot_pos = pivot;
-        }
-
-        // process inverse kinematics layers ($ik_)
-        for l in 0..psd.layers().len() {
-            let layer = &psd.layers()[l];
-            if layer.parent_id() != Some(group_ids[g]) || !layer.name().contains("$ik_") {
-                continue;
-            }
-
-            let bone = shared.psd_armature.find_bone_mut(bone_id).unwrap();
-
-            if layer.name().contains("counterclockwise") {
-                bone.ik_constraint = JointConstraint::CounterClockwise;
-            } else if layer.name().contains("clockwise") {
-                bone.ik_constraint = JointConstraint::Clockwise;
-            } else {
-                let num = utils::without_unicode(utils::after_underscore(layer.name()));
-                match num.parse::<i32>() {
-                    Ok(id) => {
-                        bone.ik_family_id = id;
-                        if !ik_family_ids.contains(&id) {
-                            start_eff_ids.push(bone.id);
-                            ik_family_ids.push(id);
-                        }
-                    }
-                    Err(err) => println!("{}", err),
-                }
-            }
-        }
-
-        let new_bone = shared.psd_armature.find_bone_mut(bone_id).unwrap();
-        new_bone.pivot_scale = Vec2::new(1., 1.);
-
-        // layers start from top-left, so push bone down and right to reflect that
-        new_bone.pos = Vec2::new(image.0.width() as f32 / 2., image.0.height() as f32 / -2.);
-
-        // push bone to wherever it would have been on the canvas
-        new_bone.pos.x += image.1.x;
-        new_bone.pos.y -= image.1.y;
-
-        new_bone.pos -= Vec2::new(dimensions.x / 2., -dimensions.y / 2.);
-        new_bone.pos -= new_bone.pivot_pos * dims;
-
-        // add this bone to parent, if appropriate
-        if group.parent_id() != None {
-            if let Some(parent_id) = bone_psd_id.get(&group.parent_id().unwrap()) {
-                let parent = shared.psd_armature.find_bone_mut(bone_id).unwrap();
-                parent.parent_id = *parent_id;
-                parent.folded = true;
-
-                // since child pos is relative to parent, offset against it
-                let bones = &shared.psd_armature.bones;
-                let mut nb = bones.iter().find(|bo| bo.id == bone_id).unwrap().clone();
-                while nb.parent_id != -1 {
-                    let bones = &shared.psd_armature.bones;
-                    let id = nb.parent_id;
-                    nb = bones.iter().find(|bo| bo.id == id).unwrap().clone();
-                    shared.psd_armature.find_bone_mut(bone_id).unwrap().pos -= nb.pos;
-                }
-            }
-        }
-    }
-
-    // add IK targets
-    for eff_id in &start_eff_ids {
-        let target_id = shared.psd_armature.new_bone(-1).0.id;
-        let start_eff_bone = &mut shared.psd_armature.find_bone_mut(*eff_id).unwrap();
-        let ik_id = start_eff_bone.ik_family_id;
-
-        start_eff_bone.ik_target_id = target_id;
-        let target_name = format!("{} Target", start_eff_bone.name);
-
-        // determine target's base position
-        let bones = &shared.psd_armature.bones;
-        let effs = bones.iter().filter(|bone| bone.ik_family_id == ik_id);
-        let mut pos = effs.clone().last().unwrap().pos;
-        let parents = shared
-            .psd_armature
-            .get_all_parents(false, effs.last().unwrap().id);
-        for bone in parents {
-            pos += bone.pos;
-        }
-
-        let target_bone = shared.psd_armature.find_bone_mut(target_id).unwrap();
-        target_bone.name = target_name;
-        target_bone.pos = pos;
-        target_bone.zindex = 0;
-    }
-
-    // adjust IK bones' distance (position X)
-    for b in 0..shared.psd_armature.bones.len() {
-        let bone = &mut shared.psd_armature.bones[b];
-        if bone.ik_family_id == -1 || start_eff_ids.contains(&bone.id) {
-            continue;
-        }
-        bone.pos.x = bone.pos.mag();
-        bone.pos.y = 0.;
-    }
-
-    // point IK bones in the correct direction
-    for b in 0..shared.psd_armature.bones.len() {
-        let bone = &shared.psd_armature.bones[b];
-        let bones = &shared.psd_armature.bones;
-        if bone.ik_family_id == -1 {
-            continue;
-        }
-
-        // get starting bone of this family
-        let start_bone_raw = bones.iter().find(|b| b.ik_family_id == bone.ik_family_id);
-        if start_bone_raw == None {
-            continue;
-        }
-        let start_bone = start_bone_raw.unwrap();
-
-        // get target bone of this family
-        let target_raw = bones.iter().find(|b| b.id == start_bone.ik_target_id);
-        if target_raw == None {
-            continue;
-        }
-        let target = target_raw.unwrap();
-
-        // rotate this bone to point correctly
-        let diff = target.pos - start_bone.pos;
-        let angle = diff.y.atan2(diff.x);
-        let bone = &mut shared.psd_armature.bones[b];
-        bone.pivot_rot = -angle;
-
-        // adjust pivot based on its rotation
-        let styles = &shared.psd_armature.styles;
-        let str_default = str_default.clone();
-        let default_style = &styles.iter().find(|s| s.name == str_default).unwrap();
-        let textures = &default_style.textures;
-        let tex = textures.iter().find(|t| t.name == bone.tex).unwrap();
-        let size = utils::rotate(&tex.size, -angle);
-        bone.pivot_pos = utils::rotate(&bone.pivot_pos, angle) * (size / tex.size);
-    }
+    let gpu = psd_import::Gpu { queue, device, layout: bind_group_layout, ctx };
+    psd_import::build_armature(&tree, &mut shared.psd_armature, &str_default, gpu);
 
     // remove unused texture data
     shared.psd_armature.tex_data.retain(|d| {
@@ -812,22 +499,3 @@ pub fn load_image_wasm(id: String) -> Option<(Vec<u8>, Vec2)> {
     return Some((result, dimensions));
 }
 
-fn load_psd_tex(
-    psd: psd::Psd,
-    group: psd::PsdGroup,
-) -> (image::ImageBuffer<Rgba<u8>, Vec<u8>>, Vec2) {
-    let (pixels, width, height, tl_x, tl_y) = psd
-        .flatten_layers_rgba(&|(_d, layer)| {
-            if layer.parent_id() == None || layer.name().contains("$") {
-                return false;
-            }
-            let parent_group = &psd.groups()[&layer.parent_id().unwrap()];
-            parent_group.id() == group.id()
-        })
-        .unwrap();
-
-    let img_buf =
-        <image::ImageBuffer<image::Rgba<u8>, _>>::from_raw(width, height, pixels).unwrap();
-
-    (img_buf, Vec2::new(tl_x as f32, tl_y as f32))
-}

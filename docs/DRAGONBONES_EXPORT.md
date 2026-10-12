@@ -299,8 +299,10 @@ existing exporters.
    The i18n keys live under `export_modal.dragonbones` in `assets/i18n/en.json`.
 
 **PSD import (context; already done)**: `src/file_reader.rs` `read_psd` (~L206)
-turns PSD groups into bones, flattening each group into one texture. `$pivot` and
-`$ik_*` marker layers configure pivot and IK. This is why the pipeline works
+turned PSD groups into bones, flattening each group into one texture. Keyternity
+now imports every layer as its own bone, with groups as untextured parent bones
+(`src/psd_import.rs`). `$pivot` and `$ik_*` marker layers configure the group's
+bone. This is why the pipeline works
 today; the exporter is the reverse trip.
 
 **Shape:** `src/dragonbones_export.rs`:

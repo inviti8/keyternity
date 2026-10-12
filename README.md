@@ -115,6 +115,10 @@ SkelForm's runtimes as is.
   threshold are in the toolbar, with defaults that scale to the texture.
   *Outline* traces just the cut-out shape, to draw the topology by hand
   ([design](docs/AUTO_MESH.md))
+- **Photoshop import keeps layers separate** — every visible layer becomes its
+  own bone and texture (trimmed to its art), including layers outside groups.
+  Groups become parent bones, placed at a `$pivot` layer or at their art's
+  center. SkelForm merged each group into one texture
 - **Fixes**
   - Unused Textures no longer lists textures that animations swap in
   - "Download ffmpeg" no longer crashes when the app folder isn't writable
