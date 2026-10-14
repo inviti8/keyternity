@@ -5,7 +5,7 @@
 #define MyAppName "Keyternity"
 ; release.py passes /DMyAppVersion=<version> from the release tag
 #ifndef MyAppVersion
-  #define MyAppVersion "0.3.0"
+  #define MyAppVersion "0.4.0"
 #endif
 #define MyAppPublisher "HEAVYMETA"
 #define MyAppURL "https://github.com/inviti8/keyternity"
