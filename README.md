@@ -59,6 +59,15 @@ DragonBones for game engines. Older files lose their IK.
   it too), or use *To child* in the bone panel. Photoshop import points group
   bones at their child group, and DragonBones import and export keep lengths.
   The groundwork for envelope skinning ([design](docs/ENVELOPES.md))
+- **Bind to Skeleton** — one click skins a mesh, as with Blender's automatic
+  weights or Max's Skin modifier: Bind Pose is turned on, every skeleton bone in
+  reach gets a bind, and every vertex is weighted from the bones' **envelopes**
+  (a capsule along each bone, full inside an inner radius and fading out to an
+  outer one, with four falloff curves and an Absolute mode for rigid pieces).
+  Bones without a texture are the skeleton by default. Weights stay live as you
+  change envelopes, lengths or the setup pose, except vertices you weight by hand,
+  which are kept. Up to 4 bones per vertex by default, and vertices outside every
+  envelope are flagged ([design](docs/ENVELOPES.md))
 - **Canvas toolbar** — a toolbar above the canvas with Move, Rotate and Scale,
   the navigation tools, the mesh tools, and the mesh actions (Trace, Center,
   Reset, Re-triangulate). The active tool's options sit on its right

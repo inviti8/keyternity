@@ -55,7 +55,7 @@ fn setup_world(armature: &Armature) -> Vec<Bone> {
 }
 
 /// World-space vertex positions of a bone as drawn, incl. the pivot offset the renderer adds.
-fn drawn_vertices(armature: &Armature, world: &Vec<Bone>, bone_id: i32) -> Vec<Vec2> {
+pub fn drawn_vertices(armature: &Armature, world: &Vec<Bone>, bone_id: i32) -> Vec<Vec2> {
     let bone = world.iter().find(|b| b.id == bone_id).unwrap();
     let size = armature
         .tex_of(bone_id)

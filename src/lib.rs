@@ -62,6 +62,7 @@ pub mod bone_panel;
 pub mod dragonbones_export;
 pub mod dragonbones_import;
 pub mod editor;
+pub mod envelope;
 pub mod ik;
 pub mod export_modal;
 pub mod file_reader;
@@ -75,6 +76,7 @@ pub mod psd_import;
 pub mod renderer;
 pub mod settings_modal;
 pub mod shared;
+pub mod skin;
 pub mod startup_window;
 pub mod styles_modal;
 pub mod topology;
@@ -903,6 +905,8 @@ impl BackendRenderer {
             .pose_mode
             .then_some(&shared.edit_mode.pose_snapshot);
         bind_pose::maintain_with_rest(&mut shared.armature, rest);
+        // envelope-weighted meshes follow their inputs (no-op without any)
+        skin::maintain(&mut shared.armature, shared.edit_mode.pose_mode);
 
         utils::animate_bones(&mut shared.armature, &shared.selections, &shared.edit_mode);
         shared.renderer.temp_bones = shared.armature.animated_bones.clone();

@@ -33,6 +33,8 @@ pub fn iterate_events(
         match last_event {
             E::NewBone | E::DragBone | E::DeleteBone | E::PasteBone | E::RaiseGlobalZindex | E::SetBindPose | E::SetBindPoseAll | E::ClearBindPose | E::AddIk | E::RemoveIk => undo_states.new_undo_bones(&armature.bones),
             E::SetIkChain | E::ToggleIkEnabled | E::DeleteIkTarget => undo_states.new_undo_bone(&armature.bones[selections.bone_idx]),
+            E::BindToSkeleton | E::AddBonesInReach => undo_states.new_undo_bones(&armature.bones),
+            E::ToggleEnvelopeWeights | E::SetMaxInfluences | E::UnlockSelectedVerts | E::UnlockAllVerts => undo_states.new_undo_bone(&armature.bones[selections.bone_idx]),
             E::NewAnimation | E::DeleteAnim => undo_states.new_undo_anims(&armature.animations),
             E::DeleteSelectedTextures       => undo_states.new_undo_style(&armature.sel_style(&selections).unwrap()),
             E::DeleteStyle | E::NewStyle    => undo_states.new_undo_styles(&armature.styles),
@@ -204,11 +206,22 @@ pub fn iterate_events(
         ui.last_selected_frame = selections.anim_frame;
         events.events.remove(0);
         events.values.drain(0..=2);
+    } else if event == Events::EditEnvelope {
+        if let Some(field) = EnvelopeField::from_repr(events.values[0] as usize) {
+            if let Some(id) = armature.sel_bone(selections).map(|b| b.id) {
+                skin::set_envelope_field(armature, id, field, events.values[1]);
+            }
+        }
+        events.events.remove(0);
+        events.values.drain(0..=1);
     } else if event == Events::SetBindWeight {
         let sel_bind = events.values[0] as usize;
         let vert = events.values[1] as usize;
         let weight = events.values[2];
-        armature.sel_bone_mut(&selections).unwrap().binds[sel_bind].verts[vert].weight = weight;
+        let mesh = armature.sel_bone_mut(&selections).unwrap();
+        mesh.binds[sel_bind].verts[vert].weight = weight;
+        let vert_id = mesh.binds[sel_bind].verts[vert].id as u32;
+        skin::lock_vertex(mesh, vert_id);
 
         events.events.remove(0);
         events.values.drain(0..=2);
@@ -527,6 +540,52 @@ pub fn simple_event(
             }
         }
         Events::AddIk => add_ik(armature, selections),
+        Events::BindToSkeleton => {
+            let mut errors = vec![];
+            let mut outside = 0;
+            for id in selections.bone_ids.clone() {
+                let name = armature.bones.iter().find(|b| b.id == id).map_or(String::new(), |b| b.name.clone());
+                match skin::bind_to_skeleton(armature, id) {
+                    Ok(verts) => outside += verts.len(),
+                    Err(err) => errors.push(format!("{name}: {err}")),
+                }
+            }
+            if !errors.is_empty() {
+                ui.custom_error = errors.join("\n");
+                let headline = ui.loc("bone_panel.skin.bind_failed");
+                open_modal(ui, false, headline);
+            } else if outside > 0 {
+                ui.custom_error = outside.to_string();
+                let headline = ui.loc("bone_panel.skin.outside_report");
+                open_modal(ui, false, headline);
+            }
+        }
+        Events::ToggleEnvelopeWeights => {
+            let mesh = armature.sel_bone_mut(selections).unwrap();
+            mesh.envelope_weights = value == 1.;
+            mesh.skin_sig = 0;
+        }
+        Events::SetMaxInfluences => {
+            armature.sel_bone_mut(selections).unwrap().max_influences = value as u32;
+        }
+        Events::AddBonesInReach => {
+            let id = armature.sel_bone(selections).unwrap().id;
+            skin::add_bones_in_reach(armature, id);
+        }
+        Events::UnlockSelectedVerts => {
+            let sel_verts: Vec<u32> = selections.vert_ids.iter().map(|v| *v as u32).collect();
+            let mesh = armature.sel_bone_mut(selections).unwrap();
+            mesh.locked_verts.retain(|v| !sel_verts.contains(v));
+        }
+        Events::UnlockAllVerts => armature.sel_bone_mut(selections).unwrap().locked_verts.clear(),
+        Events::SelectOutsideVerts => {
+            let mesh = armature.sel_bone(selections).unwrap();
+            selections.vert_ids = mesh.skin_outside.iter().map(|v| *v as usize).collect();
+            edit_mode.editing_mesh = true;
+        }
+        Events::ToggleEnvelopeOpen => {
+            armature.sel_bone_mut(selections).unwrap().envelope_open = value == 1.;
+        }
         Events::RemoveIk => {
             armature.sel_bone_mut(selections).unwrap().ik = None;
         }
@@ -871,6 +930,7 @@ pub fn simple_event(
                     weight: 1.,
                 });
             }
+            skin::lock_vertex(bone_mut, vert_id);
 
             if bind_pose::is_bind_posed(armature, id) {
                 return;

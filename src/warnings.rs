@@ -47,7 +47,8 @@ pub fn check_warnings(armature: &Armature) -> Vec<Warning> {
             let id = vec![bone.id as usize];
             if bone.binds[b].bone_id == -1 {
                 warnings.push(Warning::valued(W::UnboundBind, id, b as f32));
-            } else if bone.binds[b].verts.len() == 0 {
+            } else if bone.binds[b].verts.len() == 0 && !bone.envelope_weights {
+                // envelope skinning keeps binds of bones out of reach for now
                 warnings.push(Warning::valued(W::NoVertsInBind, id, b as f32));
             }
         }
@@ -73,7 +74,7 @@ pub fn check_warnings(armature: &Armature) -> Vec<Warning> {
                     break;
                 }
             }
-            if no_weights {
+            if no_weights && !bone.envelope_weights {
                 let bone_id = vec![bone.id as usize];
                 warnings.push(Warning::valued(W::NoWeights, bone_id, b as f32));
             }

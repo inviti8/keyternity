@@ -677,6 +677,8 @@ pub struct Ui {
 
     pub pointer_on_timeline: bool,
     pub ik_img: Option<egui::TextureHandle>,
+    /// envelope copied in the bone panel, for pasting onto another bone
+    pub envelope_clipboard: Option<crate::envelope::Envelope>,
     pub lock_img: Option<egui::TextureHandle>,
     pub render_points: bool,
     pub render_kites: bool,
@@ -1295,6 +1297,28 @@ pub struct Bone {
     /// This mesh uses Bind Pose skinning (see `bind_pose.rs`). Editor-only; saved in editor.json.
     #[serde(skip)]
     pub bind_pose: bool,
+
+    // envelope skinning (docs/ENVELOPES.md, `skin.rs`); editor-only, saved in editor.json
+    /// this bone's own envelope; None uses the default (§5)
+    #[serde(skip)]
+    pub envelope: Option<crate::envelope::Envelope>,
+    /// mesh: weights follow the envelopes live
+    #[serde(skip)]
+    pub envelope_weights: bool,
+    /// mesh: most bones per vertex; 0 is the default
+    #[serde(skip)]
+    pub max_influences: u32,
+    /// mesh: vertices weighted by hand, which recomputing leaves alone
+    #[serde(skip)]
+    pub locked_verts: Vec<u32>,
+    /// mesh: vertices outside every envelope at the last recompute
+    #[serde(skip)]
+    pub skin_outside: Vec<u32>,
+    /// mesh: inputs of the last recompute (`skin::maintain`)
+    #[serde(skip)]
+    pub skin_sig: u64,
+    #[serde(skip)]
+    pub envelope_open: bool,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Default, Debug)]
@@ -1342,6 +1366,28 @@ pub struct EditorBone {
     pub bind_owner: i32,
     #[serde(skip_serializing_if = "is_false")]
     pub bind_pose: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub envelope: Option<crate::envelope::Envelope>,
+    #[serde(skip_serializing_if = "is_false")]
+    pub envelope_weights: bool,
+    #[serde(skip_serializing_if = "is_u32_zero")]
+    pub max_influences: u32,
+    /// vertex indices
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub locked_verts: Vec<u32>,
+}
+
+/// A field of a bone's envelope, for `Events::EditEnvelope`.
+#[derive(Clone, Copy, PartialEq, Debug, FromRepr)]
+#[repr(usize)]
+pub enum EnvelopeField {
+    Deform,
+    HeadInner,
+    HeadOuter,
+    TailInner,
+    TailOuter,
+    Falloff,
+    Absolute,
 }
 
 /// Which way an IK chain turns at its joints (docs/IK.md §3.3).
@@ -2485,6 +2531,15 @@ pub enum Events {
     ToggleIkFolded,
     TogglePhysFolded,
     ToggleIkEnabled,
+    BindToSkeleton,
+    ToggleEnvelopeWeights,
+    SetMaxInfluences,
+    AddBonesInReach,
+    UnlockSelectedVerts,
+    UnlockAllVerts,
+    SelectOutsideVerts,
+    EditEnvelope,
+    ToggleEnvelopeOpen,
     AddIk,
     RemoveIk,
     SetIkChain,
@@ -2698,6 +2753,14 @@ impl EventState {
     #[rustfmt::skip]    event_with_value!(move_selected_keyframes, Events::MoveSelectedKeyframes, dropped_frame, i32);
     #[rustfmt::skip]    event_with_value!(toggle_edit_alt, Events::ToggleEditAlt, toggle, i32);
     generic_event!(add_ik, Events::AddIk);
+    generic_event!(bind_to_skeleton, Events::BindToSkeleton);
+    generic_event!(add_bones_in_reach, Events::AddBonesInReach);
+    generic_event!(unlock_selected_verts, Events::UnlockSelectedVerts);
+    generic_event!(unlock_all_verts, Events::UnlockAllVerts);
+    generic_event!(select_outside_verts, Events::SelectOutsideVerts);
+    event_with_value!(toggle_envelope_weights, Events::ToggleEnvelopeWeights, toggle, usize);
+    event_with_value!(set_max_influences, Events::SetMaxInfluences, count, u32);
+    event_with_value!(toggle_envelope_open, Events::ToggleEnvelopeOpen, toggle, usize);
     generic_event!(remove_ik, Events::RemoveIk);
     event_with_value!(set_ik_chain, Events::SetIkChain, chain, u32);
     event_with_value!(toggle_ik_enabled, Events::ToggleIkEnabled, toggle, usize);
@@ -2832,6 +2895,13 @@ impl EventState {
         self.values.push(pos_x as f32);
         self.values.push(pos_y as f32);
         self.values.push(zoom as f32);
+    }
+
+    /// Set one field of the selected bone's envelope (`skin::set_envelope_field`).
+    pub fn edit_envelope(&mut self, field: EnvelopeField, value: f32) {
+        self.events.push(Events::EditEnvelope);
+        self.values.push(field as usize as f32);
+        self.values.push(value);
     }
 
     pub fn toggle_bind_pathing(&mut self, bind_idx: usize, toggle: bool) {
@@ -3037,6 +3107,10 @@ fn is_max(value: &f32) -> bool {
 
 fn is_zero(value: &f32) -> bool {
     *value == 0.
+}
+
+fn is_u32_zero(value: &u32) -> bool {
+    *value == 0
 }
 
 fn is_color_empty(value: &Color) -> bool {

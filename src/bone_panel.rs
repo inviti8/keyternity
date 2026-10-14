@@ -347,6 +347,13 @@ pub fn draw(
         }
     }
 
+    if bone.bind_owner.is_none() {
+        envelope(ui, &bone, selections, shared_ui, config, armature, events);
+        if bone.envelope_open {
+            ui.add_space(20.);
+        }
+    }
+
     // physics is not part of v0.4
     physics(ui, &bone, selections, shared_ui, config, armature, events);
     if !bone.phys_folded {
@@ -556,6 +563,133 @@ pub fn inverse_kinematics(
     });
 }
 
+/// The bone's envelope, for envelope skinning (docs/ENVELOPES.md §4.2).
+pub fn envelope(
+    ui: &mut egui::Ui,
+    bone: &Bone,
+    selections: &mut SelectionState,
+    shared_ui: &mut crate::Ui,
+    config: &Config,
+    armature: &Armature,
+    events: &mut EventState,
+) {
+    let loc = |shared_ui: &crate::Ui, key: &str| shared_ui.loc(&format!("bone_panel.envelope.{key}")).clone();
+    let frame = egui::Frame::new()
+        .fill(config.colors.dark_accent.into())
+        .inner_margin(egui::Margin::same(5));
+    frame.show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(loc(shared_ui, "heading")).on_hover_text(loc(shared_ui, "desc"));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let fold_icon = if bone.envelope_open { "⏷" } else { "⏴" };
+                let pointing_hand = egui::CursorIcon::PointingHand;
+                if ui.label(fold_icon).on_hover_cursor(pointing_hand).clicked() {
+                    events.toggle_envelope_open(if bone.envelope_open { 0 } else { 1 });
+                }
+            });
+        });
+    });
+    ui.add_space(2.5);
+    if !bone.envelope_open {
+        return;
+    }
+
+    let world = skin::setup_world(armature);
+    let e = skin::envelope_of(&world, bone.id);
+    let idx = selections.bone_idx;
+    type F = EnvelopeField;
+
+    ui.horizontal(|ui| {
+        ui.label(loc(shared_ui, "deform")).on_hover_text(loc(shared_ui, "deform_desc"));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let mut deform = e.deform;
+            ui.checkbox(&mut deform, "".into_atoms());
+            if deform != e.deform {
+                events.save_bone(idx);
+                events.edit_envelope(F::Deform, if deform { 1. } else { 0. });
+            }
+        });
+    });
+
+    let radius_row = |ui: &mut egui::Ui, shared_ui: &mut crate::Ui, events: &mut EventState, key: &str, inner: (f32, F), outer: (f32, F)| {
+        ui.horizontal(|ui| {
+            ui.label(loc(shared_ui, key)).on_hover_text(loc(shared_ui, "radius_desc"));
+            ui.add_space(ui.available_width() - 120.);
+            for (value, field, label) in [(inner.0, inner.1, "In"), (outer.0, outer.1, "Out")] {
+                ui.label(label);
+                let options = Some(crate::ui::TextInputOptions {
+                    size: Vec2::new(40., 20.),
+                    drag_modifier: 1.,
+                    ..Default::default()
+                });
+                let id = format!("envelope_{field:?}");
+                let (edited, value, _) = ui.float_input(id, shared_ui, value, 1., options);
+                if edited {
+                    events.save_edited_bone(idx);
+                    events.edit_envelope(field, value);
+                }
+            }
+        });
+    };
+    radius_row(ui, shared_ui, events, "head", (e.head_inner, F::HeadInner), (e.head_outer, F::HeadOuter));
+    radius_row(ui, shared_ui, events, "tail", (e.tail_inner, F::TailInner), (e.tail_outer, F::TailOuter));
+
+    ui.horizontal(|ui| {
+        ui.label(loc(shared_ui, "falloff")).on_hover_text(loc(shared_ui, "falloff_desc"));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            use crate::envelope::Falloff;
+            let name = |f: Falloff| loc(shared_ui, &f.to_string());
+            egui::ComboBox::new("envelope_falloff", "")
+                .selected_text(name(e.falloff))
+                .width(70.)
+                .show_ui(ui, |ui| {
+                    let mut falloff = e.falloff;
+                    for f in [Falloff::Linear, Falloff::Smooth, Falloff::FastOut, Falloff::SlowOut] {
+                        ui.selectable_value(&mut falloff, f, name(f));
+                    }
+                    if falloff != e.falloff {
+                        events.save_bone(idx);
+                        events.edit_envelope(F::Falloff, falloff as i32 as f32);
+                    }
+                });
+        });
+    });
+
+    ui.horizontal(|ui| {
+        ui.label(loc(shared_ui, "absolute")).on_hover_text(loc(shared_ui, "absolute_desc"));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let mut absolute = e.absolute;
+            ui.checkbox(&mut absolute, "".into_atoms());
+            if absolute != e.absolute {
+                events.save_bone(idx);
+                events.edit_envelope(F::Absolute, if absolute { 1. } else { 0. });
+            }
+        });
+    });
+
+    ui.horizontal(|ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let clipboard = shared_ui.envelope_clipboard;
+            ui.add_enabled_ui(clipboard.is_some(), |ui| {
+                if ui.skf_button(loc(shared_ui, "paste")).clicked() {
+                    let c = clipboard.unwrap();
+                    events.save_bone(idx);
+                    events.edit_envelope(F::Deform, if c.deform { 1. } else { 0. });
+                    events.edit_envelope(F::HeadOuter, c.head_outer);
+                    events.edit_envelope(F::HeadInner, c.head_inner);
+                    events.edit_envelope(F::TailOuter, c.tail_outer);
+                    events.edit_envelope(F::TailInner, c.tail_inner);
+                    events.edit_envelope(F::Falloff, c.falloff as i32 as f32);
+                    events.edit_envelope(F::Absolute, if c.absolute { 1. } else { 0. });
+                }
+            });
+            if ui.skf_button(loc(shared_ui, "copy")).clicked() {
+                shared_ui.envelope_clipboard = Some(e);
+            }
+        });
+    });
+}
+
 pub fn mesh_deformation(
     ui: &mut egui::Ui,
     bone: &Bone,
@@ -691,6 +825,99 @@ pub fn mesh_deformation(
                 }
             });
         })
+    });
+
+    ui.separator();
+
+    // envelope skinning (docs/ENVELOPES.md §3.4, §4.3): captured at rest
+    let skin = |shared_ui: &crate::Ui, key: &str| shared_ui.loc(&format!("bone_panel.skin.{key}")).clone();
+    let at_rest = !edit_mode.pose_mode && !shared_ui.is_animating(&edit_mode, &selections);
+    ui.add_enabled_ui(at_rest, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(skin(shared_ui, "label")).on_hover_text(skin(shared_ui, "desc"));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let button = ui.skf_button(skin(shared_ui, "bind"));
+                if button.on_hover_text(skin(shared_ui, "bind_desc")).clicked() {
+                    events.bind_to_skeleton();
+                }
+            });
+        });
+
+        // the rest only matters once the mesh is skinned with envelopes
+        let skinned = bind_posed && bone.binds.iter().any(|b| !b.is_path);
+        if !bone.envelope_weights && !skinned {
+            return;
+        }
+        ui.horizontal(|ui| {
+            ui.label(skin(shared_ui, "envelope_weights")).on_hover_text(skin(shared_ui, "envelope_weights_desc"));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let mut on = bone.envelope_weights;
+                ui.checkbox(&mut on, "".into_atoms());
+                if on != bone.envelope_weights {
+                    events.toggle_envelope_weights(if on { 1 } else { 0 });
+                }
+            });
+        });
+        if !bone.envelope_weights {
+            return;
+        }
+
+        ui.horizontal(|ui| {
+            ui.label(skin(shared_ui, "max_influences")).on_hover_text(skin(shared_ui, "max_influences_desc"));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let current = if bone.max_influences == 0 { skin::DEFAULT_MAX_INFLUENCES } else { bone.max_influences };
+                egui::ComboBox::new("max_influences", "")
+                    .selected_text(current.to_string())
+                    .width(40.)
+                    .show_ui(ui, |ui| {
+                        let mut n = current;
+                        for i in 1..=8 {
+                            ui.selectable_value(&mut n, i, i.to_string());
+                        }
+                        if n != current {
+                            events.set_max_influences(n);
+                        }
+                    });
+            });
+        });
+
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let button = ui.skf_button(skin(shared_ui, "add_in_reach"));
+                if button.on_hover_text(skin(shared_ui, "add_in_reach_desc")).clicked() {
+                    events.add_bones_in_reach();
+                }
+            });
+        });
+
+        if !bone.locked_verts.is_empty() {
+            ui.horizontal(|ui| {
+                let label = skin(shared_ui, "locked").replace("$count", &bone.locked_verts.len().to_string());
+                ui.label(label).on_hover_text(skin(shared_ui, "locked_desc"));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.skf_button(skin(shared_ui, "unlock_all")).clicked() {
+                        events.unlock_all_verts();
+                    }
+                    ui.add_enabled_ui(!selections.vert_ids.is_empty(), |ui| {
+                        if ui.skf_button(skin(shared_ui, "unlock_selected")).clicked() {
+                            events.unlock_selected_verts();
+                        }
+                    });
+                });
+            });
+        }
+
+        if !bone.skin_outside.is_empty() {
+            ui.horizontal(|ui| {
+                let label = skin(shared_ui, "outside").replace("$count", &bone.skin_outside.len().to_string());
+                ui.label(label).on_hover_text(skin(shared_ui, "outside_desc"));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.skf_button(skin(shared_ui, "select")).clicked() {
+                        events.select_outside_verts();
+                    }
+                });
+            });
+        }
     });
 
     ui.separator();

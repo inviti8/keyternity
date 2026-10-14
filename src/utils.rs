@@ -816,7 +816,15 @@ pub fn prepare_files(
         bones: vec![],
         styles: vec![],
     };
-    for bone in &armature_copy.bones {
+    for (b, bone) in armature_copy.bones.iter().enumerate() {
+        // vertex ids are re-indexed on save, so store locked vertices by index
+        let verts = &armature.bones[b].vertices;
+        let locked_verts = bone
+            .locked_verts
+            .iter()
+            .filter_map(|id| verts.iter().position(|v| v.id == *id))
+            .map(|i| i as u32)
+            .collect();
         editor.bones.push(EditorBone {
             folded: bone.folded,
             ik_folded: bone.ik_folded,
@@ -832,6 +840,10 @@ pub fn prepare_files(
                 .map(|i| i as i32)
                 .unwrap_or(-1),
             bind_pose: bone.bind_pose,
+            envelope: bone.envelope,
+            envelope_weights: bone.envelope_weights,
+            max_influences: bone.max_influences,
+            locked_verts,
         });
     }
     for style in &armature_copy.styles {
@@ -1010,6 +1022,10 @@ pub fn import<R: Read + std::io::Seek>(
                 bone.group_color = ed_bone.group_color;
                 bone.bind_owner = Some(ed_bone.bind_owner).filter(|id| *id != -1);
                 bone.bind_pose = ed_bone.bind_pose;
+                bone.envelope = ed_bone.envelope;
+                bone.envelope_weights = ed_bone.envelope_weights;
+                bone.max_influences = ed_bone.max_influences;
+                bone.locked_verts = ed_bone.locked_verts.clone();
             }
             for s in 0..temp_arm.styles.len() {
                 let style = &mut temp_arm.styles[s];

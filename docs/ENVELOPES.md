@@ -5,7 +5,9 @@ automatically from bone **envelopes** the way 3ds Max's Skin modifier does, then
 refine it by hand with **weight painting** and a **weight table**. Bones gain a **length**, which envelopes need and which IK and
 DragonBones can use too.
 
-**Status:** step 1 (bone length) implemented (§0); the rest is design.
+**Status:** steps 1–3 implemented (§0): bone length, the envelope maths, and
+Bind to Skeleton with live envelope weights. The Envelope canvas tool, weight
+view, weight painting and weight table are design.
 Decisions are in §9.
 
 
@@ -30,6 +32,49 @@ Decisions are in §9.
   so the editor's *To child* doesn't aim.
 - DragonBones export writes `length`; import keeps it.
 - Tests: `tests/bone_length.rs` (4), plus a PSD import test.
+
+**Step 2, envelope maths (§3.2–3.3)**, in `src/envelope.rs`, without UI yet:
+- `Envelope` (deform, four radii, falloff, absolute) with `for_length` defaults
+  (§5), `influence` and `gap` (distance past the outer radius).
+- **Radii are world px at rest**, not scaled by the bone, so an envelope looks the
+  same size whatever the bone's scale.
+- Falloff curves on `x` (0 at the outer radius, 1 at the inner): Linear `x`,
+  Smooth `x²(3 − 2x)`, Fast out `x²`, Slow out `1 − (1 − x)²`.
+- `vertex_weights`: influences, the strongest *N* (ties keep bone order),
+  normalized, or the nearest bone by `gap` with the outside flag.
+- `bind_weights` and `shares` convert between shares and ordered bind weights.
+- Tests: `tests/envelope.rs` (10), including the conversion through
+  `renderer::construct_verts`.
+
+**Step 3, Bind to Skeleton (§3.4–3.6, §4.2–4.3, §5)**, in `src/skin.rs`:
+- `bind_to_skeleton` (Bind Pose on, skeleton, weights, binds through the Bind Pose
+  helpers, parents first), `add_bones_in_reach`, `maintain` (live recompute) and
+  `lock_vertex`. Envelopes, the per-mesh switch, *Max influences* and locked
+  vertices are editor-only fields on `Bone`, saved in `editor.json` (locked
+  vertices by index, since vertex ids are re-indexed on save).
+- **Live recompute** runs every frame after `bind_pose::maintain`, but only
+  rebuilds a mesh when a hash of its inputs changes: its rest transform and
+  vertices, locks, *Max influences*, and each skin bone's head, tail and
+  envelope. Weights are a pure function of those inputs, so undo stays
+  consistent without extra undo steps. Skipped in Pose Mode.
+- **Departure:** live recompute keeps a bind even when its bone stops weighting
+  any vertex, so shrinking an envelope and growing it back doesn't drop the bone.
+  Running Bind to Skeleton again prunes empty binds. Envelope-weighted meshes
+  therefore skip the *NoVertsInBind* and *NoWeights* warnings.
+- **Departure, point-bone defaults:** a bone without length gets an inner and
+  outer radius of 0.25 and 0.75 times the distance to the nearest other default
+  skeleton bone (20 / 60 px if it has none), rather than radii from mesh size.
+  This scales with the rig, which matters for large Photoshop art.
+- Hand edits that lock a vertex: the bind panel's weight slider, and adding or
+  removing a vertex from a bind.
+- UI: the binds area has *Bind to Skeleton* (for every selected mesh; a modal
+  lists failures, or how many vertices sat outside every envelope), and once
+  skinned, *Envelope Weights*, *Max Influences*, *Add Bones in Reach*, the
+  hand-weighted count with *Unlock Selected* / *Unlock All*, and the outside
+  count with *Select*. The bone panel has a collapsible *Envelope* section
+  (Deform, head and tail radii, Falloff, Absolute, Copy / Paste). All disabled
+  while animating or posing.
+- Tests: `tests/skin.rs` (9).
 
 
 ## 1. Today
@@ -289,8 +334,8 @@ point bones. Deform can be changed per bone in the Envelope section.
 A bone's envelope starts with:
 - **With length L:** inner radius `0.2·L`, outer radius `0.5·L`, at both ends.
   Neighbouring limb bones then overlap around the joint between them.
-- **Point bone:** inner and outer radii from the size of the meshes it reaches,
-  or 20 / 60 px without any.
+- **Point bone:** inner and outer radii of 0.25 and 0.75 times the distance to the
+  nearest other skeleton bone, or 20 / 60 px without any.
 - Bones with lengths give better weights than point bones, because a segment
   follows a limb and a circle doesn't. *To child* (§2.2) and Photoshop import
   set them.
