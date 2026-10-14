@@ -1,8 +1,8 @@
 # Envelope skinning and bone length
 
-**Goal:** weight meshes automatically from bone **envelopes**, the way 3ds Max's
-Skin modifier does, then refine them by hand with **weight painting** and a
-**weight table**. Bones gain a **length**, which envelopes need and which IK and
+**Goal:** skin a mesh in one click with **Bind to Skeleton**, weighted
+automatically from bone **envelopes** the way 3ds Max's Skin modifier does, then
+refine it by hand with **weight painting** and a **weight table**. Bones gain a **length**, which envelopes need and which IK and
 DragonBones can use too.
 
 **Status:** step 1 (bone length) implemented (§0); the rest is design.
@@ -137,15 +137,39 @@ w_k = e_k / (e₀ + e₁ + … + e_k)      (0 when the sum is 0)
 This is exact, so the stored weights stay the ones the renderer, every runtime
 and the DragonBones exporter already read. Nothing downstream changes.
 
-### 3.4 Which bones skin a mesh
-As in Max, where you add bones to a Skin modifier, each mesh has a list of **skin
-bones**: its binds. *Add bone* is the existing bind-bone picker. Envelope
-weights are spread over those bones, plus the owner if the owner deforms.
-*Add bones in reach* adds every deforming bone whose outer envelope touches the
-mesh.
+### 3.4 Bind to Skeleton
+Binding is one action, as with Blender's *With Automatic Weights* or adding
+bones to Max's Skin modifier. **Bind to Skeleton**, in the mesh's binds area,
+does all of it for every selected mesh, in one undo step:
 
-Path binds are left out: they aren't weights. A mesh with path binds can't use
-envelopes.
+1. Turns on Bind Pose for the mesh (§3.5).
+2. Finds the **skeleton**: every bone set to Deform (§5), apart from the mesh's
+   own descendants.
+3. Computes every vertex's envelope weights (§3.3) against the skeleton.
+4. Creates a bind for each bone that ends up with weight on at least one vertex,
+   parents first, and stores the weights in them. Bones out of reach get no bind.
+5. Turns on envelope weights (§3.6), so editing envelopes later keeps updating
+   the mesh.
+6. Reports vertices that sat outside every envelope and went to their nearest
+   bone (§3.3 step 5), with *Select* to find them.
+
+Nothing moves at rest, because Bind Pose binds agree with the owner there. The
+mesh deforms as soon as a skeleton bone moves.
+
+**Running it again** (after adding bones, or changing lengths or envelopes)
+recomputes the unlocked vertices, adds binds for bones now in reach, and removes
+binds that no longer weight anything. Hand-edited (locked) vertices keep their
+weights. *Unlock all* first starts over.
+
+**Skin bones:** afterwards, a mesh's binds are its skin bones, as in Max's bone
+list, and envelope weights are spread over them (plus the owner, if it deforms).
+For refinement:
+- *Add bone*: the existing bind-bone picker
+- *Add bones in reach*: every deforming bone whose outer envelope touches the mesh
+- removing a bind: drops that bone, and its weight goes to the remaining bones
+
+Path binds are left out: they aren't weights. Bind to Skeleton refuses a mesh
+with path binds, and says so.
 
 ### 3.5 Requires Bind Pose
 Envelope weights blend several bones per vertex, which only skins correctly with
@@ -181,9 +205,11 @@ A canvas tool, **Envelope** (E), for the selected bones:
 Deform (on/off), Inner and Outer radius at Head and Tail, Falloff, Absolute,
 and *Copy* / *Paste* envelope (to give a left limb's settings to the right one).
 
-### 4.3 Mesh panel: *Skin* section
-- **Envelope weights** (on/off, §3.5), **Max influences**
-- skin bones list (the binds), *Add bone*, *Add bones in reach*
+### 4.3 Mesh panel: binds area
+The existing binds area becomes the mesh's skinning controls:
+- **Bind to Skeleton** (§3.4), first, as the main action
+- **Envelope weights** (on/off, §3.6), **Max influences**
+- skin bones list (the binds, as today), *Add bone*, *Add bones in reach*
 - *Unlock selected* / *Unlock all*, with the count of locked vertices
 - vertices outside every envelope (§3.3 step 5): a count, and *Select* to find
   them
@@ -252,13 +278,22 @@ table:
 
 
 ## 5. Defaults
-When a bone is first set to Deform:
+**Deform** starts on for skeleton bones and off for the rest:
+- **on:** bones without a texture (joints and groups, such as Photoshop group bones)
+- **off:** textured bones (the art being skinned), IK targets, and Bind Pose
+  helpers
+
+So Bind to Skeleton works on a fresh rig without any setup, including rigs of
+point bones. Deform can be changed per bone in the Envelope section.
+
+A bone's envelope starts with:
 - **With length L:** inner radius `0.2·L`, outer radius `0.5·L`, at both ends.
   Neighbouring limb bones then overlap around the joint between them.
 - **Point bone:** inner and outer radii from the size of the meshes it reaches,
   or 20 / 60 px without any.
-- **Deform** starts off for bones without length, IK targets and Bind Pose
-  helpers. *Deform all bones with length* turns it on rig-wide.
+- Bones with lengths give better weights than point bones, because a segment
+  follows a limb and a circle doesn't. *To child* (§2.2) and Photoshop import
+  set them.
 
 
 ## 6. Data
@@ -291,8 +326,13 @@ did before, and the DragonBones export needs nothing new.
 - **Weight table:** editing a row renormalizes and locks; *Normalize* and *Prune*.
 - **Live:** moving an envelope handle, changing a length, or reparenting updates
   only unlocked weights, in one undo step.
-- **End to end:** a two-bone arm mesh with envelope weights bends smoothly at the
-  elbow under a 90° turn; DragonBones export round-trips it within 0.01 px.
+- **Bind to Skeleton:** on a two-bone arm mesh it turns on Bind Pose, makes one
+  bind per bone in reach (none for bones out of reach or the mesh's descendants),
+  weights every vertex to sum 1, moves nothing at rest, and is one undo step.
+  Running it again keeps locked vertices and adds or removes binds as bones come
+  into or go out of reach. A mesh with path binds is refused.
+- **End to end:** that arm mesh bends smoothly at the elbow under a 90° turn;
+  DragonBones export round-trips it within 0.01 px.
 - **Length:** saved and loaded; *Length to child*; the tail drag doesn't turn the
   bone; DragonBones export writes it and import keeps it.
 
@@ -302,8 +342,9 @@ did before, and the DragonBones export needs nothing new.
    in and out. Shippable alone.
 2. **Envelope maths** (§3.2–3.3): influence, limit, normalize, conversion, plus
    tests. No UI.
-3. **Envelope data and Skin section** (§3.4–3.6, §4.2–4.3): per-bone envelopes,
-   per-mesh switch, live recompute, locks.
+3. **Bind to Skeleton** (§3.4–3.6, §4.2–4.3, §5): per-bone envelopes with their
+   defaults, the button and binds area, live recompute, locks. Usable on its own:
+   one-click skinning with default envelopes.
 4. **Envelope tool and weight view** (§4.1, §4.4).
 5. **Weight painting and the weight table** (§4.5–4.6).
 6. **Docs:** README and an as-built section here.
@@ -315,9 +356,10 @@ did before, and the DragonBones export needs nothing new.
 | E1 | Bones get a `length` (setup pose only, not animatable). Dragging the tail changes length without turning the bone. |
 | E2 | Envelopes follow Max: segment capsules with inner/outer radii at both ends and a falloff curve. Max's extra cross-sections are left for later. |
 | E3 | Envelopes are **per bone**, shared by every mesh, like Blender's bone envelopes. (Max's are per Skin modifier, so per mesh.) A per-mesh scale on top can come later if one piece needs to reach further. |
-| E4 | A mesh's binds are its skin bones; envelope weights are spread over them. |
+| E4 | **Bind to Skeleton** skins a mesh in one click: Bind Pose on, a bind per deforming bone in reach, envelope weights. Afterwards a mesh's binds are its skin bones. |
 | E5 | Weights are computed live in the setup pose, stored as ordinary bind weights; hand-edited vertices are locked. |
 | E6 | Envelope weights require, and turn on, Bind Pose. |
 | E7 | Max influences defaults to 4. Vertices outside every envelope go to the nearest bone and are flagged. |
 | E8 | *Absolute* is a per-bone envelope option. |
 | E9 | Weight painting (add, subtract, set, smooth, blur) and a weight table are part of this feature. Both edit normalized shares and lock what they touch. |
+| E10 | Deform defaults on for untextured bones (the skeleton) and off for textured ones, IK targets and helpers, so binding needs no setup. |
