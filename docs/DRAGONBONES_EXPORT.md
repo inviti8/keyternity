@@ -52,7 +52,7 @@ Inkternity parses **DragonBones 5.5 JSON** via `DragonBonesCPP`'s `JSONDataParse
 | styles | **Active style(s) only**, emitted as the default skin (`""`), **one atlas**. Error out if it doesn't fit a single sheet |
 | platform | **Native only**; the DragonBones tab is hidden on wasm |
 | output | Save dialog picks `<base>_ske.json`; `<base>_tex.json` + `<base>_tex.png` are written next to it. Atlas is always PNG (the JPG option is ignored) |
-| IK | Always baked for this exporter (IK family bones get per-frame `rotateFrame`s; the setup pose uses the IK-solved rotation) |
+| IK | Always baked for this exporter (IK chain and tip bones get per-frame `rotateFrame`s; the setup pose uses the IK-solved rotation) |
 | physics | Dropped |
 
 ---
@@ -352,7 +352,7 @@ SkelForm this way:
 | `Texture` (`offset`/`size` after `create_tex_sheet`) | `SubTexture` | `SubTexture.name` = texture name |
 | `Animation.fps` | armature `frameRate` | DragonBones has one rate per armature. We use the max fps across animations and rescale the other animations' frame numbers (rounded) |
 | flat `(bone_id, element)` keyframes | `translateFrame` / `rotateFrame` / `scaleFrame` / `displayFrame` / `colorFrame` / `zOrder` | see "Keyframe translation" below |
-| IK families | baked `rotateFrame`s | see below |
+| IK constraints | baked `rotateFrame`s | see below |
 | `Physics` | — | dropped |
 
 **Weights (SkelForm semantics → DragonBones).** In `renderer::construct_verts`,
@@ -424,8 +424,8 @@ non-uniform (in the setup or any animation frame) is moved onto a root-level
   the *first* one, then holds the *last*. That track is sampled every frame.
 - The animation's `duration` is the last keyframe's frame, because SkelForm loops
   when it reaches it (`Animation::set_frame`). `playTimes` is 0.
-- **IK**: SkelForm solves IK every frame, so bones in an IK family get their
-  rotation **sampled every frame**. The rotation comes from
+- **IK**: IK is solved every frame, so the chain and tip bones of each IK
+  constraint ([IK.md](IK.md)) get their rotation **sampled every frame**. The rotation comes from
   `Armature::animate` + `renderer::construction`, as local = world − parent world,
   and it replaces their own Rotation keys. The setup pose uses the IK-solved
   rotation too.

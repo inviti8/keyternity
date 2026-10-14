@@ -547,13 +547,10 @@ pub fn render(
     // is a bone being hovered on, in the renderer?
     renderer.is_hovering_bone = renderer.on_point || on_click_id != -1;
 
-    // check if this bone is part of IK, to disable editing later
-    let mut has_ik = false;
-    if let Some(bone) = armature.sel_bone(&sel) {
-        has_ik = bone.ik_family_id != -1
-            && !bone.ik_disabled
-            && armature.bone_eff(bone.id) != JointEffector::Start;
-    }
+    // IK owns this bone's rotation and/or position (docs/IK.md §4.2)
+    let (ik_rot_lock, ik_pos_lock) =
+        armature.sel_bone(&sel).map_or((false, false), |bone| ik::locks(&armature.bones, bone.id));
+    let has_ik = ik_rot_lock;
 
     // show transform rings when editing a bone
     let ring_enabled = config.transform_rot_radius > 0. && config.transform_scale_radius > 0.;
@@ -634,7 +631,7 @@ pub fn render(
 
     // bone's transforms can't be edited if editing its verts or it's IK,
     // but an exception is made if editing pivot
-    let is_editing_pivot = !has_ik || edit_mode.editing_pivot;
+    let is_editing_pivot = !(ik_rot_lock && ik_pos_lock) || edit_mode.editing_pivot;
     if edit_mode.editing_mesh || !is_editing_pivot {
         return;
     }
@@ -878,98 +875,21 @@ pub fn render_screenshot(
     draw_armature(&temp_arm, armature, false, &sel, queue, render_pass, &renderer.bone_buffer);
 }
 
+/// World transforms of `og_bones` (the animated local pose), with IK applied.
 pub fn construction(bones: &mut Vec<Bone>, og_bones: &Vec<Bone>) {
-    inheritance(bones, std::collections::HashMap::new(), &vec![]);
-
-    let mut ik_rot: std::collections::HashMap<i32, f32> = std::collections::HashMap::new();
-
-    let mut done_ids: Vec<i32> = vec![];
-    for b in 0..bones.len() {
-        let ik_id = bones[b].ik_family_id;
-        if bones[b].ik_disabled || ik_id == -1 || done_ids.contains(&ik_id) {
-            continue;
-        }
-
-        done_ids.push(bones[b].ik_family_id);
-
-        let target = bones.iter().find(|bone| bone.id == bones[b].ik_target_id);
-        if target == None {
-            continue;
-        }
-
-        let family: Vec<&Bone> = bones.iter().filter(|b| b.ik_family_id == ik_id).collect();
-        let mut joints = vec![];
-        for bone in family {
-            joints.push(bone.clone());
-        }
-
-        inverse_kinematics(&mut joints, target.unwrap().pos);
-
-        // save rotations for the next forward kinematics call
-        for j in 0..joints.len() {
-            if j == joints.len() - 1 {
-                if bones[b].ik_mimic_target {
-                    ik_rot.insert(joints[j].id, target.unwrap().rot);
-                }
-                continue;
-            }
-            ik_rot.insert(joints[j].id, joints[j].rot);
-        }
-    }
-
-    // re-construct bones, accounting for rotations saved from IK
+    let ik_rot = ik::solve(og_bones);
     *bones = og_bones.clone();
-    inheritance(bones, ik_rot.clone(), &vec![]);
-
+    inheritance(bones, ik_rot, &vec![]);
     construct_verts(bones);
 }
 
+/// `construction`, plus physics.
 pub fn runtime_construction(
     bones: &mut Vec<Bone>,
     og_bones: &Vec<Bone>,
     mut armature_bones: Vec<Bone>,
 ) -> Vec<Bone> {
-    inheritance(bones, std::collections::HashMap::new(), &vec![]);
-
-    let mut ik_rot: std::collections::HashMap<i32, f32> = std::collections::HashMap::new();
-
-    let mut done_ids: Vec<i32> = vec![];
-    for b in 0..bones.len() {
-        let ik_id = bones[b].ik_family_id;
-        if bones[b].ik_disabled || ik_id == -1 || done_ids.contains(&ik_id) {
-            continue;
-        }
-
-        done_ids.push(bones[b].ik_family_id);
-
-        let target = bones.iter().find(|bone| bone.id == bones[b].ik_target_id);
-        if target == None {
-            continue;
-        }
-
-        let family: Vec<&Bone> = bones.iter().filter(|b| b.ik_family_id == ik_id).collect();
-        let mut joints = vec![];
-        for bone in family {
-            joints.push(bone.clone());
-        }
-
-        inverse_kinematics(&mut joints, target.unwrap().pos);
-
-        // save rotations for the next forward kinematics call
-        for j in 0..joints.len() {
-            let bone = bones.iter().find(|b| b.id == joints[j].id).unwrap();
-            if j == joints.len() - 1 {
-                // if mimicking is on, follow rotation based on target bone
-                if bone.ik_mimic_target {
-                    ik_rot.insert(joints[j].id, target.unwrap().rot);
-                }
-                continue;
-            }
-            ik_rot.insert(joints[j].id, joints[j].rot);
-        }
-    }
-
-    // re-construct bones, accounting for rotations saved from IK
+    let ik_rot = ik::solve(og_bones);
     *bones = og_bones.clone();
     inheritance(bones, ik_rot.clone(), &vec![]);
 
@@ -977,7 +897,7 @@ pub fn runtime_construction(
 
     // re-construct bones, accounting for physics
     *bones = og_bones.clone();
-    inheritance(bones, ik_rot.clone(), &armature_bones);
+    inheritance(bones, ik_rot, &armature_bones);
 
     construct_verts(bones);
 
@@ -1175,100 +1095,6 @@ pub fn inherit_vert(mut pos: Vec2, bone: &Bone, pivot_rot: f32, pivot_scale: Vec
     pos
 }
 
-pub fn inverse_kinematics(bones: &mut Vec<Bone>, target: Vec2) {
-    let root = bones[0].pos;
-
-    if bones[0].ik_mode == InverseKinematicsMode::FABRIK {
-        for _ in 0..10 {
-            fabrik(bones, root, target);
-        }
-    } else {
-        arc_ik(bones, root, target)
-    }
-
-    // rotating bones
-    let end_bone = bones.last().unwrap();
-    let mut tip_pos = end_bone.pos;
-    for b in (0..bones.len()).rev() {
-        let dir = tip_pos - bones[b].pos;
-        bones[b].rot = dir.y.atan2(dir.x);
-        tip_pos = bones[b].pos;
-    }
-
-    // apply constraints if this IK has more than 1 bone
-    if bones.len() == 1 {
-        return;
-    }
-    let joint_dir = (bones[1].pos - bones[0].pos).normalize();
-    let base_dir = (target - root).normalize();
-    let dir = joint_dir.x * base_dir.y - base_dir.x * joint_dir.y;
-    let base_angle = base_dir.y.atan2(base_dir.x);
-
-    let cw = bones[0].ik_constraint == JointConstraint::Clockwise && dir > 0.;
-    let ccw = bones[0].ik_constraint == JointConstraint::CounterClockwise && dir < 0.;
-    if ccw || cw {
-        for b in 0..bones.len() {
-            bones[b].rot = -bones[b].rot + base_angle * 2.;
-        }
-    }
-}
-
-pub fn arc_ik(bones: &mut Vec<Bone>, root: Vec2, target: Vec2) {
-    // determine where bones will be on the arc line (ranging from 0 to 1)
-    let mut dist: Vec<f32> = vec![0.];
-
-    let max_length = (bones.last().unwrap().pos - root).mag();
-    let mut curr_length = 0.;
-    for b in 1..bones.len() {
-        let length = (bones[b].pos - bones[b - 1].pos).mag();
-        curr_length += length;
-        dist.push(curr_length / max_length);
-    }
-
-    let base = target - root;
-    let base_angle = base.y.atan2(base.x);
-    let base_mag = base.mag().min(max_length);
-    let peak = max_length / base_mag;
-    let valley = base_mag / max_length;
-
-    for b in 1..bones.len() {
-        bones[b].pos = Vec2::new(
-            bones[b].pos.x * valley,
-            root.y + (1. - peak) * (dist[b] * 3.14).sin() * base_mag,
-        );
-
-        let rotated = utils::rotate(&(bones[b].pos - root), base_angle);
-        bones[b].pos = rotated + root;
-    }
-}
-
-// https://www.youtube.com/watch?v=NfuO66wsuRg
-pub fn fabrik(bones: &mut Vec<Bone>, root: Vec2, target: Vec2) {
-    // forward-reaching
-    let mut next_pos: Vec2 = target;
-    let mut next_length = 0.;
-    for b in (0..bones.len()).rev() {
-        let length = (next_pos - bones[b].pos).normalize() * next_length;
-        if b != 0 {
-            next_length = (bones[b].pos - bones[b - 1].pos).mag();
-        }
-        bones[b].pos = next_pos - length;
-        next_pos = bones[b].pos;
-    }
-
-    // backward-reaching
-    let mut prev_pos: Vec2 = root;
-    let mut prev_length = 0.;
-    for b in 0..bones.len() {
-        let length = (prev_pos - bones[b].pos).normalize() * prev_length;
-        if b != bones.len() - 1 {
-            prev_length = (bones[b].pos - bones[b + 1].pos).mag();
-        }
-        bones[b].pos = prev_pos - length;
-        prev_pos = bones[b].pos;
-    }
-}
-
 pub fn edit_bone(
     events: &mut EventState,
     edit_mode: &EditMode,
@@ -1317,6 +1143,14 @@ pub fn edit_bone(
         } else {
             mouse_vel = Vec2::new(0., 0.);
         }
+    }
+
+    // the IK solver owns these (docs/IK.md §4.2); pivots stay editable
+    let (rot_locked, pos_locked) = ik::locks(&armature.bones, bone.id);
+    if !edit_mode.editing_pivot
+        && (current_edit == EditModes::Move && pos_locked || current_edit == EditModes::Rotate && rot_locked)
+    {
+        return;
     }
 
     if current_edit == EditModes::Move {

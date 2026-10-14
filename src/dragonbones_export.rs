@@ -541,24 +541,23 @@ impl<'a> Ctx<'a> {
         self.tex_sizes.contains_key(name)
     }
 
-    /// Find IK families that are actually solved, and use their solved rotations as the setup pose.
+    /// Find the bones IK turns, and use their solved rotations as the setup pose.
     fn init_ik(&mut self) {
         let bones = &self.arm.bones;
-        let mut families = vec![];
-        for bone in bones {
-            let fid = bone.ik_family_id;
-            if fid == -1 || bone.ik_disabled || families.contains(&fid) {
+        let mut ik_bones = vec![];
+        for tip in bones {
+            let Some(c) = &tip.ik else { continue };
+            if !c.enabled || !bones.iter().any(|b| b.id == c.target_id) {
                 continue;
             }
-            if bones.iter().any(|b| b.id == bone.ik_target_id) {
-                families.push(fid);
+            // the tip too: its rotation follows the chain, or copies the target's
+            for id in crate::ik::chain_ids(bones, tip.id, c.chain).into_iter().chain([tip.id]) {
+                if !ik_bones.contains(&id) {
+                    ik_bones.push(id);
+                }
             }
         }
-        self.ik_bones = bones
-            .iter()
-            .filter(|b| families.contains(&b.ik_family_id))
-            .map(|b| b.id)
-            .collect();
+        self.ik_bones = ik_bones;
         if self.ik_bones.is_empty() {
             return;
         }

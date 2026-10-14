@@ -271,23 +271,22 @@ fn ik_chain_keeps_its_art_in_place_once_solved() {
     );
     let upper = bone(&arm, "upper");
     let lower = bone(&arm, "lower");
-    assert_eq!((upper.ik_family_id, lower.ik_family_id), (1, 1));
-    let target = arm.bones.iter().find(|b| b.id == upper.ik_target_id).expect("no IK target");
-    assert_eq!(target.name, "upper Target");
-    assert!(close(target.pos, Vec2::new(-10., 10.)), "target at {:?}", target.pos);
+    assert!(upper.ik.is_none());
+    let c = lower.ik.as_ref().expect("no IK on the chain's last bone");
+    assert_eq!(c.chain, 1);
+    let target = arm.bones.iter().find(|b| b.id == c.target_id).expect("no IK target");
+    assert_eq!(target.name, "lower Target");
+    assert!(close(target.pos, world(&arm, "lower")), "target at {:?}", target.pos);
 
-    // the chain lies along +x; turning each joint by the chain's angle (what the
-    // solver does here) puts every piece of art back where it was drawn
-    assert!(lower.pos.y.abs() < 1e-3);
-    let angle = (target.pos - Vec2::new(-30., 30.)).y.atan2((target.pos - Vec2::new(-30., 30.)).x);
-    let mut solved = arm.clone();
-    for b in &mut solved.bones {
-        if b.ik_family_id == 1 && b.name == "upper" {
-            b.rot = angle;
-        }
+    // nothing is straightened or counter-rotated, and solving moves nothing
+    assert!(close(world(&arm, "upper_art"), Vec2::new(-20., 20.)), "upper art at {:?}", world(&arm, "upper_art"));
+    assert!(close(world(&arm, "lower_art"), Vec2::new(0., 0.)), "lower art at {:?}", world(&arm, "lower_art"));
+    let mut solved = arm.bones.clone();
+    keyternity_lib::renderer::construction(&mut solved, &arm.bones);
+    for name in ["upper_art", "lower_art"] {
+        let b = solved.iter().find(|b| b.name == name).unwrap();
+        assert!(close(b.pos, world(&arm, name)), "{name} moved to {:?}", b.pos);
     }
-    assert!(close(world(&solved, "upper_art"), Vec2::new(-20., 20.)), "upper art at {:?}", world(&solved, "upper_art"));
-    assert!(close(world(&solved, "lower_art"), Vec2::new(0., 0.)), "lower art at {:?}", world(&solved, "lower_art"));
 }
 
 #[test]

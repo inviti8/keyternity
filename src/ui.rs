@@ -1767,10 +1767,10 @@ fn toolbar(
     config: &Config,
 ) {
     let bone = armature.sel_bone(&selections);
+    // IK owns both this bone's rotation and position (docs/IK.md §4.2)
     let has_ik = bone.map_or(false, |bone| {
-        bone.ik_family_id != -1
-            && !bone.ik_disabled
-            && armature.bone_eff(bone.id) != JointEffector::Start
+        let (rot, pos) = ik::locks(&armature.bones, bone.id);
+        rot && pos
     });
     let has_tex = bone.map_or(false, |bone| armature.tex_of(bone.id) != None);
     let editing_mesh = edit_mode.editing_mesh && has_tex;

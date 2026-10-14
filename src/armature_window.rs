@@ -442,10 +442,9 @@ pub fn draw_hierarchy(
                                 let mut icon_col = config.colors.dark_accent;
                                 icon_col += Color::new(40, 40, 40, 0);
 
-                                let is_target = armature
-                                    .bones
-                                    .iter()
-                                    .find(|b| b.ik_family_id != -1 && b.ik_target_id == bone.id);
+                                let is_target = armature.bones.iter().find(|b| {
+                                    b.ik.as_ref().map_or(false, |c| c.target_id == bone.id)
+                                });
 
                                 ui.spacing_mut().item_spacing.x = 5.;
                                 ui.style_mut().visuals.override_text_color = Some(icon_col.into());
@@ -478,12 +477,12 @@ pub fn draw_hierarchy(
                                     bone_label("⬟", false, ui, id, off, &str, colors.meshdef);
                                     offset.x += 18.;
                                 }
-                                if bone.ik_family_id != -1 {
-                                    // drawing IK icon
+                                if let Some(c) = &bone.ik {
+                                    // drawing IK icon on the tip
                                     let color = config.colors.inverse_kinematics;
                                     let desc = shared_ui
-                                        .loc("armature_panel.icons.ik_family")
-                                        .replace("$family_id", &bone.ik_family_id.to_string());
+                                        .loc("armature_panel.icons.ik_tip")
+                                        .replace("$chain", &c.chain.to_string());
                                     let img_offset = ui.cursor().min + [-1., 5.].into();
                                     let rect = egui::Rect::from_min_size(
                                         img_offset + [offset.x, 0.].into(),
@@ -495,27 +494,15 @@ pub fn draw_hierarchy(
                                     if response.contains_pointer() {
                                         response.show_tooltip_text(&desc);
                                     }
-
-                                    // drawing family ID number
-                                    let family_id = bone.ik_family_id.to_string();
-                                    let id = format!("{}ik", b.to_string());
-                                    let color = colors.inverse_kinematics;
-                                    let id_offset = Vec2::new(0., 18.);
-                                    bone_label(&family_id, false, ui, id, id_offset, &desc, color);
                                     offset.x += 18.;
                                 }
-                                if is_target != None {
-                                    let family_id = is_target.unwrap().ik_family_id.to_string();
-                                    let icon = format!("⌖{}", family_id);
+                                if let Some(tip) = is_target {
                                     let desc = shared_ui
                                         .loc("armature_panel.icons.ik_target")
-                                        .replace("$family_id", &family_id);
-                                    let inc = (20 as u8)
-                                        .saturating_mul(is_target.unwrap().ik_family_id as u8);
-                                    let mut color = config.colors.ik_target;
-                                    color += Color::new(0, inc, inc, 0);
-                                    let id = format!("⌖{}", family_id);
-                                    bone_label(&icon, false, ui, id, offset, &desc, color);
+                                        .replace("$bone", &tip.name);
+                                    let color = config.colors.ik_target;
+                                    let id = format!("{}ik_target", b.to_string());
+                                    bone_label("⌖", false, ui, id, offset, &desc, color);
                                     offset.x += 18.;
                                 }
                             });

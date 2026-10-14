@@ -112,8 +112,6 @@ fn ensure_helper(armature: &mut Armature, bone_id: i32, owner_id: i32) -> i32 {
         scale: Vec2::new(1., 1.),
         pivot_scale: Vec2::new(1., 1.),
         tint: TintColor::new(1., 1., 1., 1.),
-        ik_target_id: -1,
-        ik_family_id: -1,
         physics_id: -1,
         visuals_id: -1,
         zindex: -1,

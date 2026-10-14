@@ -823,8 +823,6 @@ impl Builder {
             scale: Vec2::new(1., 1.),
             pivot_scale: Vec2::new(1., 1.),
             tint: TintColor::new(1., 1., 1., 1.),
-            ik_target_id: -1,
-            ik_family_id: -1,
             physics_id: -1,
             visuals_id: -1,
             group_color: Color::new(0, 0, 0, 0),

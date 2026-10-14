@@ -206,8 +206,8 @@
       "tex": "Texture - $tex",
       "tex_inactive": "Texture - $tex\n(no active styles to display)",
       "mesh": "Contains mesh",
-      "ik_family": "Inverse kinematics family #$family_id",
-      "ik_target": "Target of inverse kinematics family #$family_id"
+      "ik_tip": "Inverse kinematics, turning $chain bone(s) above this one",
+      "ik_target": "Inverse kinematics target of $bone"
     }
   },
   "bone_panel": {
@@ -241,23 +241,28 @@
     "group_color_desc": "Color used to represent this bone and it's children.\n\nSet alpha to 0 to use default color.",
     "inverse_kinematics": {
       "heading": "Inverse Kinematics",
-      "desc": "Automatically adjust and bend bones to reach a specified target.\nBest used for joints like shoulders and legs.\n\nAfter the joints have been set up, click the checkbox next to this header to activate IK.",
-      "enabled_desc": "Should inverse kinematics be running for this set of joints?\n\nUntick this to allow setting up joint positions and rotations.",
-      "effector": "Effector: ",
-      "effector_desc": "Create or assign a new family to this bone.\n\nIf this is the first bone in the hierarchy with the family index, it is the root bone.\nAssign the same index to other bones to form a proper IK family.",
-      "constraint": "Constraint:",
-      "constraint_desc": "CC: Clockwise, all middle bones of this family will move up/right (ie; legs)\n\nCCW: Counter-clockwise, all middle bones of this family will move down/left (ie; shoulders)",
+      "desc": "Turn the bones above this one so its origin reaches a target bone. Move the target to pose the chain.\n\nSolving keeps the pose as drawn: adding IK, or a target sitting where this bone already is, moves nothing.",
+      "enabled_desc": "Run this IK constraint.\n\nUntick it to edit the rest layout of its chain (positions and rotations the solver otherwise controls).",
+      "add": "Add IK",
+      "add_desc": "Make this bone the tip of an IK chain, with a new target bone where it's drawn now.",
+      "remove": "Remove IK",
       "target": "Target:",
       "set_target": "Set Target",
       "remove_target": "Remove Target",
+      "target_in_chain": "That bone can't be the target: it's in this IK chain, or under it, so moving the chain would move the target too.",
+      "chain": "Chain ℹ:",
+      "chain_desc": "How many bones above this one the IK turns. 2 suits an arm or a leg.",
+      "bend": "Bend ℹ:",
+      "bend_desc": "Which way the chain bends at its joints.\n\nAs drawn: the way it bends now.\nCW: turns clockwise at each joint.\nCCW: turns counter-clockwise at each joint.",
+      "AsDrawn": "As drawn",
       "Clockwise": "CW",
       "CounterClockwise": "CCW",
-      "cant_edit": "Transforms cannot be edited for IK child bones.\n\nTo adjust the distance between this bone and the previous, edit the Distance field in the IK section below.",
-      "family_index": "Family Index:",
-      "mode_label": "Mode:",
-      "root_bone": "Root: ",
-      "distance": "Distance ℹ: ",
-      "distance_desc": "Adjust the distance between this bone, and the previous one in the IK family."
+      "weight": "Weight ℹ:",
+      "weight_desc": "How much the IK applies: 1 reaches the target, 0 shows the animated pose. Animate it to switch between IK and keyframed rotation.",
+      "copy_rotation": "Copy Target Rotation ℹ:",
+      "copy_rotation_desc": "This bone takes the target's rotation, like a hand or a foot following its target.",
+      "turned_by": "Turned by IK on: ",
+      "cant_edit": "Inverse kinematics controls this.\n\nTo edit it, untick the IK constraint on the chain's tip bone, or move its target."
     },
     "mesh_deformation": {
       "heading": "Mesh Deformation",
@@ -480,14 +485,14 @@
       "ScaleY": "Scale H",
       "Zindex": "Zindex",
       "Texture": "Texture",
-      "IkConstraint": "Constraint",
+      "IkBend": "IK Bend",
       "Hidden": "Hidden",
       "TintR": "Red Tint",
       "TintG": "Green Tint",
       "TintB": "Blue Tint",
       "TintA": "Alpha Tint",
-      "IkMode": "IK Mode",
-      "MimicTarget": "Mimic Target"
+      "IkWeight": "IK Weight",
+      "IkCopyRotation": "IK Copy Rotation"
     }
   },
   "keyframe_panel": {
@@ -527,10 +532,8 @@
     "UnboundBind": "$bone's bind $bind has no bone attached.",
     "NoVertsInBind": "$bone's bind $bind has no vertices.",
     "OnlyPath": "$bone can't have a single bind that's a path.",
-    "OnlyIk": "$bone is the only bone with IK family $ik_family_id.",
+    "IkTargetInChain": "$bone's IK target is in its own chain, or under it.",
     "NoWeights": "$bone's bind $bind has all weights set to 0.",
-    "BoneOutOfFamily": "Bones of IK family $ik_family_id are not all within the same root.",
-    "BoneOutOfFamilyCulprits": "Culprits:",
     "EmptyStyles": "Styles with no textures:",
     "UnusedTextures": "Unused textures:",
     "ClassicMultiBind": "$bone has $count vertices in more than one bind. Classic binds place these out of position; turn on Bind Pose for this mesh (in the mesh panel) before binding to blend them correctly."

@@ -32,8 +32,13 @@ pub fn check_warnings(armature: &Armature) -> Vec<Warning> {
         }
 
         // Warning::NoIkTarget
-        if armature.bone_eff(bone.id) == JointEffector::Start && bone.ik_target_id == -1 {
-            warnings.push(Warning::new(W::NoIkTarget, vec![bone.id as usize]));
+        // Warning::IkTargetInChain
+        if let Some(c) = &bone.ik {
+            if c.target_id == -1 {
+                warnings.push(Warning::new(W::NoIkTarget, vec![bone.id as usize]));
+            } else if !ik::target_allowed(&armature.bones, bone.id, c.chain, c.target_id) {
+                warnings.push(Warning::new(W::IkTargetInChain, vec![bone.id as usize]));
+            }
         }
 
         // Warning::UnboundBind
@@ -57,34 +62,6 @@ pub fn check_warnings(armature: &Armature) -> Vec<Warning> {
         // Warning::NoVertsInBind
         if bone.binds.len() == 1 && bone.binds[0].is_path {
             warnings.push(Warning::new(W::OnlyPath, vec![bone.id as usize]));
-        }
-
-        // Warning::OnlyIk
-        // Warning::BoneOutOfFamily
-        if armature.bone_eff(bone.id) == JointEffector::Start {
-            let mut family: Vec<&Bone> = armature
-                .bones
-                .iter()
-                .filter(|b| b.ik_family_id == bone.ik_family_id)
-                .collect();
-            if family.len() == 1 {
-                warnings.push(Warning::new(W::OnlyIk, vec![bone.id as usize]));
-            } else {
-                // get all children that are part of this family
-                let mut children = vec![bone.clone()];
-                armature_window::get_all_children(&armature.bones, &mut children, bone);
-                children.retain(|b| b.ik_family_id == bone.ik_family_id);
-
-                if children.len() != family.len() {
-                    // get bones in this family that are not children (culprits)
-                    let children_ids: Vec<i32> = children.iter().map(|b| b.id).collect();
-                    family.retain(|b| !children_ids.contains(&b.id));
-                    let ids: Vec<usize> = family.iter().map(|f| f.id as usize).collect();
-
-                    let family_id = bone.ik_family_id as f32;
-                    warnings.push(Warning::valued(W::BoneOutOfFamily, ids, family_id));
-                }
-            }
         }
 
         // Warning::NoWeights
@@ -211,12 +188,11 @@ pub fn warning_line(
                 .replace("$bone", &bone.unwrap().name);
             clickable_bone(ui, armature, str, events, warning, warn_color);
         }
-        W::OnlyIk => {
+        W::IkTargetInChain => {
             let bone = &bones.iter().find(|b| b.id == warning.ids[0] as i32);
             let str = shared_ui
-                .loc("warnings.OnlyIk")
-                .replace("$bone", &bone.unwrap().name)
-                .replace("$ik_family_id", &bone.unwrap().ik_family_id.to_string());
+                .loc("warnings.IkTargetInChain")
+                .replace("$bone", &bone.unwrap().name);
             clickable_bone(ui, armature, str, events, warning, warn_color);
         }
         W::NoWeights => {
@@ -226,35 +202,6 @@ pub fn warning_line(
                 .replace("$bone", &bone.unwrap().name)
                 .replace("$bind", &warning.value.to_string());
             clickable_bone(ui, armature, str, events, warning, warn_color);
-        }
-        W::BoneOutOfFamily => {
-            let bone = &bones.iter().find(|b| b.id == warning.ids[0] as i32);
-            let str = shared_ui
-                .loc("warnings.BoneOutOfFamily")
-                .replace("$bone", &bone.unwrap().name)
-                .replace("$ik_family_id", &warning.value.to_string());
-            ui.vertical(|ui| {
-                ui.label(egui::RichText::new(str).color(warn_color));
-                ui.horizontal(|ui| {
-                    let text =
-                        egui::RichText::new(shared_ui.loc("warnings.BoneOutOfFamilyCulprits"))
-                            .color(warn_color);
-                    ui.label(text);
-                    for i in 0..warning.ids.len() {
-                        let id = warning.ids[i];
-                        let bone_name = &bones.iter().find(|b| b.id == id as i32).unwrap().name;
-                        let mut str = bone_name.to_string();
-                        if i != warning.ids.len() - 1 {
-                            str += ",";
-                        }
-                        let egui_str = egui::RichText::new(str).underline();
-                        if ui.clickable_label(egui_str).clicked() {
-                            let idx = bones.iter().position(|b| b.id == id as i32).unwrap();
-                            events.select_bone(idx, true);
-                        };
-                    }
-                });
-            });
         }
         W::EmptyStyles => {
             let str = shared_ui.loc("warnings.EmptyStyles");

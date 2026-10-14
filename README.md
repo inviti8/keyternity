@@ -31,7 +31,7 @@ rigs, and a display that keeps art and rig visually apart.
 
 Keyternity is a fork of [Retropaint/SkelForm](https://github.com/Retropaint/SkelForm).
 Everything not listed below comes from SkelForm: the editor, the renderer,
-bones, IK, meshes, styles, animation, export, the `.skf` format and its runtimes.
+bones, meshes, styles, animation, export and the `.skf` format.
 
 Keyternity and SkelForm **diverged on 2026-09-30**, from upstream commit
 `68b66d21` (2026-09-11). Keyternity's additions were offered upstream first
@@ -40,12 +40,20 @@ Keyternity and SkelForm **diverged on 2026-09-30**, from upstream commit
 scope SkelForm wants to maintain. So Keyternity is developed independently and
 doesn't track upstream; useful upstream fixes may be picked over case by case.
 
-Rigs stay SkelForm `.skf` files. The format and the runtimes are unchanged:
-Bind Pose works through ordinary helper bones, so a Keyternity rig plays on
-SkelForm's runtimes as is.
+Rigs are still `.skf` files, but Keyternity's IK constraints replaced SkelForm's
+IK families, so rigs with IK no longer play on SkelForm's runtimes. Export to
+DragonBones for game engines. Older files lose their IK.
 
 ## What Keyternity adds on top of SkelForm
 
+- **Inverse kinematics constraints** — IK the way Blender, Spine and DragonBones
+  do it: *Add IK* on the bone at the end of a chain, set how many bones above it
+  the IK turns, and move its target. Adding IK never moves a bone or its art,
+  chains can be drawn bent, and joints bend as drawn or forced clockwise or
+  counter-clockwise. Weight (animatable, for IK/FK switching) and *Copy Target
+  Rotation* (for hands and feet). Two-bone chains solve exactly; longer ones use
+  FABRIK. Chains hanging off other chains solve in order. Replaces SkelForm's
+  IK families ([design](docs/IK.md))
 - **Canvas toolbar** — a toolbar above the canvas with Move, Rotate and Scale,
   the navigation tools, the mesh tools, and the mesh actions (Trace, Center,
   Reset, Re-triangulate). The active tool's options sit on its right
@@ -132,7 +140,6 @@ SkelForm's runtimes as is.
 
 - Bone hierarchies with per-component inheritance, pivots and textures
 - Keyframe animation with easing curves and onion skinning
-- Inverse kinematics families (FABRIK and Arc), with constraints
 - Meshes with vertex binds, weights and path binds
 - Styles: hot-swappable texture sets for outfits and skins
 - Physics on bones

@@ -481,12 +481,11 @@ pub enum Warnings {
     #[default]
     SameZIndex,
     NoIkTarget,
-    OnlyIk,
+    IkTargetInChain,
     UnboundBind,
     NoVertsInBind,
     OnlyPath,
     NoWeights,
-    BoneOutOfFamily,
     EmptyStyles,
     UnusedTextures,
     ClassicMultiBind,
@@ -1121,29 +1120,6 @@ impl Default for KeyboardConfig {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Default, PartialEq, Debug)]
-pub enum JointEffector {
-    #[default]
-    None,
-    Start,
-    Middle,
-    End,
-}
-enum_string!(JointEffector);
-
-#[derive(
-    serde::Serialize, serde::Deserialize, Clone, Copy, Default, PartialEq, Debug, EnumString,
-)]
-pub enum JointConstraint {
-    #[default]
-    None,
-    Clockwise,
-    CounterClockwise,
-    Skip,
-}
-
-enum_string!(JointConstraint);
-
 #[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Default, Debug)]
 #[serde(default)]
 pub struct Visuals {
@@ -1231,16 +1207,9 @@ pub struct Bone {
     #[serde(skip_serializing_if = "is_false")]
     pub hidden: bool,
 
-    #[serde(skip)]
-    pub ik_constraint: JointConstraint,
-    #[serde(skip)]
-    pub ik_mode: InverseKinematicsMode,
-    #[serde(default = "default_neg_one", skip)]
-    pub ik_target_id: i32,
-    #[serde(skip)]
-    pub ik_bone_ids: Vec<i32>,
-    #[serde(skip)]
-    pub ik_mimic_target: bool,
+    /// IK constraint with this bone as the tip (docs/IK.md)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ik: Option<IkConstraint>,
 
     #[serde(skip)]
     pub phys_global_pos: Vec2,
@@ -1284,9 +1253,6 @@ pub struct Bone {
     pub init_hidden: bool,
 
     #[serde(default = "default_neg_one")]
-    pub ik_family_id: i32,
-    pub ik_family_name: String,
-    #[serde(default = "default_neg_one")]
     pub physics_id: i32,
     #[serde(default = "default_neg_one")]
     pub visuals_id: i32,
@@ -1312,8 +1278,6 @@ pub struct Bone {
     pub phys_folded: bool,
     #[serde(skip)]
     pub world_verts: Vec<Vertex>,
-    #[serde(skip)]
-    pub ik_disabled: bool,
     #[serde(skip)]
     pub locked: bool,
     #[serde(skip)]
@@ -1366,7 +1330,6 @@ pub struct EditorBone {
     pub ik_folded: bool,
     pub meshdef_folded: bool,
     pub effects_folded: bool,
-    pub ik_disabled: bool,
     pub locked: bool,
     #[serde(default = "default_0_alpha")]
     pub group_color: Color,
@@ -1377,25 +1340,48 @@ pub struct EditorBone {
     pub bind_pose: bool,
 }
 
+/// Which way an IK chain turns at its joints (docs/IK.md §3.3).
 #[derive(
-    serde::Serialize,
-    serde::Deserialize,
-    Copy,
-    Clone,
-    Default,
-    PartialEq,
-    Debug,
-    EnumString,
-    FromRepr,
+    serde::Serialize, serde::Deserialize, Clone, Copy, Default, PartialEq, Debug, EnumString, FromRepr,
 )]
 #[repr(i32)]
-pub enum InverseKinematicsMode {
+pub enum IkBend {
     #[default]
-    FABRIK,
-    Arc,
-    Skip,
+    AsDrawn,
+    Clockwise,
+    CounterClockwise,
 }
-enum_string!(InverseKinematicsMode);
+enum_string!(IkBend);
+
+/// An IK constraint, stored on its tip bone (docs/IK.md §2).
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Debug)]
+#[serde(default)]
+pub struct IkConstraint {
+    /// Bone the tip's head reaches for; -1 for none.
+    pub target_id: i32,
+    /// How many of the tip's ancestors the solver turns.
+    pub chain: u32,
+    pub bend: IkBend,
+    /// 0..1: blend from the animated pose to the solved one.
+    pub weight: f32,
+    /// The tip takes the target's world rotation.
+    pub copy_rotation: bool,
+    /// Off: the chain shows its animated pose, for editing its rest layout.
+    pub enabled: bool,
+}
+
+impl Default for IkConstraint {
+    fn default() -> Self {
+        IkConstraint {
+            target_id: -1,
+            chain: 1,
+            bend: IkBend::AsDrawn,
+            weight: 1.,
+            copy_rotation: false,
+            enabled: true,
+        }
+    }
+}
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
 #[serde(default)]
@@ -1483,10 +1469,6 @@ impl Armature {
             id: generate_id(ids),
             scale: Vec2 { x: 1., y: 1. },
             zindex: highest_zindex + 1,
-            ik_constraint: JointConstraint::None,
-            ik_mode: InverseKinematicsMode::FABRIK,
-            ik_target_id: -1,
-            ik_family_id: -1,
             tint: default_tint(),
             group_color: Color::new(0, 0, 0, 0),
             pivot_scale: Vec2::new(1., 1.),
@@ -1575,7 +1557,6 @@ impl Armature {
 
                 b.zindex          = prev_frame!(AE::Zindex,      b.zindex as f32) as i32;
                 b.hidden          = prev_frame!(AE::Hidden,      bool_as_f32(b.hidden)) != 0.;
-                b.ik_mimic_target = prev_frame!(AE::MimicTarget, bool_as_f32(b.ik_mimic_target)) != 0.;
 
                 b.tex = prev_str!(AE::Texture, b.tex.clone());
             };
@@ -1590,8 +1571,12 @@ impl Armature {
                 };
             }
 
-            prev_enum!(b.ik_constraint, AnimElement::IkConstraint, JointConstraint);
-            prev_enum!(b.ik_mode, AnimElement::IkMode, InverseKinematicsMode);
+            if let Some(mut ik) = b.ik.clone() {
+                ik.weight = self.interpolate_keyframes(anim_idx, b.id, AE::IkWeight, ik.weight, anim_frame);
+                ik.copy_rotation = prev_frame!(AE::IkCopyRotation, bool_as_f32(ik.copy_rotation)) != 0.;
+                prev_enum!(ik.bend, AnimElement::IkBend, IkBend);
+                b.ik = Some(ik);
+            }
         }
 
         bones
@@ -1718,42 +1703,6 @@ impl Armature {
         None
     }
 
-    pub fn bone_eff(&self, bone_id: i32) -> JointEffector {
-        let bone = self.bones.iter().find(|bone| bone.id == bone_id).unwrap();
-        let ik_id = bone.ik_family_id;
-        if ik_id == -1 {
-            return JointEffector::None;
-        }
-
-        let family: Vec<&Bone> = self
-            .bones
-            .iter()
-            .filter(|bone| bone.ik_family_id == ik_id)
-            .collect();
-
-        let mut count = 0;
-        for other_bone in &self.bones {
-            if other_bone.ik_family_id != ik_id {
-                continue;
-            }
-
-            if other_bone.id != bone.id {
-                count += 1;
-                continue;
-            }
-
-            return if count == 0 {
-                JointEffector::Start
-            } else if count == family.len() - 1 {
-                JointEffector::End
-            } else {
-                JointEffector::Middle
-            };
-        }
-
-        JointEffector::None
-    }
-
     pub fn is_bone_folded(&self, bone_id: i32) -> bool {
         let mut nb = self.bones.iter().find(|b| b.id == bone_id).unwrap();
         while nb.parent_id != -1 {
@@ -1856,29 +1805,6 @@ pub struct TexAtlas {
     pub size: Vec2I,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Default, Debug, PartialEq)]
-#[serde(default)]
-pub struct InverseKinematics {
-    #[serde(default = "default_neg_one")]
-    pub id: i32,
-    #[rustfmt::skip]
-    #[serde(skip_serializing_if = "no_constraints")]
-    pub constraint: JointConstraint,
-    #[serde(skip_serializing_if = "no_ik_mode")]
-    pub mode: InverseKinematicsMode,
-    #[serde(default = "default_neg_one")]
-    pub target_id: i32,
-    #[serde(skip_serializing_if = "is_i32_empty")]
-    pub bone_ids: Vec<i32>,
-    #[serde(skip_serializing_if = "is_false")]
-    pub mimic_target: bool,
-    #[serde(skip_serializing_if = "no_constraints", skip_deserializing)]
-    pub init_constraint: JointConstraint,
-    #[serde(skip_serializing_if = "no_ik_mode", skip_deserializing)]
-    pub init_mode: InverseKinematicsMode,
-    #[serde(skip_serializing_if = "is_false", skip_deserializing)]
-    pub init_mimic_target: bool,
-}
 
 // used for the json
 #[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
@@ -1895,7 +1821,6 @@ pub struct Root {
     pub atlases: Vec<TexAtlas>,
     pub styles: Vec<Style>,
     pub visuals: Vec<Visuals>,
-    pub inverse_kinematics: Vec<InverseKinematics>,
     pub physics: Vec<Physics>,
 }
 
@@ -2107,15 +2032,14 @@ pub enum AnimElement {
      /* 4 */ ScaleY,
      /* 5 */ Zindex,
      /* 6 */ Texture,
-     /* 7 */ IkConstraint,
+     /* 7 */ IkBend,
      /* 8 */ Hidden,
-     /* 9 */ IkMode,
-     /* A */ IkFamilyId,
+     /* 9 */ IkWeight,
+     /* A */ IkCopyRotation,
      /* B */ TintR,
      /* C */ TintG,
      /* D */ TintB,
      /* E */ TintA,
-     /* K */ MimicTarget,
      /* F */ Locked,      // NA
      /* G */ GroupColorR, // NA
      /* H */ GroupColorG, // NA
@@ -2552,7 +2476,10 @@ pub enum Events {
     ToggleAnimPanelOpen,
     ToggleIkFolded,
     TogglePhysFolded,
-    ToggleIkDisabled,
+    ToggleIkEnabled,
+    AddIk,
+    RemoveIk,
+    SetIkChain,
     ToggleMeshdefFolded,
     ToggleEffectsFolded,
     ToggleBindPathing,
@@ -2629,7 +2556,6 @@ pub enum Events {
     TrimTexture,
     ToggleSelectedTexture,
     ToggleEditingPivot,
-    ReduceGlobalIkFamilyIds,
 }
 
 enum_string!(Events);
@@ -2763,7 +2689,10 @@ impl EventState {
     #[rustfmt::skip]    event_with_value!(create_parent_bone, Events::CreateParentBone, of_bone_id, i32);
     #[rustfmt::skip]    event_with_value!(move_selected_keyframes, Events::MoveSelectedKeyframes, dropped_frame, i32);
     #[rustfmt::skip]    event_with_value!(toggle_edit_alt, Events::ToggleEditAlt, toggle, i32);
-    #[rustfmt::skip]    event_with_value!(reduce_global_ik_family_ids, Events::ReduceGlobalIkFamilyIds, base, i32);
+    generic_event!(add_ik, Events::AddIk);
+    generic_event!(remove_ik, Events::RemoveIk);
+    event_with_value!(set_ik_chain, Events::SetIkChain, chain, u32);
+    event_with_value!(toggle_ik_enabled, Events::ToggleIkEnabled, toggle, usize);
 
     pub fn open_modal(&mut self, loc_headline: &str, forced: bool) {
         self.events.push(Events::OpenModal);
@@ -2895,12 +2824,6 @@ impl EventState {
         self.values.push(pos_x as f32);
         self.values.push(pos_y as f32);
         self.values.push(zoom as f32);
-    }
-
-    pub fn toggle_bone_ik_disabled(&mut self, bone_idx: usize, toggle: bool) {
-        self.events.push(Events::ToggleIkDisabled);
-        self.values.push(bone_idx as f32);
-        self.values.push(if toggle { 1. } else { 0. });
     }
 
     pub fn toggle_bind_pathing(&mut self, bind_idx: usize, toggle: bool) {
@@ -3128,20 +3051,8 @@ fn are_anims_empty(value: &Vec<Animation>) -> bool {
     *value == vec![]
 }
 
-fn is_i32_empty(value: &Vec<i32>) -> bool {
-    value.len() == 0
-}
-
 fn is_str_empty(value: &String) -> bool {
     value == ""
-}
-
-fn no_constraints(value: &JointConstraint) -> bool {
-    *value == JointConstraint::Skip
-}
-
-fn no_ik_mode(value: &InverseKinematicsMode) -> bool {
-    *value == InverseKinematicsMode::Skip
 }
 
 fn is_false(value: &bool) -> bool {

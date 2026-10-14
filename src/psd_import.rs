@@ -6,7 +6,8 @@
 //! - `$pivot`: the group bone sits at this layer's center, so it rotates there.
 //!   Without one, a group bone sits at the center of its art.
 //! - `$ik_<n>`, `$ik_clockwise`, `$ik_counterclockwise`: the group bone joins
-//!   IK family n, or gets that constraint.
+//!   IK chain n, or sets the chain's bend. The chain's last group gets the IK
+//!   constraint, turning the others, with a target where it's drawn.
 //!
 //! A group named with `$"Style"` holds variants: each of its layers becomes a
 //! texture in style "Style", replacing the same-named layer of the group it sits in.
@@ -230,24 +231,23 @@ pub fn build_armature(tree: &PsdTree, arm: &mut Armature, default_style: &str, g
         world.insert(bone, to_world(pos, tree));
     }
 
-    // IK markers configure their group's bone
-    let mut start_eff_ids: Vec<i32> = vec![];
-    let mut ik_family_ids: Vec<i32> = vec![];
+    // IK markers: `$ik_N` puts the group's bone in chain N (groups in tree order),
+    // `$ik_clockwise` / `$ik_counterclockwise` set the chain's bend
+    let mut ik_chains: Vec<(i32, Vec<i32>)> = vec![];
+    let mut ik_bends: std::collections::HashMap<i32, IkBend> = Default::default();
     let mut gids: Vec<u32> = group_bone.keys().copied().collect();
     gids.sort();
     for gid in gids {
         let bone_id = group_bone[&gid];
         for l in tree.layers.iter().filter(|l| l.parent == Some(gid) && l.name.contains("$ik_")) {
-            let bone = arm.find_bone_mut(bone_id).unwrap();
             if l.name.contains("counterclockwise") {
-                bone.ik_constraint = JointConstraint::CounterClockwise;
+                ik_bends.insert(bone_id, IkBend::CounterClockwise);
             } else if l.name.contains("clockwise") {
-                bone.ik_constraint = JointConstraint::Clockwise;
-            } else if let Ok(id) = utils::without_unicode(utils::after_underscore(&l.name)).parse::<i32>() {
-                bone.ik_family_id = id;
-                if !ik_family_ids.contains(&id) {
-                    start_eff_ids.push(bone.id);
-                    ik_family_ids.push(id);
+                ik_bends.insert(bone_id, IkBend::Clockwise);
+            } else if let Ok(n) = utils::without_unicode(utils::after_underscore(&l.name)).parse::<i32>() {
+                match ik_chains.iter_mut().find(|c| c.0 == n) {
+                    Some(chain) => chain.1.push(bone_id),
+                    None => ik_chains.push((n, vec![bone_id])),
                 }
             }
         }
@@ -316,54 +316,38 @@ pub fn build_armature(tree: &PsdTree, arm: &mut Armature, default_style: &str, g
         arm.find_bone_mut(id).unwrap().pos = w - pw;
     }
 
-    add_ik(arm, &start_eff_ids, &world);
+    add_ik(arm, &ik_chains, &ik_bends, &world);
 }
 
-/// IK targets, chain layout and counter-rotation for each IK family.
-fn add_ik(arm: &mut Armature, start_eff_ids: &[i32], world: &std::collections::HashMap<i32, Vec2>) {
-    for &eff_id in start_eff_ids {
-        let ik_id = arm.find_bone_mut(eff_id).unwrap().ik_family_id;
-        let last = arm.bones.iter().filter(|b| b.ik_family_id == ik_id).last().unwrap().id;
-        let target_pos = world.get(&last).copied().unwrap_or_default();
-
-        let target_id = arm.new_bone(-1).0.id;
-        let start = arm.find_bone_mut(eff_id).unwrap();
-        start.ik_target_id = target_id;
-        let target_name = format!("{} Target", start.name);
-        let target = arm.find_bone_mut(target_id).unwrap();
-        target.name = target_name;
-        target.pos = target_pos;
-        target.zindex = 0;
-    }
-
-    // IK solving turns each joint to point at the next, along its local +x: lay
-    // the chain out along +x, and counter-rotate each joint's art so it shows
-    // as drawn once the joint is turned by `angle`
-    let snapshot = arm.bones.clone();
-    for bone in &snapshot {
-        if bone.ik_family_id == -1 {
+/// An IK constraint on the last bone of each marked chain, turning the others,
+/// with a target where that bone is drawn (docs/IK.md §5). Solving is relative to
+/// the drawn pose, so nothing moves.
+fn add_ik(
+    arm: &mut Armature,
+    chains: &[(i32, Vec<i32>)],
+    bends: &std::collections::HashMap<i32, IkBend>,
+    world: &std::collections::HashMap<i32, Vec2>,
+) {
+    for (_, ids) in chains {
+        let Some(&tip_id) = ids.last() else { continue };
+        if ids.len() < 2 {
             continue;
         }
-        let Some(start) = snapshot.iter().find(|b| b.ik_family_id == bone.ik_family_id) else { continue };
-        let Some(target) = snapshot.iter().find(|b| b.id == start.ik_target_id) else { continue };
-        let start_world = world.get(&start.id).copied().unwrap_or_default();
-        let diff = target.pos - start_world;
-        let angle = diff.y.atan2(diff.x);
+        let bend = ids.iter().find_map(|id| bends.get(id)).copied().unwrap_or_default();
 
-        if !start_eff_ids.contains(&bone.id) {
-            let b = arm.find_bone_mut(bone.id).unwrap();
-            b.pos = Vec2::new(b.pos.mag(), 0.);
-        }
-        let children: Vec<i32> = snapshot
-            .iter()
-            .filter(|c| c.parent_id == bone.id && c.ik_family_id != bone.ik_family_id)
-            .map(|c| c.id)
-            .collect();
-        for c in children {
-            let child = arm.find_bone_mut(c).unwrap();
-            child.pos = utils::rotate(&child.pos, -angle);
-            child.rot -= angle;
-        }
+        let target_id = arm.new_bone(-1).0.id;
+        let tip_name = arm.find_bone_mut(tip_id).unwrap().name.clone();
+        let target = arm.find_bone_mut(target_id).unwrap();
+        target.name = format!("{tip_name} Target");
+        target.pos = world.get(&tip_id).copied().unwrap_or_default();
+        target.zindex = 0;
+
+        arm.find_bone_mut(tip_id).unwrap().ik = Some(IkConstraint {
+            target_id,
+            chain: ids.len() as u32 - 1,
+            bend,
+            ..Default::default()
+        });
     }
 }
 

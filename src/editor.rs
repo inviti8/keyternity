@@ -31,7 +31,8 @@ pub fn iterate_events(
         type E = Events;
         #[rustfmt::skip]
         match last_event {
-            E::NewBone | E::DragBone | E::DeleteBone | E::PasteBone | E::RaiseGlobalZindex | E::SetBindPose | E::SetBindPoseAll | E::ClearBindPose => undo_states.new_undo_bones(&armature.bones),
+            E::NewBone | E::DragBone | E::DeleteBone | E::PasteBone | E::RaiseGlobalZindex | E::SetBindPose | E::SetBindPoseAll | E::ClearBindPose | E::AddIk | E::RemoveIk => undo_states.new_undo_bones(&armature.bones),
+            E::SetIkChain | E::ToggleIkEnabled | E::DeleteIkTarget => undo_states.new_undo_bone(&armature.bones[selections.bone_idx]),
             E::NewAnimation | E::DeleteAnim => undo_states.new_undo_anims(&armature.animations),
             E::DeleteSelectedTextures       => undo_states.new_undo_style(&armature.sel_style(&selections).unwrap()),
             E::DeleteStyle | E::NewStyle    => undo_states.new_undo_styles(&armature.styles),
@@ -203,10 +204,6 @@ pub fn iterate_events(
         ui.last_selected_frame = selections.anim_frame;
         events.events.remove(0);
         events.values.drain(0..=2);
-    } else if event == Events::ToggleIkDisabled {
-        armature.bones[events.values[0] as usize].ik_disabled = events.values[1] == 1.;
-        events.events.remove(0);
-        events.values.drain(0..=1);
     } else if event == Events::SetBindWeight {
         let sel_bind = events.values[0] as usize;
         let vert = events.values[1] as usize;
@@ -524,15 +521,32 @@ pub fn simple_event(
             }
         }
         Events::ToggleOnionLayers => edit_mode.onion_layers = value == 1.,
-        Events::DeleteIkTarget => armature.sel_bone_mut(selections).unwrap().ik_target_id = -1,
+        Events::DeleteIkTarget => {
+            if let Some(ik) = &mut armature.sel_bone_mut(selections).unwrap().ik {
+                ik.target_id = -1;
+            }
+        }
+        Events::AddIk => add_ik(armature, selections),
+        Events::RemoveIk => {
+            armature.sel_bone_mut(selections).unwrap().ik = None;
+        }
+        Events::SetIkChain => {
+            let id = armature.sel_bone(selections).unwrap().id;
+            let max = ik::depth(&armature.bones, id).max(1);
+            if let Some(ik) = &mut armature.sel_bone_mut(selections).unwrap().ik {
+                ik.chain = (value as u32).clamp(1, max);
+            }
+        }
         Events::ToggleIkFolded => {
             armature.sel_bone_mut(&selections).unwrap().ik_folded = value == 1.
         }
         Events::TogglePhysFolded => {
             armature.sel_bone_mut(&selections).unwrap().phys_folded = value == 1.
         }
-        Events::ToggleIkDisabled => {
-            armature.sel_bone_mut(&selections).unwrap().ik_disabled = value == 1.
+        Events::ToggleIkEnabled => {
+            if let Some(ik) = &mut armature.sel_bone_mut(&selections).unwrap().ik {
+                ik.enabled = value == 1.;
+            }
         }
         Events::ToggleMeshdefFolded => {
             armature.sel_bone_mut(&selections).unwrap().meshdef_folded = value == 1.
@@ -594,6 +608,11 @@ pub fn simple_event(
         Events::SelectBone => {
             let render = str_value == "t";
             let val = value as usize;
+            if edit_mode.setting_ik_target {
+                if let Some(bone) = armature.sel_bone(selections) {
+                    undo_states.new_undo_bone(bone);
+                }
+            }
             select_bone(selections, ui, armature, edit_mode, input, val, render);
         }
         Events::SelectAnim => {
@@ -664,11 +683,13 @@ pub fn simple_event(
                     }
                 }
 
-                // IK bones that target this are now -1
-                let bones = &mut armature.bones;
-                let targeters = bones.iter_mut().filter(|b| b.ik_target_id == value as i32);
-                for bone in targeters {
-                    bone.ik_target_id = -1;
+                // IK constraints that target this or its children lose their target
+                for bone in &mut armature.bones {
+                    if let Some(ik) = &mut bone.ik {
+                        if children.iter().any(|c| c.id == ik.target_id) {
+                            ik.target_id = -1;
+                        }
+                    }
                 }
 
                 // de-select bone(s)
@@ -1307,13 +1328,6 @@ pub fn simple_event(
             _ => {}
         },
         Events::ToggleEditingPivot => edit_mode.editing_pivot = !edit_mode.editing_pivot,
-        Events::ReduceGlobalIkFamilyIds => {
-            for bone in &mut armature.bones {
-                if bone.ik_family_id > value as i32 {
-                    bone.ik_family_id -= 1;
-                }
-            }
-        }
         _ => {}
     }
 }
@@ -1361,6 +1375,31 @@ pub fn center_verts(verts: &mut Vec<Vertex>) {
     }
 }
 
+/// Give the selected bone an IK constraint, with a new target bone where its head is
+/// now drawn, so nothing moves (docs/IK.md §4.1).
+pub fn add_ik(armature: &mut Armature, selections: &SelectionState) {
+    let Some(tip) = armature.sel_bone(selections).cloned() else { return };
+    let depth = ik::depth(&armature.bones, tip.id);
+    if depth == 0 || tip.ik.is_some() {
+        return;
+    }
+
+    let mut world = armature.bones.clone();
+    renderer::construction(&mut world, &armature.bones);
+    let tip_world = world.iter().find(|b| b.id == tip.id).unwrap().pos;
+
+    let target_id = armature.new_bone(-1).0.id;
+    let target = armature.find_bone_mut(target_id).unwrap();
+    target.name = format!("{} Target", tip.name);
+    target.pos = tip_world;
+
+    armature.find_bone_mut(tip.id).unwrap().ik = Some(IkConstraint {
+        target_id,
+        chain: depth.min(2),
+        ..Default::default()
+    });
+}
+
 pub fn open_modal(ui: &mut crate::Ui, forced: bool, headline: String) {
     ui.modal = true;
     ui.forced_modal = forced;
@@ -1405,10 +1444,17 @@ fn select_bone(
 
     ui.last_selected = "bone".to_string();
 
-    // set this bone as IK target if in IK target mode
+    // set this bone as IK target if in IK target mode, unless it would drive itself
     if edit_mode.setting_ik_target {
-        armature.sel_bone_mut(&sel).unwrap().ik_target_id = armature.bones[idx].id;
         edit_mode.setting_ik_target = false;
+        let target_id = armature.bones[idx].id;
+        let tip = armature.sel_bone(&sel).unwrap().clone();
+        let Some(c) = &tip.ik else { return };
+        if !ik::target_allowed(&armature.bones, tip.id, c.chain, target_id) {
+            open_modal(ui, false, ui.loc("bone_panel.inverse_kinematics.target_in_chain"));
+            return;
+        }
+        armature.sel_bone_mut(&sel).unwrap().ik.as_mut().unwrap().target_id = target_id;
         return;
     }
 
@@ -1695,19 +1741,13 @@ fn edit_bone(
     config: &Config,
     bone_id: i32,
     element: AnimElement,
-    mut value: f32,
+    value: f32,
     value_str: String,
     mut anim_id: usize,
     mut anim_frame: i32,
 ) {
-    let eff = armature.bone_eff(bone_id);
     let bones = &mut armature.bones;
     let bone = bones.iter_mut().find(|b| b.id == bone_id).unwrap();
-
-    // set rotation to 0 if this bone is part of IK
-    if bone.ik_family_id != -1 && eff != JointEffector::End && element == AnimElement::Rotation {
-        value = 0.;
-    }
 
     let mut init_value = 0.;
     let mut init_value_str = "".to_string();
@@ -1757,21 +1797,32 @@ fn edit_bone(
         AnimElement::ScaleX => set!(bone.scale.x, f32),
         AnimElement::ScaleY => set!(bone.scale.y, f32),
         AnimElement::Zindex => set!(bone.zindex, i32),
-        AnimElement::IkFamilyId => set!(bone.ik_family_id, i32),
         AnimElement::TintR => set!(bone.tint.r, f32),
         AnimElement::TintG => set!(bone.tint.g, f32),
         AnimElement::TintB => set!(bone.tint.b, f32),
         AnimElement::TintA => set!(bone.tint.a, f32),
         AnimElement::Texture => { /* handled in set_bone_tex() */ }
-        AnimElement::IkConstraint => set_str!(bone.ik_constraint, JointConstraint),
         AnimElement::Hidden => set_bool!(bone.hidden),
         AnimElement::Locked => set_bool!(bone.locked),
-        AnimElement::IkMode => set_str!(bone.ik_mode, InverseKinematicsMode),
         AnimElement::GroupColorR => set!(bone.group_color.r, u8),
         AnimElement::GroupColorG => set!(bone.group_color.g, u8),
         AnimElement::GroupColorB => set!(bone.group_color.b, u8),
         AnimElement::GroupColorA => set!(bone.group_color.a, u8),
-        AnimElement::MimicTarget => set_bool!(bone.ik_mimic_target),
+        AnimElement::IkBend => {
+            if let Some(ik) = &mut bone.ik {
+                set_str!(ik.bend, IkBend)
+            }
+        }
+        AnimElement::IkWeight => {
+            if let Some(ik) = &mut bone.ik {
+                set!(ik.weight, f32)
+            }
+        }
+        AnimElement::IkCopyRotation => {
+            if let Some(ik) = &mut bone.ik {
+                set_bool!(ik.copy_rotation)
+            }
+        }
         AnimElement::PivotX => set!(bone.pivot_pos.x, f32),
         AnimElement::PivotY => set!(bone.pivot_pos.y, f32),
         AnimElement::PivotRot => set!(bone.pivot_rot, f32),
@@ -1984,23 +2035,14 @@ fn paste_bone(
     let mut insert_idx = usize::MAX;
     let mut id_refs: HashMap<i32, i32> = HashMap::new();
 
-    let mut highest_ik_family_id = 0;
-    for bone in &armature.bones {
-        highest_ik_family_id = bone.ik_family_id.max(highest_ik_family_id);
-    }
-
     for b in 0..copy_buffer.bones.len() {
         let bone = &mut copy_buffer.bones[b];
 
         highest_id += 1;
         let new_id = highest_id;
 
-        // put IK bones in a new family index
         id_refs.insert(bone.id, new_id);
         bone.id = highest_id;
-        if bone.ik_family_id != -1 {
-            bone.ik_family_id += highest_ik_family_id + 1;
-        }
 
         // selected bone's parent is also pasted bone's
         if bone.parent_id != -1 && id_refs.get(&bone.parent_id) != None {
@@ -2013,12 +2055,17 @@ fn paste_bone(
         }
     }
 
-    // re-set binds that are pointing to child bones
+    // re-set binds and IK targets that are pointing to pasted bones
     for b in 0..copy_buffer.bones.len() {
         let bone = &mut copy_buffer.bones[b];
         for bind in &mut bone.binds {
             if let Some(new_id) = id_refs.get(&bind.bone_id) {
                 bind.bone_id = *new_id;
+            }
+        }
+        if let Some(ik) = &mut bone.ik {
+            if let Some(new_id) = id_refs.get(&ik.target_id) {
+                ik.target_id = *new_id;
             }
         }
     }

@@ -382,7 +382,7 @@ fn import_dragonbones_editor_warnings() {
         let warnings = keyternity_lib::warnings::check_warnings(&imp.armature);
         let mut counts: HashMap<String, (usize, usize)> = HashMap::new();
         for w in &warnings {
-            const NAMES: [&str; 11] = ["SameZIndex", "NoIkTarget", "OnlyIk", "UnboundBind", "NoVertsInBind", "OnlyPath", "NoWeights", "BoneOutOfFamily", "EmptyStyles", "UnusedTextures", "ClassicMultiBind"];
+            const NAMES: [&str; 10] = ["SameZIndex", "NoIkTarget", "IkTargetInChain", "UnboundBind", "NoVertsInBind", "OnlyPath", "NoWeights", "EmptyStyles", "UnusedTextures", "ClassicMultiBind"];
             let kind = NAMES.get(w.warn_type.clone() as usize).unwrap_or(&"?");
             let e = counts.entry(kind.to_string()).or_default();
             e.0 += 1;

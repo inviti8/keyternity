@@ -175,7 +175,7 @@ local.pos   = rotate(Pₒ − P, −r) / S
   dragged or edited, and the bone panel shows them read-only with a note on what
   they are.
 - Never selectable on the canvas.
-- Excluded from keyframing, IK families and physics.
+- Excluded from keyframing, IK and physics.
 - **Delete bone:** deleting a bone deletes its children, including its helper.
   Before that, remove binds to the helper from every mesh, so no vertex points at
   a missing bone. Because vertices share one frame, removing a bind doesn't make

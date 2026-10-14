@@ -212,30 +212,32 @@ pub fn draw(
     armature_window::get_all_children(&armature.bones, &mut children, &bone);
     let parents = armature.get_all_parents(false, bone.id);
 
-    let has_ik = bone.ik_family_id != -1
-        && !bone.ik_disabled
-        && armature.bone_eff(bone.id) != JointEffector::Start;
+    // the IK solver owns these (docs/IK.md §4.2)
+    let (rot_locked, pos_locked) = ik::locks(&armature.bones, bone.id);
     let str_cant_edit = shared_ui
         .loc("bone_panel.inverse_kinematics.cant_edit")
         .clone();
 
     type AE = AnimElement;
-    ui.add_enabled_ui(!has_ik, |ui| {
+    ui.add_enabled_ui(!pos_locked, |ui| {
         ui.horizontal(|ui| {
             label!(&shared_ui.loc("bone_panel.position"), ui);
             ui.add_space(ui.available_width() - input_widths);
             input!(bone.pos.x, "pos_x", AE::PositionX, 1., 1., ui, "X");
             input!(bone.pos.y, "pos_y", AE::PositionY, 1., 1., ui, "Y");
         });
+    })
+    .response
+    .on_disabled_hover_text(&str_cant_edit);
 
-        ui.horizontal(|ui| {
-            label!(&shared_ui.loc("bone_panel.scale"), ui);
-            ui.add_space(ui.available_width() - input_widths - 5.);
-            type AE = AnimElement;
-            input!(bone.scale.x, "scale_x", AE::ScaleX, 1., 0.05, ui, "W");
-            input!(bone.scale.y, "scale_y", AE::ScaleY, 1., 0.05, ui, "H");
-        });
+    ui.horizontal(|ui| {
+        label!(&shared_ui.loc("bone_panel.scale"), ui);
+        ui.add_space(ui.available_width() - input_widths - 5.);
+        input!(bone.scale.x, "scale_x", AE::ScaleX, 1., 0.05, ui, "W");
+        input!(bone.scale.y, "scale_y", AE::ScaleY, 1., 0.05, ui, "H");
+    });
 
+    ui.add_enabled_ui(!rot_locked, |ui| {
         ui.horizontal(|ui| {
             label!(&shared_ui.loc("bone_panel.rotation"), ui);
             ui.add_space(ui.available_width() - 40.);
@@ -245,11 +247,12 @@ pub fn draw(
         });
     })
     .response
-    .on_disabled_hover_text(str_cant_edit);
+    .on_disabled_hover_text(&str_cant_edit);
 
     // show 'IK root bone' button if this is a target bone
     let bones = &mut armature.bones.iter();
-    let is_target_of = bones.position(|b| b.ik_family_id != -1 && b.ik_target_id == bone.id);
+    let is_target_of =
+        bones.position(|b| b.ik.as_ref().map_or(false, |c| c.target_id == bone.id));
     if let Some(is_target_of) = is_target_of {
         let target_str = shared_ui.loc("bone_panel.target_bone");
         ui.horizontal(|ui| {
@@ -339,20 +342,18 @@ pub fn inverse_kinematics(
     events: &mut EventState,
 ) {
     let sel = selections.clone();
-    let str_heading = &shared_ui
-        .loc("bone_panel.inverse_kinematics.heading")
-        .clone();
-    let str_desc = &shared_ui.loc("bone_panel.inverse_kinematics.desc").clone();
+    let loc = |shared_ui: &crate::Ui, key: &str| {
+        shared_ui.loc(&format!("bone_panel.inverse_kinematics.{key}")).clone()
+    };
+    let str_heading = loc(shared_ui, "heading");
+    let str_desc = loc(shared_ui, "desc");
     let frame = egui::Frame::new()
         .fill(config.colors.dark_accent.into())
         .inner_margin(egui::Margin::same(5));
 
-    let bones = &armature.bones;
-    let ik_id = bone.ik_family_id;
-
     frame.show(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.label(str_heading).on_hover_text(str_desc);
+            ui.label(&str_heading).on_hover_text(&str_desc);
             if let Some(img) = &shared_ui.ik_img {
                 let color = config.colors.inverse_kinematics;
                 let pos = egui::Pos2::new(ui.cursor().left(), ui.cursor().top() + 4.);
@@ -368,40 +369,15 @@ pub fn inverse_kinematics(
                     events.toggle_ik_folded(if ik_folded { 0 } else { 1 });
                 }
 
-                if armature.bone_eff(bone.id) == JointEffector::None {
-                    return;
+                // on/off: off shows the chain's animated pose, to edit its rest layout
+                if let Some(c) = &bone.ik {
+                    let mut enabled = c.enabled;
+                    let str_enabled = loc(shared_ui, "enabled_desc");
+                    let checkbox = ui.checkbox(&mut enabled, "".into_atoms()).on_hover_text(str_enabled);
+                    if checkbox.clicked() {
+                        events.toggle_ik_enabled(if enabled { 1 } else { 0 });
+                    }
                 }
-
-                //let mut enabled = !bone.ik_disabled;
-                //let str_desc = &shared_ui.loc("bone_panel.inverse_kinematics.enabled_desc");
-                //let checkbox = ui
-                //    .add_enabled(is_root, egui::Checkbox::new(&mut enabled, "".into_atoms()))
-                //    .on_hover_text(str_desc);
-                //if checkbox.clicked() {
-                //    let mut bones = vec![];
-                //    armature_window::get_all_children(&armature.bones, &mut bones, &bone);
-                //    bones.push(bone.clone());
-                //    for b in 0..bones.len() {
-                //        let disabled = armature.bones[b].ik_disabled;
-                //        events.toggle_bone_ik_disabled(b, !disabled);
-                //    }
-
-                //    if is_root {
-                //        return;
-                //    }
-
-                //    // emable parents IK as well
-
-                //    let parents = armature.get_all_parents(bone.id);
-                //    for p in parents {
-                //        if armature.bone_eff(p.id) == JointEffector::None {
-                //            continue;
-                //        }
-
-                //        let idx = armature.bones.iter().position(|b| b.id == p.id).unwrap();
-                //        events.toggle_bone_ik_disabled(idx, false);
-                //    }
-                //}
             })
         });
     });
@@ -411,199 +387,49 @@ pub fn inverse_kinematics(
         return;
     }
 
-    ui.horizontal(|ui| {
-        ui.label(shared_ui.loc("bone_panel.inverse_kinematics.family_index"));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let str_selected = if bone.ik_family_id == -1 {
-                shared_ui.loc("none").to_string()
-            } else {
-                bone.ik_family_id.to_string()
-            };
-            egui::ComboBox::new("joint_eff", "")
-                .selected_text(str_selected)
-                .width(40.)
-                .show_ui(ui, |ui| {
-                    let mut selected = -1;
-
-                    let mut ik_family_ids = vec![];
-                    for bone in &armature.bones {
-                        if !ik_family_ids.contains(&bone.ik_family_id) && bone.ik_family_id != -1 {
-                            ik_family_ids.push(bone.ik_family_id);
-                        }
-                    }
-
-                    ui.selectable_value(&mut selected, -3, "None");
-                    for id in &ik_family_ids {
-                        ui.selectable_value(&mut selected, *id, id.to_string());
-                    }
-                    ui.selectable_value(&mut selected, -2, "New");
-
-                    if selected != -1 {
-                        let this_id = bone.ik_family_id;
-                        type A = AnimElement;
-                        let mut id = selected;
-                        if selected == -2 {
-                            id = generate_id(ik_family_ids);
-                            //events.edit_bone(bone.id, &A::Rotation, 0., "", usize::MAX, -1);
-                        } else if selected == -3 {
-                            id = -1;
-                        } else {
-                            let mag = bone.pos.mag();
-
-                            // reset Y pos and set X pos as distance, if this is a child IK bone
-                            events.edit_bone(bone.id, &A::PositionY, 0., "", usize::MAX, -1);
-                            events.edit_bone(bone.id, &A::PositionX, mag, "", usize::MAX, -1);
-                            events.edit_bone(bone.id, &A::Rotation, 0., "", usize::MAX, -1);
-                        }
-
-                        for bone_id in &selections.bone_ids {
-                            let iki = &A::IkFamilyId;
-                            events.edit_bone(*bone_id, iki, id as f32, "", usize::MAX, -1);
-                        }
-
-                        // reduce higher ik_family_ids if this one will longer exist
-                        let bones = &armature.bones;
-                        let bones_in_family: Vec<&Bone> =
-                            bones.iter().filter(|b| b.ik_family_id == this_id).collect();
-                        if bones_in_family.len() == 1 {
-                            events.reduce_global_ik_family_ids(this_id);
-                        }
-                    }
-                })
-                .response
-                .on_hover_text(&shared_ui.loc("bone_panel.inverse_kinematics.effector_desc"));
+    // bones turned by another bone's IK point to it
+    if let ik::Role::Chain(tip_id) = ik::role(&armature.bones, bone.id) {
+        let tip = armature.bones.iter().find(|b| b.id == tip_id).unwrap();
+        ui.horizontal(|ui| {
+            ui.label(loc(shared_ui, "turned_by"));
+            let label = ui.clickable_label(&tip.name);
+            if label.hovered() {
+                events.set_hovering_bone_id(tip.id);
+            }
+            if label.clicked() {
+                let idx = armature.bones.iter().position(|b| b.id == tip.id).unwrap();
+                events.select_bone(idx, false);
+            }
         });
-    });
-
-    if bone.ik_family_id == -1 {
-        return;
     }
 
-    let root_bone = bones.iter().find(|b| b.ik_family_id == ik_id);
-    if root_bone != None && root_bone.unwrap().id != bone.id {
-        ui.horizontal(|ui| {
-            ui.label(shared_ui.loc("bone_panel.inverse_kinematics.distance"))
-                .on_hover_text(shared_ui.loc("bone_panel.inverse_kinematics.distance_desc"));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let id = "ik_distance".to_string();
-                let (edited, value, _) = ui.float_input(id, shared_ui, bone.pos.x, 1., None);
-                if edited {
-                    for bone_id in &selections.bone_ids {
-                        let posx = &AE::PositionX;
-                        events.edit_bone(*bone_id, posx, value, "", sel.anim, sel.anim_frame);
-                        events.edit_bone(*bone_id, &AE::PositionY, 0., "", usize::MAX, -1);
-                    }
-                }
-            });
-        });
-
-        // show 'mimic target rotation' for last IK bones
-        if armature.bone_eff(bone.id) == JointEffector::End {
+    let Some(c) = bone.ik.clone() else {
+        if bone.parent_id != -1 {
             ui.horizontal(|ui| {
-                ui.label("Mimic Target Rotation:");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let mut checked = bone.ik_mimic_target;
-                    ui.checkbox(&mut checked, "".into_atoms());
-                    if checked != bone.ik_mimic_target {
-                        let target = &AnimElement::MimicTarget;
-                        let cf32 = if checked { 1. } else { 0. };
-                        let sel = &selections;
-                        for bone_id in &selections.bone_ids {
-                            events.edit_bone(*bone_id, target, cf32, "", sel.anim, sel.anim_frame);
-                        }
+                    let button = ui.skf_button(loc(shared_ui, "add"));
+                    if button.on_hover_text(loc(shared_ui, "add_desc")).clicked() {
+                        events.add_ik();
                     }
                 });
             });
         }
-        ui.horizontal(|ui| {
-            let root = root_bone.unwrap();
-            let str = shared_ui.loc("bone_panel.inverse_kinematics.root_bone");
-            ui.label(str);
-            let bone_label = ui.clickable_label(&root.name);
-            if bone_label.hovered() {
-                events.set_hovering_bone_id(root.id);
-            }
-            if bone_label.clicked() {
-                let idx = bones.iter().position(|b| b.id == root.id).unwrap();
-                events.select_bone(idx, false);
-            }
-        });
         return;
-    }
-
-    ui.horizontal(|ui| {
-        ui.label(shared_ui.loc("bone_panel.inverse_kinematics.mode_label"));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            egui::ComboBox::new("ik_mode", "")
-                .selected_text(bone.ik_mode.to_string())
-                .width(40.)
-                .show_ui(ui, |ui| {
-                    let mut selected_mode = -1;
-                    ui.selectable_value(&mut selected_mode, 0, "FABRIK");
-                    ui.selectable_value(&mut selected_mode, 1, "Arc");
-                    #[rustfmt::skip]
-                    if selected_mode != -1 {
-                        let mode = &InverseKinematicsMode::from_repr(selected_mode).unwrap().to_string();
-                        for bone_id in &selections.bone_ids {
-                            events.edit_bone(*bone_id, &AnimElement::IkMode, f32::MAX, mode, selections.anim, selections.anim_frame);
-                        }
-                    };
-                })
-                .response
-                .on_hover_text(str_desc);
-        });
-    });
-
-    ui.horizontal(|ui| {
-        let ik = "bone_panel.inverse_kinematics.";
-        ui.label(&shared_ui.loc(&format!("{}constraint", ik)));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let str_none = &shared_ui.loc("none").clone();
-            let str_clockwise = shared_ui.loc(&format!("{}Clockwise", ik)) + "  ⟳";
-            let str_ccw = shared_ui.loc(&format!("{}CounterClockwise", ik)) + "  ⟲";
-            let str_desc = &shared_ui.loc(&format!("{}constraint_desc", ik));
-            let selected = match bone.ik_constraint {
-                JointConstraint::Clockwise => str_clockwise.clone(),
-                JointConstraint::CounterClockwise => str_ccw.clone(),
-                _ => str_none.clone(),
-            };
-
-            egui::ComboBox::new("joint_constraint", "")
-                .selected_text(selected)
-                .width(40.)
-                .show_ui(ui, |ui| {
-                    let mut ik = armature.sel_bone(&sel).unwrap().ik_constraint.clone();
-                    ui.selectable_value(&mut ik, JointConstraint::None, str_none);
-                    ui.selectable_value(&mut ik, JointConstraint::Clockwise, str_clockwise);
-                    ui.selectable_value(&mut ik, JointConstraint::CounterClockwise, str_ccw);
-                    if ik != armature.sel_bone(&sel).unwrap().ik_constraint {
-                        #[rustfmt::skip]
-                        for bone_id in &selections.bone_ids {
-                            events.edit_bone(*bone_id, &AnimElement::IkConstraint, f32::MAX, &ik.to_string(), selections.anim, selections.anim_frame);
-                        };
-                    }
-                })
-                .response
-                .on_hover_text(str_desc);
-        });
-    });
+    };
 
     let target_buttons_width = 60.;
-
     ui.horizontal(|ui| {
-        ui.label(&shared_ui.loc("bone_panel.inverse_kinematics.target"));
+        ui.label(loc(shared_ui, "target"));
 
-        if let Some(target) = armature.bones.iter().find(|b| b.id == bone.ik_target_id) {
+        if let Some(target) = armature.bones.iter().find(|b| b.id == c.target_id) {
             let width = ui.available_width();
             let tr_name = utils::trunc_str(ui, &target.name.clone(), width - target_buttons_width);
             let bone_label = ui.selectable_label(false, tr_name);
             if bone_label.hovered() {
-                events.set_hovering_bone_id(bone.ik_target_id);
+                events.set_hovering_bone_id(target.id);
             }
             if bone_label.clicked() {
-                let bones = &armature.bones;
-                let ik_id = bone.ik_target_id;
-                let idx = bones.iter().position(|b| b.id == ik_id).unwrap();
+                let idx = armature.bones.iter().position(|b| b.id == target.id).unwrap();
                 events.select_bone(idx, false);
             };
         } else {
@@ -611,21 +437,96 @@ pub fn inverse_kinematics(
         }
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let str_set_target_raw = "bone_panel.inverse_kinematics.set_target";
-            let str_set_target = shared_ui.loc(&str_set_target_raw).clone();
-            let str_remove_target_raw = "bone_panel.inverse_kinematics.remove_target";
-            let str_remove_target = shared_ui.loc(&str_remove_target_raw).clone();
-
-            let remove_enabled = bone.ik_target_id != -1;
-            ui.add_enabled_ui(remove_enabled, |ui| {
+            let str_remove_target = loc(shared_ui, "remove_target");
+            ui.add_enabled_ui(c.target_id != -1, |ui| {
                 let button = ui.skf_button("🗑");
                 if button.on_hover_text(str_remove_target).clicked() {
                     events.delete_ik_target();
                 }
             });
 
-            if ui.skf_button("⌖").on_hover_text(str_set_target).clicked() {
+            if ui.skf_button("⌖").on_hover_text(loc(shared_ui, "set_target")).clicked() {
                 events.toggle_setting_ik_target(1);
+            }
+        });
+    });
+
+    let depth = ik::depth(&armature.bones, bone.id);
+    ui.horizontal(|ui| {
+        ui.label(loc(shared_ui, "chain")).on_hover_text(loc(shared_ui, "chain_desc"));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            egui::ComboBox::new("ik_chain", "")
+                .selected_text(c.chain.to_string())
+                .width(40.)
+                .show_ui(ui, |ui| {
+                    let mut chain = c.chain;
+                    for n in 1..=depth.max(1) {
+                        ui.selectable_value(&mut chain, n, n.to_string());
+                    }
+                    if chain != c.chain {
+                        events.set_ik_chain(chain);
+                    }
+                });
+        });
+    });
+
+    ui.horizontal(|ui| {
+        ui.label(loc(shared_ui, "bend")).on_hover_text(loc(shared_ui, "bend_desc"));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let name = |b: IkBend| match b {
+                IkBend::AsDrawn => loc(shared_ui, "AsDrawn"),
+                IkBend::Clockwise => loc(shared_ui, "Clockwise") + "  ⟳",
+                IkBend::CounterClockwise => loc(shared_ui, "CounterClockwise") + "  ⟲",
+            };
+            egui::ComboBox::new("ik_bend", "")
+                .selected_text(name(c.bend))
+                .width(40.)
+                .show_ui(ui, |ui| {
+                    let mut bend = c.bend;
+                    for b in [IkBend::AsDrawn, IkBend::Clockwise, IkBend::CounterClockwise] {
+                        ui.selectable_value(&mut bend, b, name(b));
+                    }
+                    if bend != c.bend {
+                        let (anim, frame) = (sel.anim, sel.anim_frame);
+                        #[rustfmt::skip]
+                        events.edit_bone(bone.id, &AE::IkBend, bend as i32 as f32, &bend.to_string(), anim, frame);
+                    }
+                });
+        });
+    });
+
+    ui.horizontal(|ui| {
+        ui.label(loc(shared_ui, "weight")).on_hover_text(loc(shared_ui, "weight_desc"));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let mut weight = c.weight;
+            let slider = ui.add(egui::Slider::new(&mut weight, 0.0..=1.0).max_decimals(2));
+            if slider.drag_started() || slider.changed() && !slider.dragged() {
+                events.save_edited_bone(sel.bone_idx);
+            }
+            if slider.changed() {
+                events.edit_bone(bone.id, &AE::IkWeight, weight, "", sel.anim, sel.anim_frame);
+            }
+        });
+    });
+
+    ui.horizontal(|ui| {
+        ui.label(loc(shared_ui, "copy_rotation"))
+            .on_hover_text(loc(shared_ui, "copy_rotation_desc"));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let mut checked = c.copy_rotation;
+            ui.checkbox(&mut checked, "".into_atoms());
+            if checked != c.copy_rotation {
+                let value = if checked { 1. } else { 0. };
+                #[rustfmt::skip]
+                events.edit_bone(bone.id, &AE::IkCopyRotation, value, "", sel.anim, sel.anim_frame);
+            }
+        });
+    });
+
+    ui.horizontal(|ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.skf_button(loc(shared_ui, "remove")).clicked() {
+                events.remove_ik();
             }
         });
     });

@@ -570,73 +570,70 @@ pub fn prepare_files(
         anim.keyframes.retain(|kf| kf.frame != -1);
     }
 
-    // add baked IK keyframes, if enabled
-    for a in 0..armature_copy.animations.len() {
-        if !edit_mode.export_bake_ik {
-            break;
-        }
-        armature_copy.animations[a].id = a as i32;
-        let mut extra_keyframes: Vec<Keyframe> = vec![];
-        let mut last_frame_rots: HashMap<i32, f32> = HashMap::new();
-        for kf in 0..armature_copy.animations[a].keyframes.len() {
-            let keyframe = armature_copy.animations[a].keyframes[kf].clone();
-            let bones = &armature_copy.bones;
-            let bone = bones.iter().find(|b| b.id == keyframe.bone_id).unwrap();
+    // bake IK, if enabled: at each keyframe of an IK target, key the solved local
+    // rotation of every bone the IK turns, replacing their own rotation keys
+    if edit_mode.export_bake_ik {
+        for a in 0..armature_copy.animations.len() {
+            let mut extra_keyframes: Vec<Keyframe> = vec![];
+            let mut last_frame_rots: HashMap<i32, f32> = HashMap::new();
+            for kf in 0..armature_copy.animations[a].keyframes.len() {
+                let keyframe = armature_copy.animations[a].keyframes[kf].clone();
+                let tips: Vec<Bone> = armature_copy
+                    .bones
+                    .iter()
+                    .filter(|b| b.ik.as_ref().map_or(false, |c| c.target_id == keyframe.bone_id))
+                    .cloned()
+                    .collect();
+                if tips.is_empty() {
+                    continue;
+                }
 
-            let mut bones = armature.bones.iter();
-            let root_idx = bones.position(|b| b.ik_family_id != -1 && b.ik_target_id == bone.id);
-            if root_idx == None {
-                continue;
-            }
+                let local = armature_copy.clone().animate(a, keyframe.frame, None);
+                let mut world = local.clone();
+                construction(&mut world, &local);
 
-            let mut anim_arm = armature_copy.clone();
-            anim_arm.bones = anim_arm.animate(a, keyframe.frame, None);
-            let bones = anim_arm.bones.clone();
-            construction(&mut anim_arm.bones, &bones);
-
-            let ifd = anim_arm.bones[root_idx.unwrap()].ik_family_id;
-            let bones = &mut anim_arm.bones.iter_mut();
-            let mut family: Vec<&mut Bone> = bones.filter(|b| b.ik_family_id == ifd).collect();
-            for i in 0..family.len() {
-                for f in 0..family.len() {
-                    if family[f].id == family[i].id {
-                        break;
+                for tip in &tips {
+                    let c = tip.ik.as_ref().unwrap();
+                    let mut ids = ik::chain_ids(&local, tip.id, c.chain);
+                    if c.copy_rotation {
+                        ids.push(tip.id);
                     }
-                    family[i].rot -= family[f].rot;
-                }
-                if last_frame_rots.contains_key(&family[i].id) {
-                    let prev_rot = *last_frame_rots.get(&family[i].id).unwrap();
-                    family[i].rot = prev_rot + shortest_angle_delta(prev_rot, family[i].rot);
-                    last_frame_rots.remove(&family[i].id);
-                }
-                last_frame_rots.insert(family[i].id, family[i].rot);
+                    for id in ids {
+                        let mut rot = solved_local_rot(&world, id);
+                        if let Some(prev) = last_frame_rots.get(&id) {
+                            rot = prev + shortest_angle_delta(*prev, rot);
+                        }
+                        last_frame_rots.insert(id, rot);
 
-                let ae_rot = AnimElement::Rotation;
-                let exists = extra_keyframes.iter().find(|kf| {
-                    kf.frame == keyframe.frame && kf.bone_id == family[i].id && kf.element == ae_rot
-                });
-
-                if exists == None {
-                    extra_keyframes.push(Keyframe {
-                        frame: keyframe.frame,
-                        bone_id: family[i].id,
-                        element: AnimElement::Rotation,
-                        value_str: "".to_string(),
-                        value: family[i].rot,
-                        start_handle: Vec2::new(1. / 3., 0.),
-                        end_handle: Vec2::new(1. / 3., 0.),
-                        next_kf: -1,
-                        label_top: 0.,
-                        handle_preset: HandlePreset::Linear,
-                    });
+                        let ae_rot = AnimElement::Rotation;
+                        let exists = extra_keyframes.iter().any(|k| {
+                            k.frame == keyframe.frame && k.bone_id == id && k.element == ae_rot
+                        });
+                        if !exists {
+                            extra_keyframes.push(Keyframe {
+                                frame: keyframe.frame,
+                                bone_id: id,
+                                element: ae_rot,
+                                value_str: "".to_string(),
+                                value: rot,
+                                start_handle: Vec2::new(1. / 3., 0.),
+                                end_handle: Vec2::new(1. / 3., 0.),
+                                next_kf: -1,
+                                label_top: 0.,
+                                handle_preset: HandlePreset::Linear,
+                            });
+                        }
+                    }
                 }
             }
-        }
 
-        armature_copy.animations[a]
-            .keyframes
-            .append(&mut extra_keyframes);
-        armature_copy.animations[a].sort_keyframes();
+            let baked: Vec<i32> = extra_keyframes.iter().map(|k| k.bone_id).collect();
+            let anim = &mut armature_copy.animations[a];
+            anim.keyframes
+                .retain(|k| k.element != AnimElement::Rotation || !baked.contains(&k.bone_id));
+            anim.keyframes.append(&mut extra_keyframes);
+            anim.sort_keyframes();
+        }
     }
 
     // populate next_kf
@@ -658,50 +655,9 @@ pub fn prepare_files(
     }
 
     if edit_mode.export_bake_ik && edit_mode.export_exclude_ik {
-        // remove all bones from IK families, if set in export
+        // the baked keys replace IK, if set in export
         for bone in &mut armature_copy.bones {
-            bone.ik_family_id = -1;
-        }
-    } else {
-        let mut family_ids: Vec<i32> = armature_copy
-            .bones
-            .iter()
-            .map(|bone| bone.ik_family_id)
-            .filter(|id| *id != -1)
-            .collect();
-        family_ids.dedup();
-        for fid in family_ids {
-            let ac_c = armature_copy.clone();
-            let ac = &mut armature_copy;
-            let mut joints: Vec<&mut Bone> = ac
-                .bones
-                .iter_mut()
-                .filter(|b| b.ik_family_id == fid)
-                .collect();
-
-            // get all bone ids (sequentially) of this family in one array
-            let mut bone_ids = vec![];
-            for joint in &joints {
-                let idx = ac_c.bones.iter().position(|bone| bone.id == joint.id);
-                bone_ids.push(idx.unwrap() as i32);
-            }
-
-            // get target id (sequentially)
-            let mut target_id = -1;
-            let joint_target_id = joints[0].ik_target_id;
-            let target_idx = ac_c.bones.iter().position(|b| b.id == joint_target_id);
-            if target_idx != None {
-                target_id = target_idx.unwrap() as i32;
-            }
-
-            // clear ik_bone_ids of al joints to mark them as 'non-root'
-            for joint in &mut joints {
-                joint.ik_bone_ids = vec![];
-            }
-
-            // populate IK data to root bone
-            joints[0].ik_bone_ids = bone_ids;
-            joints[0].ik_target_id = target_id;
+            bone.ik = None;
         }
     }
 
@@ -713,15 +669,6 @@ pub fn prepare_files(
 
             // populate keyframe bone_id
             keyframe.bone_id = bones.position(|bone| bone.id == keyframe.bone_id).unwrap() as i32;
-
-            // populate value_str of constraint keyframes
-            if keyframe.element == AnimElement::IkConstraint {
-                keyframe.value_str = match keyframe.value {
-                    1. => "Clockwise".to_string(),
-                    2. => "CounterClockwise".to_string(),
-                    _ => "None".to_string(),
-                };
-            }
         }
     }
 
@@ -764,6 +711,14 @@ pub fn prepare_files(
         let bones = armature_copy.bones.clone();
         let parent_id = &mut armature_copy.bones[b].parent_id;
         *parent_id = bones.iter().position(|bone| bone.id == *parent_id).unwrap() as i32;
+    }
+
+    // index IK target IDs
+    let bones = armature_copy.bones.clone();
+    for bone in &mut armature_copy.bones {
+        if let Some(ik) = &mut bone.ik {
+            ik.target_id = bones.iter().position(|b| b.id == ik.target_id).map_or(-1, |i| i as i32);
+        }
     }
 
     // index bone IDs
@@ -867,7 +822,6 @@ pub fn prepare_files(
             ik_folded: bone.ik_folded,
             meshdef_folded: bone.meshdef_folded,
             effects_folded: bone.effects_folded,
-            ik_disabled: bone.ik_disabled,
             locked: bone.locked,
             group_color: bone.group_color,
             anim_folded: bone.anim_folded,
@@ -911,53 +865,11 @@ pub fn prepare_files(
         bone.visuals_id = visuals.len() as i32 - 1;
     }
 
-    // populate inverse_kinematics
-    let mut ik_root_ids = vec![];
-    for bone in &armature_copy.bones {
-        let eff = armature_copy.bone_eff(bone.id);
-        if bone.ik_family_id != -1 && eff == JointEffector::Start {
-            ik_root_ids.push(bone.id);
-        }
-    }
-    let mut inverse_kinematics: Vec<InverseKinematics> =
-        vec![InverseKinematics::default(); ik_root_ids.len()];
-    for bone in &armature_copy.bones {
-        if bone.ik_family_id == -1 {
-            continue;
-        }
-        let eff = armature_copy.bone_eff(bone.id);
-        let this_ik = &mut inverse_kinematics[bone.ik_family_id as usize];
-        if eff == JointEffector::Start {
-            *this_ik = InverseKinematics {
-                id: bone.ik_family_id,
-                constraint: bone.ik_constraint,
-                mode: bone.ik_mode,
-                target_id: bone.ik_target_id,
-                bone_ids: bone.ik_bone_ids.clone(),
-                ..Default::default()
-            };
-        } else if eff == JointEffector::End {
-            this_ik.mimic_target = bone.ik_mimic_target;
-        }
-    }
-
     for bone in &mut armature_copy.bones {
         bone.init_pos = bone.pos;
         bone.init_rot = bone.rot;
         bone.init_scale = bone.scale;
         bone.init_hidden = bone.hidden;
-        if bone.ik_family_id == -1 {
-            continue;
-        }
-        let ik = &mut inverse_kinematics[bone.ik_family_id as usize];
-        ik.init_mimic_target = ik.mimic_target;
-        if bone.ik_bone_ids.len() == 0 {
-            bone.ik_constraint = JointConstraint::Skip;
-            bone.ik_mode = InverseKinematicsMode::Skip;
-            bone.ik_bone_ids = vec![];
-        }
-        ik.init_mode = ik.mode;
-        ik.init_constraint = ik.constraint;
     }
 
     // prepare root and serlialize armature_copy into json
@@ -971,7 +883,6 @@ pub fn prepare_files(
         styles: armature_copy.styles,
         atlases,
         visuals,
-        inverse_kinematics,
         physics,
     };
     let armatures_json = serde_json::to_string(&root).unwrap();
@@ -1012,10 +923,13 @@ pub fn import<R: Read + std::io::Seek>(
     if let Err(ref e) = value {
         custom_err!(format!("armature.json:\n{}", e.to_string()));
     }
-    let (root, root_err) = backwards_compat::proceed(value.unwrap());
-    if root_err != "" {
-        custom_err!(root_err.to_string());
-    }
+    let root: Root = match serde_json::from_value(value.unwrap()) {
+        Ok(root) => root,
+        Err(e) => {
+            custom_err!(format!("armature.json:
+{}", e.to_string()));
+        }
+    };
 
     let mut temp_arm = shared::Armature {
         bones: root.bones.clone(),
@@ -1078,42 +992,6 @@ pub fn import<R: Read + std::io::Seek>(
         temp_arm.styles[s].id = s as i32;
     }
 
-    // populate bone IK data
-    for b in 0..temp_arm.bones.len() {
-        if temp_arm.bones[b].ik_family_id == -1 {
-            continue;
-        }
-        let ik_family = &root.inverse_kinematics[temp_arm.bones[b].ik_family_id as usize];
-        for i in 0..ik_family.bone_ids.len() {
-            // find this IK bone
-            let id = ik_family.bone_ids[i] as i32;
-            let fam_id = temp_arm.bones[b].ik_family_id;
-            if let Some(bone) = temp_arm.bones.iter_mut().find(|b| b.id == id) {
-                bone.ik_family_id = fam_id;
-            } else {
-                custom_err!(format!(
-                    "Bone of ID {} of IK family #{} could not be found.",
-                    id.to_string(),
-                    fam_id.to_string()
-                ));
-            }
-        }
-
-        // populate IK data on appropriate bones
-        let eff = temp_arm.bone_eff(temp_arm.bones[b].id);
-        let bone = &mut temp_arm.bones[b];
-        if eff == JointEffector::Start {
-            bone.ik_target_id = ik_family.target_id;
-            bone.ik_constraint = ik_family.constraint;
-            bone.ik_mode = ik_family.mode;
-        } else if eff == JointEffector::End {
-            bone.ik_mimic_target = ik_family.mimic_target;
-            bone.pos.y = 0.;
-        } else {
-            bone.pos.y = 0.;
-        }
-    }
-
     // load editor data
     if let Ok(editor_file) = zip.as_mut().unwrap().by_name("editor.json") {
         if let Ok(editor) =
@@ -1128,7 +1006,6 @@ pub fn import<R: Read + std::io::Seek>(
                 bone.folded = ed_bone.folded;
                 bone.ik_folded = ed_bone.ik_folded;
                 bone.meshdef_folded = ed_bone.meshdef_folded;
-                bone.ik_disabled = ed_bone.ik_disabled;
                 bone.locked = ed_bone.locked;
                 bone.group_color = ed_bone.group_color;
                 bone.bind_owner = Some(ed_bone.bind_owner).filter(|id| *id != -1);
@@ -1692,4 +1569,15 @@ pub fn shortest_angle_delta(from: f32, to: f32) -> f32 {
         delta += tau;
     }
     delta
+}
+
+/// Local rotation of `bone_id` in a constructed (IK-solved) world pose: the inverse of
+/// `renderer::inheritance` for rotation.
+pub fn solved_local_rot(world: &[Bone], bone_id: i32) -> f32 {
+    let bone = world.iter().find(|b| b.id == bone_id).unwrap();
+    match world.iter().find(|b| b.id == bone.parent_id) {
+        Some(p) if renderer::is_facing_left(p.scale) => -(bone.rot - p.rot),
+        Some(p) => bone.rot - p.rot,
+        None => bone.rot,
+    }
 }
