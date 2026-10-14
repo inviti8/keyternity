@@ -1752,8 +1752,8 @@ fn edit_bone(
     let mut init_value = 0.;
     let mut init_value_str = "".to_string();
 
-    // prevent recording into animation if bone is locked
-    if bone.locked {
+    // prevent recording into animation if bone is locked, or for setup-only fields
+    if bone.locked || element == AnimElement::Length {
         anim_id = usize::MAX;
         anim_frame = -1;
     }
@@ -1828,6 +1828,10 @@ fn edit_bone(
         AnimElement::PivotRot => set!(bone.pivot_rot, f32),
         AnimElement::PivotScaleX => set!(bone.pivot_scale.x, f32),
         AnimElement::PivotScaleY => set!(bone.pivot_scale.y, f32),
+        AnimElement::Length => {
+            init_value = bone.length;
+            bone.length = value.max(0.);
+        }
     };
 
     if anim_frame == -1 {

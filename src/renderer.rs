@@ -570,6 +570,8 @@ pub fn render(
         && input.left_clicked
         && !edit_mode.editing_mesh
         && !renderer.mobile
+        && !renderer.tail_hovered
+        && !renderer.dragging_tail
     {
         let mut unselect = true;
         for event in &events.events {
@@ -596,6 +598,7 @@ pub fn render(
     if !input.left_down {
         renderer.editing_bone = false;
         renderer.started_dragging_verts = false;
+        renderer.dragging_tail = false;
     } else if sel.vert_ids.len() > 0 && armature.sel_bone(&sel) != None && !camera.on_ui {
         if !renderer.started_dragging_verts {
             events.save_bone(selections.bone_idx);
@@ -626,6 +629,14 @@ pub fn render(
     if input.right_down && !camera.on_ui {
         let vel = renderer::mouse_vel(&input, &camera) * camera.zoom;
         events.edit_camera(camera.pos.x + vel.x, camera.pos.y + vel.y, camera.zoom);
+        return;
+    }
+
+    // dragging the selected bone's tail handle
+    if renderer.dragging_tail {
+        if let Some(bone) = armature.sel_bone(&sel) {
+            drag_tail(events, input, armature, &temp_arm, bone.id, mouse_pos);
+        }
         return;
     }
 
@@ -2396,6 +2407,34 @@ pub fn draw_points(
         add_offseted_indices(&mut this_indices, &mut point_indices);
     }
 
+    // the selected bone's tail handle, for its length (docs/ENVELOPES.md §2.2)
+    renderer.tail_hovered = false;
+    if let Some(bone) = tail_handle_bone(temp_arm, armature, selections, edit_mode) {
+        let tail = tail_pos(bone);
+        let size = config.center_point_radius * 0.8 * camera.zoom;
+        let mut color = config.colors.center_point;
+        let (hit, _) = draw_point(&zero, &camera, &config, &tail, color, cam.pos, 0., size * 1.6);
+        let mouse_on_it = utils::in_bounding_box(&input.mouse, &hit, &camera.window).1;
+        let hovered = mouse_on_it && !camera.on_ui && !on_point;
+        if hovered || renderer.dragging_tail {
+            color += Color::new(64, 64, 64, 0);
+        }
+        let diamond = std::f32::consts::FRAC_PI_4;
+        #[rustfmt::skip]
+        let (mut this_verts, mut this_indices) = draw_point(&zero, &camera, &config, &tail, color, cam.pos, diamond, size);
+        point_verts.append(&mut this_verts);
+        add_offseted_indices(&mut this_indices, &mut point_indices);
+
+        if hovered {
+            renderer.tail_hovered = true;
+            on_point = true;
+            if input.left_pressed {
+                events.save_edited_bone(selections.bone_idx);
+                renderer.dragging_tail = true;
+            }
+        }
+    }
+
     if point_indices.len() > 0 {
         render_pass.set_bind_group(0, &renderer.circle_bindgroup, &[]);
         let point_buffer = &mut renderer.point_buffer;
@@ -2404,6 +2443,67 @@ pub fn draw_points(
     }
 
     renderer.on_point |= on_point;
+}
+
+/// World position of a bone's tail: `length` along its axis (docs/ENVELOPES.md §2),
+/// where a child at local (length, 0) would sit.
+pub fn tail_pos(bone: &Bone) -> Vec2 {
+    bone.pos + utils::rotate(&Vec2::new(bone.length * bone.scale.x, 0.), bone.rot)
+}
+
+/// The bone showing a tail handle: the only selected bone, if it has a length, with the
+/// Transform tool out in the setup pose.
+fn tail_handle_bone<'a>(
+    temp_arm: &'a Armature,
+    armature: &Armature,
+    selections: &SelectionState,
+    edit_mode: &EditMode,
+) -> Option<&'a Bone> {
+    let setup = !edit_mode.anim_open && !edit_mode.pose_mode;
+    if selections.bone_ids.len() != 1 || edit_mode.editing_mesh || edit_mode.tool != Tool::Transform || !setup {
+        return None;
+    }
+    let id = armature.sel_bone(selections)?.id;
+    temp_arm.bones.iter().find(|b| b.id == id && b.length > 0. && b.bind_owner.is_none())
+}
+
+/// Drag a bone's tail to `mouse`: changes its length along its axis, so neither the bone
+/// nor its art turns. With the modifier key held, also aims the bone at the cursor.
+fn drag_tail(
+    events: &mut EventState,
+    input: &InputStates,
+    armature: &Armature,
+    temp_arm: &Armature,
+    bone_id: i32,
+    mouse: Vec2,
+) {
+    let Some(bone) = temp_arm.bones.iter().find(|b| b.id == bone_id) else { return };
+    let sx = bone.scale.x;
+    if sx.abs() < 1e-6 {
+        return;
+    }
+    let d = mouse - bone.pos;
+    let axis = utils::rotate(&Vec2::new(sx.signum(), 0.), bone.rot);
+    let mut length = (d.x * axis.x + d.y * axis.y).max(0.) / sx.abs();
+
+    let rot_locked = ik::locks(&armature.bones, bone_id).0;
+    if input.holding_mod && !rot_locked && d.mag() > 0. {
+        let mut world_rot = d.y.atan2(d.x);
+        if sx < 0. {
+            world_rot -= std::f32::consts::PI;
+        }
+        let parent = temp_arm.bones.iter().find(|b| b.id == bone.parent_id);
+        let local = match parent {
+            Some(p) if is_facing_left(p.scale) => p.rot - world_rot,
+            Some(p) => world_rot - p.rot,
+            None => world_rot,
+        };
+        let current = armature.bones.iter().find(|b| b.id == bone_id).unwrap().rot;
+        let rot = current + utils::shortest_angle_delta(current, local);
+        events.edit_bone(bone_id, &AnimElement::Rotation, rot, "", usize::MAX, -1);
+        length = d.mag() / sx.abs();
+    }
+    events.edit_bone(bone_id, &AnimElement::Length, length, "", usize::MAX, -1);
 }
 
 pub fn draw_kites(
@@ -2431,6 +2531,26 @@ pub fn draw_kites(
 
         if !renderer.render_kites || (edit_mode.editing_mesh && !sel_bone_ids.contains(&bone.id)) {
             continue;
+        }
+
+        // the bone itself, head to tail, when it has a length (docs/ENVELOPES.md §2.2)
+        let blade = bone.pos - tail_pos(bone);
+        if bone.length > 0. && blade.mag() > 0. {
+            let mut color: Color = bone.group_color.into();
+            if bone.group_color.a == 0 {
+                color = config.colors.inactive_center_point;
+                if sel_bone_ids.contains(&bone.id) {
+                    color = config.colors.center_point
+                }
+            } else if !sel_bone_ids.contains(&bone.id) {
+                color.a /= 2;
+            }
+            #[rustfmt::skip]
+            let (mut this_verts, mut this_indices) = draw_flow_kite(
+                &Vec2::new(0., 0.), &camera, &config, &tail_pos(bone), color, cam.pos, blade.y.atan2(blade.x), blade.mag()
+            );
+            kite_verts.append(&mut this_verts);
+            add_offseted_indices(&mut this_indices, &mut kite_indices);
         }
 
         let parent = temp_arm.bones.iter().find(|b| b.id == bone.parent_id);
@@ -2544,8 +2664,8 @@ fn transform_ring(
     let size_elapsed = (edit_mode.sel_time / expand_time).min(1.);
     let mut on_point = false;
 
-    // set temporary mode based on distance from bone to cursor
-    if !camera.on_ui && size_elapsed == 1. {
+    // set temporary mode based on distance from bone to cursor (the tail handle wins)
+    if !camera.on_ui && size_elapsed == 1. && !renderer.tail_hovered && !renderer.dragging_tail {
         let distance = adjusted.mag() / camera.zoom;
 
         // prioritize rot or scale, depending on user-defined distance

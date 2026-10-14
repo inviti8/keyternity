@@ -5,7 +5,31 @@ Skin modifier does, then refine them by hand with **weight painting** and a
 **weight table**. Bones gain a **length**, which envelopes need and which IK and
 DragonBones can use too.
 
-**Status:** design, not implemented. Decisions are in §9.
+**Status:** step 1 (bone length) implemented (§0); the rest is design.
+Decisions are in §9.
+
+
+## 0. As built
+
+**Step 1, bone length (§2):**
+- `Bone.length`, saved when not 0. `renderer::tail_pos` gives a bone's tail:
+  where a child at local `(length, 0)` would sit, so scale and flips are included.
+- The canvas draws a blade from head to tail with the existing kite shape, in the
+  bone's color. The tail handle (a small diamond) shows for the only selected bone,
+  with the Transform tool, in the setup pose. Pressing it beats the transform ring
+  and doesn't deselect. Dragging is one undo step. Ctrl+drag also aims the bone,
+  unless IK owns its rotation.
+- Length is a non-animatable `AnimElement::Length`, so it goes through `EditBone`
+  and never records keyframes. It's clamped at 0.
+- Bone panel: *Length* with *To child* (distance to the first child), disabled
+  while animating.
+- **Departure, PSD import:** a group bone with exactly one child group is also
+  **aimed** at it, not just given the length. Otherwise the length would point
+  along +x, away from a child below it. Its direct children turn back by the same
+  angle, so no art moves. This is safe only at import, before any keyframes exist,
+  so the editor's *To child* doesn't aim.
+- DragonBones export writes `length`; import keeps it.
+- Tests: `tests/bone_length.rs` (4), plus a PSD import test.
 
 
 ## 1. Today
@@ -52,7 +76,7 @@ animatable (as in DragonBones and Spine).
   sets the length to the distance to the bone's single child (or its first child).
 - **New bones** start at length 0. *Length to child* is quick to apply.
 - **PSD import:** a group bone with exactly one child group gets the length to
-  it. Others stay at 0.
+  it, and is aimed at it (§0). Others stay at 0.
 
 ### 2.3 Other uses
 - **DragonBones:** export writes `length`, and import keeps it.

@@ -290,6 +290,31 @@ fn ik_chain_keeps_its_art_in_place_once_solved() {
 }
 
 #[test]
+fn group_bone_points_at_its_only_child_group() {
+    let arm = build(
+        vec![group(1, "upper", None), group(2, "lower", Some(1))],
+        vec![
+            marker("$pivot", Some(1), 19., 19.),
+            art("upper_art", Some(1), 20., 20., 20, 20, 1),
+            marker("$pivot", Some(2), 39., 39.),
+            art("lower_art", Some(2), 40., 40., 20, 20, 2),
+        ],
+    );
+    let upper = bone(&arm, "upper");
+    let to_lower = world(&arm, "lower") - world(&arm, "upper");
+    assert!((upper.length - to_lower.mag()).abs() < 1e-3, "length {}", upper.length);
+    let tail = world(&arm, "upper") + keyternity_lib::utils::rotate(&Vec2::new(upper.length, 0.), rot_of(&arm, upper));
+    assert!(close(tail, world(&arm, "lower")), "tail at {tail:?}");
+    // the art stays where it was drawn, and keeps its drawn angle
+    assert!(close(world(&arm, "upper_art"), Vec2::new(-20., 20.)), "upper art at {:?}", world(&arm, "upper_art"));
+    assert!(close(world(&arm, "lower_art"), Vec2::new(0., 0.)), "lower art at {:?}", world(&arm, "lower_art"));
+    assert!(rot_of(&arm, bone(&arm, "upper_art")).abs() < 1e-4);
+    assert!(rot_of(&arm, bone(&arm, "lower_art")).abs() < 1e-4);
+    // a group with no single child group stays a point
+    assert_eq!(bone(&arm, "lower").length, 0.);
+}
+
+#[test]
 fn opaque_bounds_trims_transparent_margins() {
     let mut img = image::RgbaImage::new(10, 8);
     img.put_pixel(3, 2, image::Rgba([1, 2, 3, 255]));

@@ -1049,6 +1049,7 @@ pub fn import(ske_json: &str, atlases: &[DbAtlas]) -> Result<Imported, String> {
         bone.pos = Vec2::new(t.x, -t.y);
         bone.rot = -t.rot;
         bone.scale = rest_world[i] / parent_world;
+        bone.length = db.length.max(0.);
         let id = bone.id;
         b.bone_ids[i] = id;
 

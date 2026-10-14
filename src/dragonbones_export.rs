@@ -662,6 +662,9 @@ impl<'a> Ctx<'a> {
                 b["parent"] = json!(name);
                 b["inheritScale"] = json!(false);
             }
+            if bone.length > 0. {
+                b["length"] = json!(r(bone.length));
+            }
             out.push(b);
         }
         for h in &self.helpers {

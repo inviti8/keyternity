@@ -249,6 +249,30 @@ pub fn draw(
     .response
     .on_disabled_hover_text(&str_cant_edit);
 
+    // length: setup pose only (docs/ENVELOPES.md §2.2)
+    let first_child = armature
+        .bones
+        .iter()
+        .find(|b| b.parent_id == bone.id && b.bind_owner.is_none())
+        .map(|b| b.pos.mag());
+    ui.add_enabled_ui(!shared_ui.is_animating(&edit_mode, &selections), |ui| {
+        ui.horizontal(|ui| {
+            label!(&shared_ui.loc("bone_panel.length"), ui);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_enabled_ui(first_child.is_some(), |ui| {
+                    let str_desc = shared_ui.loc("bone_panel.length_to_child_desc");
+                    let button = ui.skf_button(shared_ui.loc("bone_panel.length_to_child"));
+                    if button.on_hover_text(str_desc).clicked() {
+                        events.save_edited_bone(selections.bone_idx);
+                        let length = first_child.unwrap();
+                        events.edit_bone(bone.id, &AE::Length, length, "", usize::MAX, -1);
+                    }
+                });
+                input!(bone.length, "length", AE::Length, 1., 1., ui, "");
+            });
+        });
+    });
+
     // show 'IK root bone' button if this is a target bone
     let bones = &mut armature.bones.iter();
     let is_target_of =

@@ -237,6 +237,9 @@
     "global_zindex_inc": "⬆",
     "global_zindex_inc_desc": "Raise this z-index, as well as all z-indexes higher than this, by 1.\n\nUseful for fixing 'same z-index' warnings.",
     "bone_empty": "This bone currently has no texture and is an invisible point.\n\nTo add a texture to it, assign one via the Textures setup above.\n\nThis bone may be dragged in the Armature list, to change its order or to assign it as a child to another bone.",
+    "length": "Length:",
+    "length_to_child": "To child",
+    "length_to_child_desc": "Set the length to the distance to this bone's first child.\n\nThe length runs along the bone's own axis. To point the bone at its child too, Ctrl+drag its tail handle (this turns the bone and its art).",
     "target_bone": "Target of: ",
     "group_color_desc": "Color used to represent this bone and it's children.\n\nSet alpha to 0 to use default color.",
     "inverse_kinematics": {

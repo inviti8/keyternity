@@ -316,7 +316,35 @@ pub fn build_armature(tree: &PsdTree, arm: &mut Armature, default_style: &str, g
         arm.find_bone_mut(id).unwrap().pos = w - pw;
     }
 
+    aim_group_bones(arm, &group_bone);
     add_ik(arm, &ik_chains, &ik_bends, &world);
+}
+
+/// A group bone with exactly one child group points at it, with the distance as its
+/// length (docs/ENVELOPES.md §2.2). Its children turn back by the same angle, so nothing
+/// moves. Safe here because nothing is animated yet.
+fn aim_group_bones(arm: &mut Armature, group_bone: &std::collections::HashMap<u32, i32>) {
+    let group_ids: Vec<i32> = group_bone.values().copied().collect();
+    for &id in &group_ids {
+        let child_groups: Vec<Vec2> = arm
+            .bones
+            .iter()
+            .filter(|b| b.parent_id == id && group_ids.contains(&b.id))
+            .map(|b| b.pos)
+            .collect();
+        let [to_child] = child_groups[..] else { continue };
+        if to_child.mag() < 1e-3 {
+            continue;
+        }
+        let angle = to_child.y.atan2(to_child.x);
+        let bone = arm.find_bone_mut(id).unwrap();
+        bone.rot += angle;
+        bone.length = to_child.mag();
+        for child in arm.bones.iter_mut().filter(|b| b.parent_id == id) {
+            child.pos = utils::rotate(&child.pos, -angle);
+            child.rot -= angle;
+        }
+    }
 }
 
 /// An IK constraint on the last bone of each marked chain, turning the others,

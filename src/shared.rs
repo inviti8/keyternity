@@ -1204,6 +1204,10 @@ pub struct Bone {
     pub pos: Vec2,
     pub scale: Vec2,
     pub rot: f32,
+    /// Distance from the head to the tail, along local +x (px); 0 is a point bone.
+    /// Setup pose only, not animatable (docs/ENVELOPES.md §2)
+    #[serde(skip_serializing_if = "is_zero")]
+    pub length: f32,
     #[serde(skip_serializing_if = "is_false")]
     pub hidden: bool,
 
@@ -2050,6 +2054,7 @@ pub enum AnimElement {
      /* M */ PivotRot, // NA
      /* N */ PivotScaleX, // NA
      /* O */ PivotScaleY, // NA
+     /* P */ Length, // NA
 }
 
 // iterable anim change icons IDs
@@ -2368,6 +2373,9 @@ pub struct Renderer {
     pub render_mesh_wf: bool,
     pub render_rects: bool,
     pub on_point: bool,
+    /// the selected bone's tail handle is under the cursor / being dragged
+    pub tail_hovered: bool,
+    pub dragging_tail: bool,
     pub clicked_vert_id: i32,
     pub is_hovering_bone: bool,
     pub mobile: bool,
@@ -3025,6 +3033,10 @@ fn is_neg_one(value: &i32) -> bool {
 
 fn is_max(value: &f32) -> bool {
     *value == f32::MAX
+}
+
+fn is_zero(value: &f32) -> bool {
+    *value == 0.
 }
 
 fn is_color_empty(value: &Color) -> bool {
