@@ -515,9 +515,17 @@ pub fn create_tex_sheet(armature: &mut Armature, edit_mode: &EditMode) -> (Vec<V
                 // ensure another tex of the same size won't overwrite this one
                 atlases[i].remove(p.unwrap());
 
-                // apply texture image onto atlas
-                let img = &armature.tex_data(tex).unwrap().image;
-                raw_buf.copy_from(img, offset_x, offset_y).unwrap();
+                // apply texture image onto atlas, a row at a time (a per-pixel copy is
+                // slow on large art)
+                let img = armature.tex_data(tex).unwrap().image.to_rgba8();
+                let (w, h) = img.dimensions();
+                let atlas_w = raw_buf.width() as usize;
+                let (dst, src) = (raw_buf.as_mut(), img.as_raw());
+                for y in 0..h as usize {
+                    let to = ((offset_y as usize + y) * atlas_w + offset_x as usize) * 4;
+                    let from = y * w as usize * 4;
+                    dst[to..to + w as usize * 4].copy_from_slice(&src[from..from + w as usize * 4]);
+                }
 
                 // save offsets into armature
                 armature.styles[s].textures[t].offset = Vec2::new(offset_x as f32, offset_y as f32);

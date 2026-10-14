@@ -1096,6 +1096,8 @@ impl BackendRenderer {
             renderer.edge_buffer.init(&self.gpu.device, mesh_max);
             renderer.wireframe_buffer.init(&self.gpu.device, mesh_max);
             renderer.wireframe_edge_buffer.init(&self.gpu.device, mesh_max);
+            renderer.envelope_buffer.init(&self.gpu.device, mesh_max);
+            renderer.envelope_edge_buffer.init(&self.gpu.device, max);
             renderer.ring_buffer.init(&self.gpu.device, 100);
             renderer.selected_ring_buffer.init(&self.gpu.device, 100);
             renderer.rect_buffer.init(&self.gpu.device, max);

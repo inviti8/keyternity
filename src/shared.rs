@@ -1020,6 +1020,7 @@ pub struct KeyboardConfig {
     pub toggle_edit_vertices: egui::KeyboardShortcut,
     pub tool_pan: egui::KeyboardShortcut,
     pub tool_eraser: egui::KeyboardShortcut,
+    pub tool_envelope: egui::KeyboardShortcut,
     pub tool_pen: egui::KeyboardShortcut,
     pub fit_view: egui::KeyboardShortcut,
 }
@@ -1116,6 +1117,7 @@ impl Default for KeyboardConfig {
             toggle_edit_vertices: regular_key!(egui::Key::V),
             tool_pan:             regular_key!(egui::Key::H),
             tool_eraser:          shortcut_key!(egui::Modifiers::SHIFT, egui::Key::K),
+            tool_envelope:        shortcut_key!(egui::Modifiers::SHIFT, egui::Key::E),
             tool_pen:             regular_key!(egui::Key::K),
             fit_view:             regular_key!(egui::Key::Home),
         }
@@ -2178,6 +2180,8 @@ pub enum Tool {
     Zoom,
     Pen,
     Eraser,
+    /// Envelope radii and the weight view (docs/ENVELOPES.md §4.1, §4.4)
+    Envelope,
 }
 
 impl Tool {
@@ -2208,6 +2212,8 @@ pub struct EditMode {
     pub tool: Tool,
     /// Eraser mode: delete (leave a hole) instead of dissolve (keep the surface).
     pub eraser_delete: bool,
+    /// Envelope tool: show every deforming bone's envelope, not just the selected ones
+    pub show_all_envelopes: bool,
     /// Pen: don't snap to vertices and edges (Shift held does the same).
     pub pen_no_snap: bool,
     /// Pen: keep segments at multiples of 45°.
@@ -2443,6 +2449,12 @@ pub struct Renderer {
     /// overlay's within the same frame
     pub wireframe_buffer: RenderBuffer,
     pub wireframe_edge_buffer: RenderBuffer,
+    /// Envelope tool: capsule fills, handles and weight points / dashed outlines
+    pub envelope_buffer: RenderBuffer,
+    pub envelope_edge_buffer: RenderBuffer,
+    /// Envelope tool: the radius handle under the cursor / being dragged
+    pub envelope_hovered: Option<EnvelopeField>,
+    pub envelope_drag: Option<EnvelopeField>,
     pub bone_buffer: RenderBuffer,
     pub prev_onion_buffer: RenderBuffer,
     pub next_onion_buffer: RenderBuffer,
@@ -2540,6 +2552,7 @@ pub enum Events {
     SelectOutsideVerts,
     EditEnvelope,
     ToggleEnvelopeOpen,
+    ToggleShowAllEnvelopes,
     AddIk,
     RemoveIk,
     SetIkChain,
@@ -2753,6 +2766,7 @@ impl EventState {
     #[rustfmt::skip]    event_with_value!(move_selected_keyframes, Events::MoveSelectedKeyframes, dropped_frame, i32);
     #[rustfmt::skip]    event_with_value!(toggle_edit_alt, Events::ToggleEditAlt, toggle, i32);
     generic_event!(add_ik, Events::AddIk);
+    generic_event!(toggle_show_all_envelopes, Events::ToggleShowAllEnvelopes);
     generic_event!(bind_to_skeleton, Events::BindToSkeleton);
     generic_event!(add_bones_in_reach, Events::AddBonesInReach);
     generic_event!(unlock_selected_verts, Events::UnlockSelectedVerts);

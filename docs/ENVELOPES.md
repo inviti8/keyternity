@@ -5,9 +5,9 @@ automatically from bone **envelopes** the way 3ds Max's Skin modifier does, then
 refine it by hand with **weight painting** and a **weight table**. Bones gain a **length**, which envelopes need and which IK and
 DragonBones can use too.
 
-**Status:** steps 1–3 implemented (§0): bone length, the envelope maths, and
-Bind to Skeleton with live envelope weights. The Envelope canvas tool, weight
-view, weight painting and weight table are design.
+**Status:** steps 1–4 implemented (§0): bone length, the envelope maths, Bind to
+Skeleton with live envelope weights, and the Envelope tool with the weight view.
+Weight painting and the weight table are design.
 Decisions are in §9.
 
 
@@ -75,6 +75,27 @@ Decisions are in §9.
   (Deform, head and tail radii, Falloff, Absolute, Copy / Paste). All disabled
   while animating or posing.
 - Tests: `tests/skin.rs` (9).
+
+**Step 4, Envelope tool and weight view (§4.1, §4.4)**, in `renderer.rs`
+(`envelope_tool`, `drag_envelope`, `capsule_outline`, `envelope_handles`):
+- **Key: Shift+E**, not E, which is Scale (and W is Rotate, so weight painting
+  becomes Shift+W). Toolbar button after the Eraser, with *Show All* and a
+  "Shift: both ends" hint in the tool options.
+- Capsules: the outline is the convex hull of a circle at each end. The outer
+  shape is filled very faintly and outlined dashed, the inner shape filled a
+  little stronger (not for Absolute envelopes), in the bone's color, or grey for a
+  bone that doesn't deform. Shown for the selected bones and, for a selected
+  mesh, the bones that skin it; *Show All* adds every deforming bone.
+- Handles: diamonds at the selected bone's head and tail, inner radius on one
+  side of the bone and outer on the other, so they never overlap. Dragging sets
+  the radius to the distance from that end; Shift sets the other end too. One undo
+  step per drag; only at rest. The tail (length) handle works in this tool too.
+- The tool never moves bones: dragging the canvas does nothing, and the transform
+  ring is hidden.
+- Weight view (in this tool, with one bone selected): every mesh the bone skins
+  shows the bone's share per vertex, blue (0) to red (1), with a white ring on
+  hand-weighted vertices.
+- Tests: `tests/envelope_tool.rs` (5).
 
 
 ## 1. Today
@@ -237,7 +258,7 @@ in the same undo step.
 ## 4. Editing
 
 ### 4.1 Envelope tool
-A canvas tool, **Envelope** (E), for the selected bones:
+A canvas tool, **Envelope** (Shift+E), for the selected bones:
 - draws each deforming bone's capsule: the inner shape filled faintly, the outer
   shape as a dashed line, in the bone's color
 - handles at the head and the tail for the inner and outer radii. Dragging a
@@ -268,7 +289,7 @@ to spot.
 
 
 ### 4.5 Weight painting
-A canvas tool, **Paint Weights** (W), on the selected mesh, painting the
+A canvas tool, **Paint Weights** (Shift+W), on the selected mesh, painting the
 **active bone**: the skin bone selected in the Skin list (§4.3), or clicked on the
 canvas with Alt.
 

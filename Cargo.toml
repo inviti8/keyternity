@@ -36,6 +36,27 @@ serde_path_to_error = "0.1.20"
 [profile.dev.package.psd]
 opt-level = 3
 
+# image decoding and encoding (texture atlases on load and save) is 10-50x slower
+# unoptimized; a large rig's atlas took over half a minute to save in dev builds
+[profile.dev.package.image]
+opt-level = 3
+[profile.dev.package.png]
+opt-level = 3
+[profile.dev.package.fdeflate]
+opt-level = 3
+[profile.dev.package.miniz_oxide]
+opt-level = 3
+[profile.dev.package.crc32fast]
+opt-level = 3
+[profile.dev.package.simd-adler32]
+opt-level = 3
+[profile.dev.package.adler2]
+opt-level = 3
+[profile.dev.package.zune-jpeg]
+opt-level = 3
+[profile.dev.package.image-webp]
+opt-level = 3
+
 # native-only dependencies
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 pollster = "0.4.0"

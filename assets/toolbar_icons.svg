@@ -6,7 +6,7 @@
   Export: magick -background none -density 256 toolbar_icons.svg toolbar_icons.png
   (64 px per icon).
 -->
-<svg xmlns="http://www.w3.org/2000/svg" width="312" height="24" viewBox="0 0 312 24"
+<svg xmlns="http://www.w3.org/2000/svg" width="336" height="24" viewBox="0 0 336 24"
      fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <!-- 0 move -->
   <g transform="translate(0 0)">
@@ -77,5 +77,11 @@
   <g transform="translate(288 0)">
     <path d="M6 3v9a6 6 0 0 0 12 0V3"/>
     <path d="M6 7h3.5M14.5 7H18M9.5 3v9a2.5 2.5 0 0 0 5 0V3"/>
+  </g>
+  <!-- 13 envelope -->
+  <g transform="translate(312 0)">
+    <rect x="2" y="6" width="20" height="12" rx="6" stroke-dasharray="2.5 2.5"/>
+    <path d="M8 12h8"/>
+    <circle cx="8" cy="12" r="1.6" fill="#ffffff"/><circle cx="16" cy="12" r="1.6" fill="#ffffff"/>
   </g>
 </svg>

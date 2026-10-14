@@ -538,6 +538,10 @@ pub fn render(
         draw_gridline(render_pass, renderer, &camera, &config, queue);
     }
 
+    // envelope tool overlay, under the bone points
+    #[rustfmt::skip]
+    envelope_tool(config, camera, input, edit_mode, armature, &temp_arm, selections, renderer, queue, render_pass, events);
+
     // draw bone center points, and kites representing hierarchy
     #[rustfmt::skip]
     draw_points(config, camera, input, edit_mode, &mut temp_arm, selected_bone_ids.clone(), selections, renderer, queue, render_pass, events, armature);
@@ -556,7 +560,8 @@ pub fn render(
     let ring_enabled = config.transform_rot_radius > 0. && config.transform_scale_radius > 0.;
     let idle_mouse = !input.left_down && !input.left_clicked || camera.on_ui;
     let selected = armature.sel_bone(&sel) != None && selections.bone_ids.len() == 1;
-    if !edit_mode.editing_mesh && !has_ik && idle_mouse && selected && ring_enabled {
+    let ring_tool = edit_mode.tool != Tool::Envelope;
+    if !edit_mode.editing_mesh && !has_ik && idle_mouse && selected && ring_enabled && ring_tool {
         #[rustfmt::skip]
         transform_ring(config, camera, armature, &mut temp_arm, render_pass, renderer, events, edit_mode, &sel, queue, &mouse_pos);
     } else if edit_mode.temporary != None {
@@ -572,6 +577,8 @@ pub fn render(
         && !renderer.mobile
         && !renderer.tail_hovered
         && !renderer.dragging_tail
+        && renderer.envelope_hovered.is_none()
+        && renderer.envelope_drag.is_none()
     {
         let mut unselect = true;
         for event in &events.events {
@@ -599,6 +606,7 @@ pub fn render(
         renderer.editing_bone = false;
         renderer.started_dragging_verts = false;
         renderer.dragging_tail = false;
+        renderer.envelope_drag = None;
     } else if sel.vert_ids.len() > 0 && armature.sel_bone(&sel) != None && !camera.on_ui {
         if !renderer.started_dragging_verts {
             events.save_bone(selections.bone_idx);
@@ -637,6 +645,17 @@ pub fn render(
         if let Some(bone) = armature.sel_bone(&sel) {
             drag_tail(events, input, armature, &temp_arm, bone.id, mouse_pos);
         }
+        return;
+    }
+
+    // dragging an envelope radius handle; the envelope tool doesn't move bones
+    if let Some(field) = renderer.envelope_drag {
+        if let Some(bone) = armature.sel_bone(&sel) {
+            drag_envelope(events, input, &temp_arm, bone.id, field, mouse_pos);
+        }
+        return;
+    }
+    if edit_mode.tool == Tool::Envelope {
         return;
     }
 
@@ -2445,6 +2464,233 @@ pub fn draw_points(
     renderer.on_point |= on_point;
 }
 
+/// Outline of an envelope's capsule: the convex hull of a circle at each end.
+pub fn capsule_outline(head: Vec2, r_head: f32, tail: Vec2, r_tail: f32) -> Vec<Vec2> {
+    const N: usize = 32;
+    let mut pts: Vec<Vec2> = vec![];
+    for (c, r) in [(head, r_head.max(0.)), (tail, r_tail.max(0.))] {
+        for i in 0..N {
+            let a = i as f32 / N as f32 * std::f32::consts::TAU;
+            pts.push(c + Vec2::new(a.cos(), a.sin()) * r);
+        }
+    }
+    // monotone chain
+    pts.sort_by(|a, b| (a.x, a.y).partial_cmp(&(b.x, b.y)).unwrap_or(std::cmp::Ordering::Equal));
+    let cross = |o: Vec2, a: Vec2, b: Vec2| (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+    let mut hull: Vec<Vec2> = vec![];
+    for pass in 0..2 {
+        let start = hull.len();
+        let iter: Box<dyn Iterator<Item = &Vec2>> = if pass == 0 { Box::new(pts.iter()) } else { Box::new(pts.iter().rev()) };
+        for p in iter {
+            while hull.len() >= start + 2 && cross(hull[hull.len() - 2], hull[hull.len() - 1], *p) <= 0. {
+                hull.pop();
+            }
+            hull.push(*p);
+        }
+        hull.pop();
+    }
+    hull
+}
+
+/// The envelope radius handles of a bone: (field, world position). The inner
+/// handles sit on one side of the bone and the outer ones on the other; a point
+/// bone has only the head's.
+pub fn envelope_handles(bone: &Bone, e: &crate::envelope::Envelope) -> Vec<(EnvelopeField, Vec2)> {
+    let (head, tail) = (bone.pos, tail_pos(bone));
+    let axis = if (tail - head).mag() > 1e-3 {
+        (tail - head).normalize()
+    } else {
+        utils::rotate(&Vec2::new(bone.scale.x.signum(), 0.), bone.rot)
+    };
+    let perp = Vec2::new(-axis.y, axis.x);
+    let mut handles = vec![
+        (EnvelopeField::HeadInner, head + perp * e.head_inner),
+        (EnvelopeField::HeadOuter, head - perp * e.head_outer),
+    ];
+    if (tail - head).mag() > 1e-3 {
+        handles.push((EnvelopeField::TailInner, tail + perp * e.tail_inner));
+        handles.push((EnvelopeField::TailOuter, tail - perp * e.tail_outer));
+    }
+    handles
+}
+
+/// Envelope tool (docs/ENVELOPES.md §4.1, §4.4): the capsules of the selected bones
+/// (and the bones skinning a selected mesh, or every deforming bone), radius handles
+/// on the selected bone, and the selected bone's weights on the meshes it skins.
+fn envelope_tool(
+    config: &Config,
+    camera: &Camera,
+    input: &InputStates,
+    edit_mode: &EditMode,
+    armature: &Armature,
+    temp_arm: &Armature,
+    selections: &SelectionState,
+    renderer: &mut Renderer,
+    queue: &wgpu::Queue,
+    render_pass: &mut RenderPass,
+    events: &mut EventState,
+) {
+    renderer.envelope_hovered = None;
+    if edit_mode.tool != Tool::Envelope {
+        renderer.envelope_drag = None;
+        return;
+    }
+    let world = skin::setup_world(armature);
+    let cam = world_camera(&camera, &config);
+    let ar = camera.aspect_ratio();
+    let clip = |p: Vec2| world_vert(vert(Some(p), None, None), &cam, ar, Vec2::default()).pos;
+    let zero = Vec2::ZERO;
+    let px = camera.px();
+
+    // which envelopes to show
+    let mut ids: Vec<i32> = vec![];
+    for id in &selections.bone_ids {
+        ids.push(*id);
+        if let Some(mesh) = armature.bones.iter().find(|b| b.id == *id) {
+            ids.extend(skin::skin_bones(&armature.bones, mesh));
+        }
+    }
+    if edit_mode.show_all_envelopes {
+        ids.extend(world.iter().filter(|b| skin::envelope_of(&world, b.id).deform).map(|b| b.id));
+    }
+    let mut seen = vec![];
+    ids.retain(|id| !seen.contains(id) && { seen.push(*id); true });
+
+    let mut fill = (vec![], vec![]);
+    let mut dashed = (vec![], vec![]);
+    let push_quad = |dst: &mut (Vec<Vertex>, Vec<u32>), quad: [Vertex; 4]| {
+        let base = dst.0.len() as u32;
+        dst.0.extend(quad);
+        dst.1.extend([0, 1, 2, 1, 2, 3].map(|i| i + base));
+    };
+    let push_fan = |dst: &mut (Vec<Vertex>, Vec<u32>), outline: &[Vec2], color: Color| {
+        if outline.len() < 3 {
+            return;
+        }
+        let base = dst.0.len() as u32;
+        let center = outline.iter().fold(Vec2::ZERO, |a, p| a + *p) / outline.len() as f32;
+        dst.0.push(vert(Some(clip(center)), Some(color), None));
+        for p in outline {
+            dst.0.push(vert(Some(clip(*p)), Some(color), None));
+        }
+        let n = outline.len() as u32;
+        for i in 0..n {
+            dst.1.extend([base, base + 1 + i, base + 1 + (i + 1) % n]);
+        }
+    };
+
+    for id in &ids {
+        let Some(bone) = temp_arm.bones.iter().find(|b| b.id == *id && b.bind_owner.is_none()) else { continue };
+        let e = skin::envelope_of(&world, *id);
+        let mut color = if bone.group_color.a == 0 { config.colors.center_point } else { bone.group_color };
+        if !e.deform {
+            color = config.colors.inactive_center_point;
+        }
+        let (head, tail) = (bone.pos, tail_pos(bone));
+        let outer = capsule_outline(head, e.head_outer, tail, e.tail_outer);
+        let inner = capsule_outline(head, e.head_inner, tail, e.tail_inner);
+        push_fan(&mut fill, &outer, Color::new(color.r, color.g, color.b, 22));
+        if !e.absolute {
+            push_fan(&mut fill, &inner, Color::new(color.r, color.g, color.b, 45));
+        }
+        let line = Color::new(color.r, color.g, color.b, 220);
+        for i in 0..outer.len() {
+            let (a, b) = (clip(outer[i]), clip(outer[(i + 1) % outer.len()]));
+            push_quad(&mut dashed, mesh_tools::edge_quad(a, b, 1.5 * px, 10. * px, line, camera.window));
+        }
+    }
+
+    // the selected bone's weights on the meshes it skins (blue 0 → red 1); hand-weighted
+    // vertices get a white outline
+    let sel_id = if selections.bone_ids.len() == 1 { armature.sel_bone(selections).map(|b| b.id) } else { None };
+    if let Some(sel_id) = sel_id {
+        let radius = config.center_point_radius * config.mesh_vert_size.clamp(0.1, 3.) * camera.zoom;
+        for mesh in armature.bones.iter().filter(|m| skin::skin_bones(&armature.bones, m).contains(&sel_id)) {
+            let Some(drawn) = temp_arm.bones.iter().find(|b| b.id == mesh.id) else { continue };
+            if drawn.hidden {
+                continue;
+            }
+            let shares = skin::vertex_shares(&armature.bones, mesh);
+            for wv in &drawn.world_verts {
+                let share = shares.get(&wv.id).map_or(0., |s| s.iter().filter(|x| x.0 == sel_id).map(|x| x.1).sum());
+                if mesh.locked_verts.contains(&wv.id) {
+                    let white = Color::new(255, 255, 255, 255);
+                    let (mut v, mut i) = draw_point(&wv.pos, camera, config, &zero, white, zero, 0., radius * 1.5);
+                    add_offseted_indices(&mut i, &mut fill.1);
+                    fill.0.append(&mut v);
+                }
+                let mut color = mesh_tools::hsv(240. * (1. - share.clamp(0., 1.)), 1., 1.);
+                color.a = if share > 0. { 255 } else { 140 };
+                let (mut v, mut i) = draw_point(&wv.pos, camera, config, &zero, color, zero, 0., radius);
+                add_offseted_indices(&mut i, &mut fill.1);
+                fill.0.append(&mut v);
+            }
+        }
+    }
+
+    // radius handles on the selected bone, at rest
+    let at_rest = !edit_mode.anim_open && !edit_mode.pose_mode;
+    if let (Some(sel_id), true) = (sel_id, at_rest) {
+        if let Some(bone) = temp_arm.bones.iter().find(|b| b.id == sel_id && b.bind_owner.is_none()) {
+            let e = skin::envelope_of(&world, sel_id);
+            let size = config.center_point_radius * 0.8 * camera.zoom;
+            let diamond = std::f32::consts::FRAC_PI_4;
+            for (field, pos) in envelope_handles(bone, &e) {
+                let inner = matches!(field, EnvelopeField::HeadInner | EnvelopeField::TailInner);
+                let mut color = if inner { config.colors.center_point } else { Color::new(235, 235, 235, 255) };
+                let (hit, _) = draw_point(&zero, camera, config, &pos, color, cam.pos, 0., size * 1.6);
+                let mouse_on_it = utils::in_bounding_box(&input.mouse, &hit, &camera.window).1;
+                let hovered = mouse_on_it && !camera.on_ui && renderer.envelope_hovered.is_none();
+                if hovered || renderer.envelope_drag == Some(field) {
+                    color += Color::new(64, 64, 64, 0);
+                }
+                let (mut v, mut i) = draw_point(&zero, camera, config, &pos, color, cam.pos, diamond, size);
+                add_offseted_indices(&mut i, &mut fill.1);
+                fill.0.append(&mut v);
+                if hovered {
+                    renderer.envelope_hovered = Some(field);
+                    renderer.on_point = true;
+                    if input.left_pressed && renderer.envelope_drag.is_none() {
+                        events.save_bone(selections.bone_idx);
+                        renderer.envelope_drag = Some(field);
+                    }
+                }
+            }
+        }
+    }
+
+    if !dashed.1.is_empty() {
+        render_pass.set_bind_group(0, edge_bindgroup(renderer, EdgeStyle::Dashed), &[]);
+        setup_render_buffer(&renderer.envelope_edge_buffer, &dashed.0, &dashed.1, queue);
+        draw(&renderer.envelope_edge_buffer, render_pass, 0, dashed.1.len());
+    }
+    if !fill.1.is_empty() {
+        render_pass.set_bind_group(0, &renderer.generic_bindgroup, &[]);
+        setup_render_buffer(&renderer.envelope_buffer, &fill.0, &fill.1, queue);
+        draw(&renderer.envelope_buffer, render_pass, 0, fill.1.len());
+    }
+}
+
+/// Drag an envelope radius handle to `mouse`: the radius is the distance from that end
+/// of the bone. With Shift, the other end's radius follows.
+fn drag_envelope(events: &mut EventState, input: &InputStates, temp_arm: &Armature, bone_id: i32, field: EnvelopeField, mouse: Vec2) {
+    let Some(bone) = temp_arm.bones.iter().find(|b| b.id == bone_id) else { return };
+    type F = EnvelopeField;
+    let at_head = matches!(field, F::HeadInner | F::HeadOuter);
+    let end = if at_head { bone.pos } else { tail_pos(bone) };
+    let radius = (mouse - end).mag();
+    events.edit_envelope(field, radius);
+    if input.holding_shift {
+        let other = match field {
+            F::HeadInner => F::TailInner,
+            F::TailInner => F::HeadInner,
+            F::HeadOuter => F::TailOuter,
+            _ => F::HeadOuter,
+        };
+        events.edit_envelope(other, radius);
+    }
+}
+
 /// World position of a bone's tail: `length` along its axis (docs/ENVELOPES.md §2),
 /// where a child at local (length, 0) would sit.
 pub fn tail_pos(bone: &Bone) -> Vec2 {
@@ -2460,7 +2706,8 @@ fn tail_handle_bone<'a>(
     edit_mode: &EditMode,
 ) -> Option<&'a Bone> {
     let setup = !edit_mode.anim_open && !edit_mode.pose_mode;
-    if selections.bone_ids.len() != 1 || edit_mode.editing_mesh || edit_mode.tool != Tool::Transform || !setup {
+    let tool = matches!(edit_mode.tool, Tool::Transform | Tool::Envelope);
+    if selections.bone_ids.len() != 1 || edit_mode.editing_mesh || !tool || !setup {
         return None;
     }
     let id = armature.sel_bone(selections)?.id;

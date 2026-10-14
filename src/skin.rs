@@ -131,6 +131,10 @@ pub fn skin_bones(bones: &[Bone], mesh: &Bone) -> Vec<i32> {
 
 /// Each vertex's shares (bone id, share) from the mesh's current binds; the owner's
 /// share is under the mesh's own id.
+pub fn vertex_shares(bones: &[Bone], mesh: &Bone) -> HashMap<u32, Vec<(i32, f32)>> {
+    current_shares(bones, mesh)
+}
+
 fn current_shares(bones: &[Bone], mesh: &Bone) -> HashMap<u32, Vec<(i32, f32)>> {
     let binds: Vec<&BoneBind> = mesh.binds.iter().filter(|b| !b.is_path && b.bone_id != -1).collect();
     let mut out = HashMap::new();

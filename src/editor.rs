@@ -410,6 +410,7 @@ pub fn simple_event(
             }
         }
         Events::SetEraserDelete => edit_mode.eraser_delete = value == 1.,
+        Events::ToggleShowAllEnvelopes => edit_mode.show_all_envelopes = !edit_mode.show_all_envelopes,
         Events::TogglePenAngleLock => edit_mode.pen_angle_lock = !edit_mode.pen_angle_lock,
         Events::TogglePenSnap => edit_mode.pen_no_snap = !edit_mode.pen_no_snap,
         Events::PenApply => {

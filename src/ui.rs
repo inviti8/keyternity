@@ -814,6 +814,10 @@ pub fn kb_inputs(
         events.global_paste();
     }
 
+    // Shift+E: consumed before Scale's E would be, since it's E plus a modifier
+    if input.consume_shortcut(&config.keys.tool_envelope) {
+        events.set_tool(Tool::Envelope as usize);
+    }
     if input.consume_shortcut(&config.keys.transform_move) {
         events.edit_mode_move();
     }
@@ -894,6 +898,7 @@ pub fn kb_inputs(
     if input.consume_shortcut(&config.keys.tool_pen) && has_tex {
         events.set_tool(Tool::Pen as usize);
     }
+
     if input.consume_shortcut(&config.keys.fit_view) {
         events.fit_view();
     }
@@ -1751,6 +1756,10 @@ enum ToolIcon {
     Center,
     Reset,
     Retriangulate,
+    /// unused: the strip's snap cell
+    #[allow(dead_code)]
+    Snap,
+    Envelope,
 }
 
 /// The canvas toolbar (docs/TOPOLOGY_TOOLS.md §2): tools on the left, the active
@@ -1868,6 +1877,19 @@ fn toolbar(
             if tool_button(ui, shared_ui, config, ToolIcon::Eraser, selected, has_tex, hover).clicked() {
                 events.set_tool(Tool::Eraser as usize);
             }
+            sep!();
+
+            // skinning
+            let hover = format!(
+                "{} ({})\n\n{}",
+                shared_ui.loc("toolbar.envelope"),
+                keys.tool_envelope.display(),
+                shared_ui.loc("toolbar.envelope_desc")
+            );
+            let selected = edit_mode.tool == Tool::Envelope;
+            if tool_button(ui, shared_ui, config, ToolIcon::Envelope, selected, true, hover).clicked() {
+                events.set_tool(Tool::Envelope as usize);
+            }
 
             // mesh actions, while editing the selected bone's mesh
             if editing_mesh {
@@ -1961,6 +1983,21 @@ fn tool_options(
         let snap_desc = shared_ui.loc("toolbar.pen_snap_desc");
         if selection_button(snap, !edit_mode.pen_no_snap, ui).on_hover_text(snap_desc).clicked() {
             events.toggle_pen_snap();
+        }
+        return;
+    }
+
+    // envelopes: which to show, and how to resize both ends
+    if edit_mode.tool == Tool::Envelope {
+        let mut col = config.colors.text;
+        col -= Color::new(50, 50, 50, 0);
+        let hint = shared_ui.loc("toolbar.envelope_hint");
+        ui.label(egui::RichText::new(hint).color(col));
+        ui.add_space(6.);
+        let all = shared_ui.loc("toolbar.envelope_show_all");
+        let all_desc = shared_ui.loc("toolbar.envelope_show_all_desc");
+        if selection_button(all, edit_mode.show_all_envelopes, ui).on_hover_text(all_desc).clicked() {
+            events.toggle_show_all_envelopes();
         }
         return;
     }
