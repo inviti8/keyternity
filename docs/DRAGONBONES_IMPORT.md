@@ -19,11 +19,14 @@ plan and what was measured; the rest of the doc is the original scoping.
 ## 0. As built (2026-09-29)
 
 **Departures from the plan below:**
-- **IK is baked, not mapped to SkelForm IK families.** SkelForm's FABRIK/Arc
-  solvers don't reproduce DragonBones' analytic solver. So the importer ports the
-  runtime's bone update (all inherit flags) and IK solver (`_computeA`/`_computeB`),
-  evaluates DragonBones' own pose, and bakes IK chain bones and bones not inheriting
-  rotation/translation into per-frame keys. Everything else keeps 1:1 keyframes.
+- **IK is baked, not mapped to IK in the rig.** At the time, SkelForm's IK
+  families and their FABRIK/Arc solvers couldn't reproduce DragonBones' analytic
+  solver. So the importer ports the runtime's bone update (all inherit flags) and
+  IK solver (`_computeA`/`_computeB`), evaluates DragonBones' own pose, and bakes
+  IK chain bones and bones not inheriting rotation/translation into per-frame
+  keys. Everything else keeps 1:1 keyframes. The families have since been
+  replaced by IK constraints ([IK.md](IK.md)), which are close to DragonBones' IK
+  (§4.6), so a native mapping is now possible. Baking still applies.
 - **The setup pose is shown without IK.** Meshes are bound against the authored
   (un-IK'd) pose (`bonePose`), so keeping it keeps skinning exact. DragonBones
   applies IK even at setup, so only the static setup view differs; every
@@ -74,7 +77,8 @@ plan and what was measured; the rest of the doc is the original scoping.
 - Deform/FFD timelines. SkelForm has no per-vertex animation.
 - Events, actions, sound frames, `playTimes`, `fadeInTime`, animation blending/layers.
 - Blend modes, and color *offsets* (SkelForm tint is multiply-only).
-- IK `weight` < 1 and IK `scale`. SkelForm IK is all-or-nothing.
+- IK `weight` < 1 and IK `scale`. SkelForm IK was all-or-nothing. (Moot as built:
+  IK is baked, which carries weight over exactly.)
 
 ## 2. Where it plugs in
 
@@ -211,6 +215,15 @@ Pose, SkelForm does too, through its helper bones.
 
 ### 4.6 IK
 
+> **Superseded.** IK is baked (§0), and the table below is the original plan
+> against SkelForm's IK families, which no longer exist. Mapped onto today's IK
+> constraints ([IK.md](IK.md)) it would be: `bone` → the constraint's tip,
+> `chain` 0 / 1 → `chain` 1 / 2 (DragonBones counts the bones *above* the IK
+> bone and aims the IK bone itself, by its length; Keyternity bones have no length,
+> so the tip would be a helper at the IK bone's tail), `bendPositive` → `bend`
+> Clockwise / Counter-clockwise, `weight` → `weight` (animatable). Both use an
+> analytic two-bone solve.
+
 | DragonBones IK | SkelForm |
 |---|---|
 | `bone` + `target`, `chain: 0` | 1-bone family `[bone]`, `ik_target_id = target` |
@@ -307,7 +320,7 @@ meshes should match within ~0.5 px as well; IK is measured separately (R4).
 | R1 | Non-uniform scale → skew | a rotated child under squash distorts slightly | warn; exact otherwise |
 | R2 | `inherit*: false` bones | pose wrong for those bones | bake those bones' transforms per frame as keys (world → local), with a warning |
 | R3 | Blended mesh weights | would deform differently without a bind pose | imported as bind-posed meshes (§4.5, `BIND_POSE.md`); exact except the non-uniform-scale case shared with R1, and meshes bound away from the setup pose |
-| R4 | IK solver differences | IK poses near, not identical | import as FABRIK; optional "bake IK to rotation keys" |
+| R4 | IK solver differences | IK poses near, not identical | as built: IK is baked from a port of DragonBones' solver, so poses are exact (§0) |
 | R5 | Format variants (4.x, 5.0 `frame`) | parse failures on older files | 5.x first; clear error for unsupported versions |
 
 ## 7. Open questions
