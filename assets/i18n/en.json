@@ -605,6 +605,7 @@
     "envelope": "Envelope",
     "envelope_desc": "See and size bone envelopes, which weight meshes bound to the skeleton.\n\nDrag a diamond to resize the inner or outer radius at that end of the selected bone; Shift sizes both ends. With a bone selected, the meshes it skins show its weight on each vertex, from blue (none) to red (full); white rings mark vertices weighted by hand.",
     "envelope_hint": "Shift: both ends",
+    "envelope_label_desc": "This bone's bind index in the selected mesh. Click to select the bind, then click vertices (while editing the mesh) to add them to it.",
     "envelope_show_all": "Show All",
     "envelope_show_all_desc": "Show every deforming bone's envelope, to check how they overlap at joints.",
     "needs_texture": "Select a bone with a texture to use this tool.",

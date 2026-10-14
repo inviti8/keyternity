@@ -95,6 +95,11 @@ Decisions are in §9.
 - Weight view (in this tool, with one bone selected): every mesh the bone skins
   shows the bone's share per vertex, blue (0) to red (1), with a white ring on
   hand-weighted vertices.
+- **Bind labels** (added after review): with a mesh selected, each of its binds is
+  labelled on its bone's envelope with the bind index and bone name, at the middle
+  of the bone (above a point bone). Clicking a label selects that bind in the
+  panel, so a stray vertex outside every envelope can be added to the right bind.
+  The renderer computes the positions; egui draws them behind the panels.
 - Tests: `tests/envelope_tool.rs` (5).
 
 

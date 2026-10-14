@@ -309,6 +309,7 @@ pub fn draw(
 
     if !shared_ui.startup_window {
         toolbar(context, armature, selections, edit_mode, events, camera, shared_ui, config);
+        envelope_labels(context, shared_ui, config, events);
     }
     shared_ui.canvas_rect = Some(context.available_rect());
 
@@ -1740,6 +1741,36 @@ fn menu_edit_button(
 
 /// `Camera.zoom` of a new armature, shown as 100% by the Zoom tool.
 const DEFAULT_ZOOM: f32 = 2000.;
+
+/// Envelope tool: the selected mesh's bind index (and bone) on each bone's envelope,
+/// behind the panels. Clicking one selects that bind (docs/ENVELOPES.md §4.1).
+fn envelope_labels(context: &Context, shared_ui: &crate::Ui, config: &Config, events: &mut EventState) {
+    let ppp = context.pixels_per_point();
+    for label in &shared_ui.envelope_labels {
+        let pos = egui::pos2(label.pos.x / ppp, label.pos.y / ppp);
+        let id = egui::Id::new(("envelope_label", label.bind));
+        egui::Area::new(id)
+            .fixed_pos(pos)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .order(egui::Order::Background)
+            .show(context, |ui| {
+                let fill = if label.selected { config.colors.light_accent } else { config.colors.dark_accent };
+                let frame = egui::Frame::new()
+                    .fill(fill.into())
+                    .corner_radius(egui::CornerRadius::same(3))
+                    .inner_margin(egui::Margin::symmetric(5, 1));
+                let text = egui::RichText::new(&label.text).color(config.colors.text).size(12.);
+                let response = frame
+                    .show(ui, |ui| ui.add(egui::Label::new(text).selectable(false).sense(egui::Sense::click())))
+                    .inner
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .on_hover_text(shared_ui.loc("toolbar.envelope_label_desc"));
+                if response.clicked() {
+                    events.select_bind(label.bind as i32);
+                }
+            });
+    }
+}
 
 /// Icons in `assets/toolbar_icons.png`, in strip order.
 #[derive(Clone, Copy)]

@@ -2531,6 +2531,7 @@ fn envelope_tool(
     events: &mut EventState,
 ) {
     renderer.envelope_hovered = None;
+    renderer.envelope_labels.clear();
     if edit_mode.tool != Tool::Envelope {
         renderer.envelope_drag = None;
         return;
@@ -2555,6 +2556,37 @@ fn envelope_tool(
     }
     let mut seen = vec![];
     ids.retain(|id| !seen.contains(id) && { seen.push(*id); true });
+
+    // label each bind of the selected mesh on its bone's envelope, so stray vertices can
+    // be added to the right bind: at the middle of the bone, or above a point bone
+    if let [mesh_id] = selections.bone_ids[..] {
+        if let Some(mesh) = armature.bones.iter().find(|b| b.id == mesh_id) {
+            for (k, bind) in mesh.binds.iter().enumerate().filter(|(_, b)| !b.is_path && b.bone_id != -1) {
+                let bone_id = match armature.bones.iter().find(|b| b.id == bind.bone_id) {
+                    Some(h) if h.bind_owner == Some(mesh_id) => h.parent_id,
+                    _ => bind.bone_id,
+                };
+                let (Some(bone), Some(named)) = (
+                    temp_arm.bones.iter().find(|b| b.id == bone_id),
+                    armature.bones.iter().find(|b| b.id == bone_id),
+                ) else {
+                    continue;
+                };
+                let (head, tail) = (bone.pos, tail_pos(bone));
+                let at = if (tail - head).mag() > 1e-3 {
+                    (head + tail) / 2.
+                } else {
+                    head + Vec2::new(0., skin::envelope_of(&world, bone_id).head_outer)
+                };
+                renderer.envelope_labels.push(EnvelopeLabel {
+                    pos: mesh_tools::to_screen(clip(at), camera.window),
+                    bind: k,
+                    text: format!("{k}  {}", named.name),
+                    selected: selections.bind == k as i32,
+                });
+            }
+        }
+    }
 
     let mut fill = (vec![], vec![]);
     let mut dashed = (vec![], vec![]);

@@ -679,6 +679,8 @@ pub struct Ui {
     pub ik_img: Option<egui::TextureHandle>,
     /// envelope copied in the bone panel, for pasting onto another bone
     pub envelope_clipboard: Option<crate::envelope::Envelope>,
+    /// the renderer's bind labels from the last frame (Envelope tool)
+    pub envelope_labels: Vec<EnvelopeLabel>,
     pub lock_img: Option<egui::TextureHandle>,
     pub render_points: bool,
     pub render_kites: bool,
@@ -1377,6 +1379,16 @@ pub struct EditorBone {
     /// vertex indices
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub locked_verts: Vec<u32>,
+}
+
+/// A bind's label on its bone's envelope (Envelope tool): where (screen px), which bind
+/// of the selected mesh, its text, and whether it's the bind selected in the panel.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EnvelopeLabel {
+    pub pos: Vec2,
+    pub bind: usize,
+    pub text: String,
+    pub selected: bool,
 }
 
 /// A field of a bone's envelope, for `Events::EditEnvelope`.
@@ -2455,6 +2467,8 @@ pub struct Renderer {
     /// Envelope tool: the radius handle under the cursor / being dragged
     pub envelope_hovered: Option<EnvelopeField>,
     pub envelope_drag: Option<EnvelopeField>,
+    /// Envelope tool: the selected mesh's binds, labelled on their bones' envelopes
+    pub envelope_labels: Vec<EnvelopeLabel>,
     pub bone_buffer: RenderBuffer,
     pub prev_onion_buffer: RenderBuffer,
     pub next_onion_buffer: RenderBuffer,

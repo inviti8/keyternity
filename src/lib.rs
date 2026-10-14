@@ -390,6 +390,9 @@ impl ApplicationHandler for App {
                     &mut s.edit_mode, &mut s.events, &s.camera, &s.selections, &mut s.armature
                 );
 
+                // the renderer's canvas labels, drawn by egui
+                s.ui.envelope_labels = s.renderer.envelope_labels.clone();
+
                 // ui logic handled in ui.rs
                 #[rustfmt::skip]
                 ui::draw(
