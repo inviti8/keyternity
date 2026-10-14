@@ -81,7 +81,8 @@ DragonBones for game engines. Older files lose their IK.
   Bones without a texture are the skeleton by default. Weights stay live as you
   change envelopes, lengths or the setup pose, except vertices you weight by hand,
   which are kept. Up to 4 bones per vertex by default, and vertices outside every
-  envelope are flagged. The **Envelope tool** (Shift+E) shows the capsules and has
+  envelope are flagged. **Clear All Binds** (after a confirmation) removes a mesh's
+  binds and weights to start the skinning over, leaving the art as drawn. The **Envelope tool** (Shift+E) shows the capsules and has
   handles to resize them, and colors each mesh vertex by the selected bone's weight,
   blue to red ([design](docs/ENVELOPES.md))
 - **Canvas toolbar** — a toolbar above the canvas with Move, Rotate and Scale,

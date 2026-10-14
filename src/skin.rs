@@ -253,6 +253,21 @@ pub fn bind_to_skeleton(armature: &mut Armature, mesh_id: i32) -> Result<Vec<u32
     Ok(outside)
 }
 
+/// Clear All Binds: remove every bind of `mesh_id` and its envelope skinning, so it can be
+/// skinned again from scratch. The mesh stays as drawn; Bind Pose goes off and unused
+/// helpers are removed.
+pub fn clear_all_binds(armature: &mut Armature, mesh_id: i32) {
+    let Some(mesh) = armature.find_bone_mut(mesh_id) else { return };
+    mesh.binds.clear();
+    mesh.envelope_weights = false;
+    mesh.skin_sig = 0;
+    mesh.locked_verts.clear();
+    mesh.skin_outside.clear();
+    // with no binds left, this puts every vertex back in the mesh's own frame
+    bind_pose::clear_bind_pose(armature, mesh_id);
+    bind_pose::remove_unused_helpers(armature);
+}
+
 /// Add every skeleton bone whose outer envelope reaches the mesh to its skin bones.
 pub fn add_bones_in_reach(armature: &mut Armature, mesh_id: i32) {
     let Some(mesh) = find(&armature.bones, mesh_id).cloned() else { return };

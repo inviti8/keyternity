@@ -872,6 +872,17 @@ pub fn mesh_deformation(
                 }
             });
         });
+        // start the skinning over, after a confirmation (its own row: the panel is narrow)
+        if !bone.binds.is_empty() {
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let button = ui.skf_button(skin(shared_ui, "clear_binds"));
+                    if button.on_hover_text(skin(shared_ui, "clear_binds_desc")).clicked() {
+                        events.open_polar_modal(PolarId::ClearAllBinds, shared_ui.loc("polar.clear_all_binds"));
+                    }
+                });
+            });
+        }
 
         // the rest only matters once the mesh is skinned with envelopes
         let skinned = bind_posed && bone.binds.iter().any(|b| !b.is_path);
@@ -921,9 +932,10 @@ pub fn mesh_deformation(
         });
 
         if !bone.locked_verts.is_empty() {
+            let label = skin(shared_ui, "locked").replace("$count", &bone.locked_verts.len().to_string());
+            ui.label(label).on_hover_text(skin(shared_ui, "locked_desc"));
+            // the buttons get their own row: they don't fit beside the label
             ui.horizontal(|ui| {
-                let label = skin(shared_ui, "locked").replace("$count", &bone.locked_verts.len().to_string());
-                ui.label(label).on_hover_text(skin(shared_ui, "locked_desc"));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.skf_button(skin(shared_ui, "unlock_all")).clicked() {
                         events.unlock_all_verts();

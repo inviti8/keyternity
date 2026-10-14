@@ -246,6 +246,8 @@
       "label": "Skin ℹ:",
       "desc": "Skin this mesh to the skeleton, with weights from the bones' envelopes.",
       "bind": "Bind to Skeleton",
+      "clear_binds": "✖ Clear All Binds",
+      "clear_binds_desc": "Remove every bind of the selected meshes, with their envelope and hand-painted weights, to start the skinning over. The art stays as drawn.",
       "bind_desc": "Bind every selected mesh to the skeleton in one step: turns on Bind Pose, binds each skeleton bone within reach, and weights every vertex from the bones' envelopes.\n\nSkeleton bones are the ones set to Deform (by default, bones without a texture). Run it again after adding bones or changing lengths; vertices you weighted by hand keep their weights.",
       "envelope_weights": "Envelope Weights ℹ:",
       "envelope_weights_desc": "Weights follow the bones' envelopes, and update when envelopes, lengths or the setup pose change.\n\nUntick to keep the current weights as plain hand weights.",
@@ -600,6 +602,7 @@
     "unsaved": "Quit and discard unsaved changes?\n\n(Click 'Yes' to confirm)",
     "delete_keyframe_line": "Are you sure to delete this keyframe line?",
     "retriangulate": "Replace this mesh's triangles with an automatic triangulation?\n\nHand-made topology will be lost.",
+    "clear_all_binds": "Remove every bind of the selected meshes, and all their weights?\n\nThe art stays as drawn; Bind to Skeleton skins them again.",
     "trace_with_binds": "Trace replaces this mesh and removes its binds.\n\nContinue?",
     "yes": "Yes",
     "no": "No"

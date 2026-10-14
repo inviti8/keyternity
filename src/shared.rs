@@ -439,6 +439,7 @@ pub enum PolarId {
     ImportedPsd,
     Retriangulate,
     TraceWithBinds,
+    ClearAllBinds,
 }
 enum_string!(PolarId);
 
@@ -2628,6 +2629,7 @@ pub enum Events {
     TogglePhysFolded,
     ToggleIkEnabled,
     BindToSkeleton,
+    ClearAllBinds,
     ToggleEnvelopeWeights,
     SetMaxInfluences,
     AddBonesInReach,
@@ -2862,6 +2864,7 @@ impl EventState {
     generic_event!(delete_bone_keyframes, Events::DeleteBoneKeyframes);
     event_with_value!(set_ik_target_space, Events::SetIkTargetSpace, parent_id, i32);
     generic_event!(bind_to_skeleton, Events::BindToSkeleton);
+    generic_event!(clear_all_binds, Events::ClearAllBinds);
     generic_event!(add_bones_in_reach, Events::AddBonesInReach);
     generic_event!(unlock_selected_verts, Events::UnlockSelectedVerts);
     generic_event!(unlock_all_verts, Events::UnlockAllVerts);

@@ -169,7 +169,9 @@ The solver owns:
 - the tip's rotation, when copying the target's rotation
 
 Those inputs and the canvas rotate/move handles are disabled, with a hint to
-turn the constraint off. With it off, everything is editable, and that is how
+turn the constraint off. Bones IK drives (the chain and the tip) can't be picked by
+clicking their point on the canvas, so a target sitting on its tip is the one picked;
+they're selected in the hierarchy, or on the canvas once their constraint is off. With it off, everything is editable, and that is how
 the rest layout of a chain is changed. Scale, the first chain bone's position,
 and everything else stay editable.
 

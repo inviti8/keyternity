@@ -71,7 +71,9 @@ Decisions are in §9.
   lists failures, or how many vertices sat outside every envelope), and once
   skinned, *Envelope Weights*, *Max Influences*, *Add Bones in Reach*, the
   hand-weighted count with *Unlock Selected* / *Unlock All*, and the outside
-  count with *Select*. The bone panel has a collapsible *Envelope* section
+  count with *Select*. *Clear All Binds* (shown once a mesh has binds, after a
+  confirmation) removes every bind and weight, turns Bind Pose off and removes
+  unused helpers, leaving the art as drawn, so skinning can start over. The bone panel has a collapsible *Envelope* section
   (Deform, head and tail radii, Falloff, Absolute, Copy / Paste). The skin
   controls are disabled in Pose Mode only, with a tooltip saying why: binding
   uses the rest pose, which animating leaves alone. (They were first also

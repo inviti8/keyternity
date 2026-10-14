@@ -157,6 +157,9 @@ pub fn polar_modal(
                     shared_ui.tracing = true;
                     events.trace_bone_verts();
                 }
+                PolarId::ClearAllBinds => {
+                    events.clear_all_binds();
+                }
             }
         },
     );

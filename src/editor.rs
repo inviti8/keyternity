@@ -34,7 +34,7 @@ pub fn iterate_events(
             E::NewBone | E::DragBone | E::DeleteBone | E::PasteBone | E::RaiseGlobalZindex | E::SetBindPose | E::SetBindPoseAll | E::ClearBindPose | E::AddIk | E::RemoveIk => undo_states.new_undo_bones(&armature.bones),
             E::SetIkTargetSpace => undo_states.new_undo_bones(&armature.bones),
             E::SetIkChain | E::ToggleIkEnabled | E::DeleteIkTarget => undo_states.new_undo_bone(&armature.bones[selections.bone_idx]),
-            E::BindToSkeleton | E::AddBonesInReach => undo_states.new_undo_bones(&armature.bones),
+            E::BindToSkeleton | E::ClearAllBinds | E::AddBonesInReach => undo_states.new_undo_bones(&armature.bones),
             E::ToggleEnvelopeWeights | E::SetMaxInfluences | E::UnlockSelectedVerts | E::UnlockAllVerts => undo_states.new_undo_bone(&armature.bones[selections.bone_idx]),
             E::NewAnimation | E::DeleteAnim => undo_states.new_undo_anims(&armature.animations),
             E::DeleteSelectedTextures       => undo_states.new_undo_style(&armature.sel_style(&selections).unwrap()),
@@ -566,6 +566,12 @@ pub fn simple_event(
                 let headline = ui.loc("bone_panel.skin.outside_report");
                 open_modal(ui, false, headline);
             }
+        }
+        Events::ClearAllBinds => {
+            for id in selections.bone_ids.clone() {
+                skin::clear_all_binds(armature, id);
+            }
+            selections.bind = -1;
         }
         Events::ToggleEnvelopeWeights => {
             let mesh = armature.sel_bone_mut(selections).unwrap();

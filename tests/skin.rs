@@ -249,3 +249,25 @@ fn envelopes_and_hand_weights_are_saved() {
     assert_eq!(mesh["max_influences"], 2);
     assert_eq!(mesh["locked_verts"], serde_json::json!([5]));
 }
+
+#[test]
+fn clear_all_binds_starts_the_skinning_over() {
+    let mut a = arm();
+    a.bones[MESH as usize].parent_id = UPPER;
+    a.bones[UPPER as usize].rot = 0.4;
+    let before = drawn(&a);
+    skin::bind_to_skeleton(&mut a, MESH).unwrap();
+    a.bones.iter_mut().find(|b| b.id == MESH).unwrap().locked_verts = vec![0, 1];
+
+    skin::clear_all_binds(&mut a, MESH);
+    let mesh = find(&a, MESH);
+    assert!(mesh.binds.is_empty() && !mesh.bind_pose && !mesh.envelope_weights);
+    assert!(mesh.locked_verts.is_empty());
+    assert!(a.bones.iter().all(|b| b.bind_owner.is_none()), "helpers left behind");
+    for (p, q) in drawn(&a).iter().zip(&before) {
+        assert!((*p - *q).mag() < 1e-3, "art moved: {p:?} vs {q:?}");
+    }
+    // and it can be skinned again
+    skin::bind_to_skeleton(&mut a, MESH).unwrap();
+    assert!(!find(&a, MESH).binds.is_empty());
+}

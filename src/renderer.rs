@@ -2386,8 +2386,10 @@ pub fn draw_points(
             &zero, &camera, &config, &bone.pos, color, cam.pos, 0., elapsed,
         );
 
-        // bones can be selected by clicking on their point
-        let mouse_on_it = utils::in_bounding_box(&input.mouse, &this_verts, &camera.window).1;
+        // bones can be selected by clicking on their point, except ones IK drives
+        // (they're picked in the hierarchy, or here once their IK is off)
+        let ik_driven = ik::role(&armature.bones, bone.id) != ik::Role::None;
+        let mouse_on_it = !ik_driven && utils::in_bounding_box(&input.mouse, &this_verts, &camera.window).1;
         if mouse_on_it && !camera.on_ui {
             color = bone.group_color.into();
             if bone.group_color.a == 0 {
@@ -2415,8 +2417,9 @@ pub fn draw_points(
             // select this bone if point is pressed, unless it was already selected
             if input.left_pressed {
                 let sel_bone = armature.sel_bone(selections);
-                if sel_bone == None || (sel_bone != None && sel_bone.unwrap().id != bone.id) {
-                    events.select_bone(on_click_id as usize, true);
+                let idx = armature.bones.iter().position(|b| b.id == on_click_id);
+                if let Some(idx) = idx.filter(|_| sel_bone.map_or(true, |s| s.id != bone.id)) {
+                    events.select_bone(idx, true);
                 }
             }
             on_point = true;
