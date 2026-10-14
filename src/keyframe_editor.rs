@@ -25,6 +25,16 @@ pub fn draw(
     // navigating frames with kb input
     if shared_ui.rename_id == "" && selections.anim != usize::MAX {
         let kfs = &armature.sel_anim(&sel).unwrap().keyframes;
+        // modified Is first: shortcuts match regardless of extra modifiers
+        if egui_ctx.input_mut(|i| i.consume_shortcut(&config.keys.delete_keyframe)) {
+            events.delete_bone_keyframes();
+        } else if egui_ctx.input_mut(|i| i.consume_shortcut(&config.keys.insert_keyframe_all)) {
+            events.insert_keyframe_all();
+        } else if egui_ctx.input_mut(|i| i.consume_shortcut(&config.keys.insert_keyframe))
+            && !selections.bone_ids.is_empty()
+        {
+            events.insert_keyframe();
+        }
         let next_kf = egui_ctx.input_mut(|i| i.consume_shortcut(&config.keys.next_keyframe));
         let prev_kf = egui_ctx.input_mut(|i| i.consume_shortcut(&config.keys.prev_keyframe));
         let right = egui_ctx.input_mut(|i| i.consume_shortcut(&config.keys.next_anim_frame));
@@ -824,6 +834,49 @@ pub fn draw_bottom_bar(
             });
             if button.inner.clicked() {
                 events.toggle_onion_layers(if edit_mode.onion_layers { 0 } else { 1 });
+            }
+
+            // keying the selected bones on this frame
+            ui.add_space(5.);
+            let frame = selections.anim_frame;
+            let ids = &selections.bone_ids;
+            let any_key = armature.sel_anim(&sel).unwrap().keyframes.iter().any(|k| {
+                k.frame == frame && (ids.is_empty() || ids.contains(&k.bone_id))
+            });
+            let set = format!("{} ({})", shared_ui.loc("keyframe_editor.set_key_desc"), config.keys.insert_keyframe.display());
+            let button = ui.add_enabled_ui(!ids.is_empty(), |ui| {
+                ui.skf_button(shared_ui.loc("keyframe_editor.set_key")).on_hover_text(&set).on_disabled_hover_text(&set)
+            });
+            if button.inner.clicked() {
+                events.insert_keyframe();
+            }
+            let all = format!("{} ({})", shared_ui.loc("keyframe_editor.key_all_desc"), config.keys.insert_keyframe_all.display());
+            if ui.skf_button(shared_ui.loc("keyframe_editor.key_all")).on_hover_text(&all).clicked() {
+                events.insert_keyframe_all();
+            }
+            // breakdown: key between the previous and next poses
+            ui.add_space(5.);
+            ui.add_enabled_ui(!ids.is_empty(), |ui| {
+                let desc = shared_ui.loc("keyframe_editor.breakdown_desc");
+                ui.label(shared_ui.loc("keyframe_editor.breakdown")).on_hover_text(&desc);
+                let mut percent = shared_ui.breakdown * 100.;
+                let slider = egui::Slider::new(&mut percent, 0.0..=100.0).suffix("%").max_decimals(0);
+                let slider = ui.add_sized([110., 18.], slider).on_hover_text(&desc);
+                if slider.drag_started() || slider.changed() && !slider.dragged() {
+                    events.save_animation();
+                }
+                if slider.changed() {
+                    shared_ui.breakdown = percent / 100.;
+                    events.breakdown(shared_ui.breakdown);
+                }
+            });
+
+            let delete = format!("{} ({})", shared_ui.loc("keyframe_editor.delete_key_desc"), config.keys.delete_keyframe.display());
+            let button = ui.add_enabled_ui(any_key, |ui| {
+                ui.skf_button(shared_ui.loc("keyframe_editor.delete_key")).on_hover_text(&delete).on_disabled_hover_text(&delete)
+            });
+            if button.inner.clicked() {
+                events.delete_bone_keyframes();
             }
         });
     });

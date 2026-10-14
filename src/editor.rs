@@ -40,7 +40,7 @@ pub fn iterate_events(
             E::DeleteSelectedTextures       => undo_states.new_undo_style(&armature.sel_style(&selections).unwrap()),
             E::DeleteStyle | E::NewStyle    => undo_states.new_undo_styles(&armature.styles),
             E::RenameStyle => if !ui.just_made_style { undo_states.new_undo_style(&armature.sel_style(&selections).unwrap()); ui.just_made_style = false }
-            E::DeleteSelectedKeyframes | E::DeleteKeyframeLine | E::PasteKeyframesOnFrame => {
+            E::DeleteSelectedKeyframes | E::DeleteKeyframeLine | E::PasteKeyframesOnFrame | E::InsertKeyframe | E::InsertKeyframeAll | E::DeleteBoneKeyframes => {
                 undo_states.new_undo_anim(armature.sel_anim(&selections).unwrap())
             }
             E::ResetVertices | E::CenterBoneVerts | E::DeleteVertex | E::TraceBoneVerts | E::NewVertex | E::DeleteTriangle | E::RetriangulateVerts | E::PenApply => {
@@ -1059,6 +1059,23 @@ pub fn simple_event(
         Events::PasteKeyframesOnFrame => {
             paste_keyframes_on_frame(copy_buffer, armature, selections, value as i32)
         }
+        Events::InsertKeyframe => {
+            let ids = selections.bone_ids.clone();
+            insert_keyframes(armature, selections.anim, selections.anim_frame, &ids);
+        }
+        // undo is saved when the slider is grabbed (SaveAnimation), not per step
+        Events::Breakdown => {
+            let ids = selections.bone_ids.clone();
+            breakdown_keyframes(armature, selections.anim, selections.anim_frame, &ids, value);
+        }
+        Events::InsertKeyframeAll => {
+            let ids = rig_bones(armature);
+            insert_keyframes(armature, selections.anim, selections.anim_frame, &ids);
+        }
+        Events::DeleteBoneKeyframes => {
+            let ids = selections.bone_ids.clone();
+            delete_keyframes_at(armature, selections.anim, selections.anim_frame, &ids);
+        }
         Events::DeleteKeyframesByFrame => {
             let anim = armature.sel_anim_mut(&selections).unwrap();
             anim.keyframes.retain(|kf| kf.frame != value as i32);
@@ -1511,6 +1528,88 @@ pub fn set_ik_target_space(armature: &mut Armature, tip_id: i32, parent_id: i32)
     armature.bones.extend(moved);
     armature.keep_world(target, &before);
     true
+}
+
+/// The transforms Set Key records.
+const KEYED: [AnimElement; 5] = [
+    AnimElement::PositionX,
+    AnimElement::PositionY,
+    AnimElement::Rotation,
+    AnimElement::ScaleX,
+    AnimElement::ScaleY,
+];
+
+/// Set Key: key the position, rotation and scale of `bone_ids` at `frame` of animation
+/// `anim`, at the values shown there (so an in-between pose can be held). As with
+/// editing a bone, an element with no key on frame 0 gets one with its setup value.
+/// Locked bones and Bind Pose helpers are skipped.
+pub fn insert_keyframes(armature: &mut Armature, anim: usize, frame: i32, bone_ids: &[i32]) {
+    if anim >= armature.animations.len() || frame < 0 {
+        return;
+    }
+    let shown = armature.animate(anim, frame, None);
+    for id in bone_ids {
+        let Some(setup) = armature.bones.iter().find(|b| b.id == *id).cloned() else { continue };
+        let Some(now) = shown.iter().find(|b| b.id == *id) else { continue };
+        if setup.locked || setup.bind_owner.is_some() {
+            continue;
+        }
+        let values = |b: &Bone| [b.pos.x, b.pos.y, b.rot, b.scale.x, b.scale.y];
+        let a = &mut armature.animations[anim];
+        for ((el, value), setup_value) in KEYED.iter().zip(values(now)).zip(values(&setup)) {
+            let has_first = a.keyframes.iter().any(|k| k.bone_id == *id && k.element == *el && k.frame == 0);
+            if frame != 0 && !has_first {
+                let (_, i) = a.check_if_in_keyframe(*id, 0, el.clone());
+                a.keyframes[i].value = setup_value;
+            }
+            let (_, i) = a.check_if_in_keyframe(*id, frame, el.clone());
+            a.keyframes[i].value = value;
+        }
+    }
+}
+
+/// Breakdown: key `bone_ids` at `frame` between their previous and next keys, `amount`
+/// (0..1) of the way from the previous pose to the next, per transform. A transform
+/// keyed on only one side holds that key; one keyed on neither side is left alone.
+pub fn breakdown_keyframes(armature: &mut Armature, anim: usize, frame: i32, bone_ids: &[i32], amount: f32) {
+    let Some(a) = armature.animations.get(anim) else { return };
+    let mut sets: Vec<(i32, AnimElement, f32)> = vec![];
+    for id in bone_ids {
+        let Some(bone) = armature.bones.iter().find(|b| b.id == *id) else { continue };
+        if bone.locked || bone.bind_owner.is_some() {
+            continue;
+        }
+        for el in KEYED {
+            let keys = a.keyframes.iter().filter(|k| k.bone_id == *id && k.element == el);
+            let prev = keys.clone().filter(|k| k.frame < frame).max_by_key(|k| k.frame);
+            let next = keys.filter(|k| k.frame > frame).min_by_key(|k| k.frame);
+            let value = match (prev, next) {
+                (Some(p), Some(n)) => p.value + (n.value - p.value) * amount.clamp(0., 1.),
+                (Some(p), None) => p.value,
+                (None, Some(n)) => n.value,
+                (None, None) => continue,
+            };
+            sets.push((*id, el.clone(), value));
+        }
+    }
+    let a = &mut armature.animations[anim];
+    for (id, el, value) in sets {
+        let (_, i) = a.check_if_in_keyframe(id, frame, el);
+        a.keyframes[i].value = value;
+    }
+}
+
+/// The bones Key All keys: every bone without a texture (the skeleton, and controls
+/// such as IK targets), apart from Bind Pose helpers.
+pub fn rig_bones(armature: &Armature) -> Vec<i32> {
+    armature.bones.iter().filter(|b| b.tex.is_empty() && b.bind_owner.is_none()).map(|b| b.id).collect()
+}
+
+/// Delete Key: remove every keyframe of `bone_ids` at `frame` of animation `anim`, or
+/// every keyframe at `frame` when no bones are given.
+pub fn delete_keyframes_at(armature: &mut Armature, anim: usize, frame: i32, bone_ids: &[i32]) {
+    let Some(a) = armature.animations.get_mut(anim) else { return };
+    a.keyframes.retain(|k| k.frame != frame || (!bone_ids.is_empty() && !bone_ids.contains(&k.bone_id)));
 }
 
 pub fn open_modal(ui: &mut crate::Ui, forced: bool, headline: String) {

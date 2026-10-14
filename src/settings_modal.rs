@@ -642,6 +642,9 @@ fn keyboard(ui: &mut egui::Ui, shared_ui: &mut crate::Ui) {
         key!("tool_pan",             keys.tool_pan,             true);
         key!("tool_eraser",          keys.tool_eraser,          true);
         key!("tool_envelope",        keys.tool_envelope,        true);
+        key!("insert_keyframe",      keys.insert_keyframe,      true);
+        key!("insert_keyframe_all",  keys.insert_keyframe_all,  true);
+        key!("delete_keyframe",      keys.delete_keyframe,      true);
         key!("tool_pen",             keys.tool_pen,             true);
         key!("fit_view",             keys.fit_view,             true);
         ui.add_space(10.);

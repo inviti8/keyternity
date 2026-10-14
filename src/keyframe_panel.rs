@@ -73,11 +73,10 @@ pub fn draw(
             egui::ComboBox::new("transition".to_string(), "")
                 .selected_text(preset!(keyframe.handle_preset))
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut sel, HandlePreset::Linear, preset!("Linear"));
-                    ui.selectable_value(&mut sel, HandlePreset::SineIn, preset!("SineIn"));
-                    ui.selectable_value(&mut sel, HandlePreset::SineOut, preset!("SineOut"));
-                    ui.selectable_value(&mut sel, HandlePreset::SineInOut, preset!("SineInOut"));
-                    ui.selectable_value(&mut sel, HandlePreset::Snap, preset!("Snap"));
+                    for preset in HandlePreset::MENU {
+                        let name = preset!(&preset.to_string());
+                        ui.selectable_value(&mut sel, preset, name);
+                    }
                 });
 
             // update keyframe preset

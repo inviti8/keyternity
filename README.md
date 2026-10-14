@@ -56,6 +56,15 @@ DragonBones for game engines. Older files lose their IK.
   circle with a cross, with a dotted line to the bone they follow. Two-bone chains
   solve exactly; longer ones use FABRIK. Chains hanging off other chains solve in
   order. Replaces SkelForm's IK families ([design](docs/IK.md))
+- **Set Key, Key All and Delete Key** — buttons in the timeline (I, Shift+I and
+  Alt+I) key the selected bones' position, rotation and scale on the current
+  frame as shown, to hold a pose, or the whole rig (every bone without a texture,
+  IK targets included), or remove the selected bones' keys there. A **Breakdown**
+  slider keys the selected bones partway between their previous and next poses.
+  Editing a bone while animating still keys it automatically
+- **Easing presets** — besides Linear, Sine and Snap: Quad, Cubic, Quart, Quint,
+  Expo, Circ and Back (overshoot), each In, Out and In-Out. They're the standard
+  cubic-Bézier curves, so they export exactly to DragonBones
 - **Reparenting keeps bones in place** — dragging a bone onto another in the
   hierarchy keeps its world position, rotation and scale, so neither it nor its
   children move, even under rotated or scaled parents

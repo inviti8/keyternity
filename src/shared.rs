@@ -677,6 +677,8 @@ pub struct Ui {
 
     pub pointer_on_timeline: bool,
     pub ik_img: Option<egui::TextureHandle>,
+    /// the timeline's Breakdown slider, 0..1
+    pub breakdown: f32,
     /// envelope copied in the bone panel, for pasting onto another bone
     pub envelope_clipboard: Option<crate::envelope::Envelope>,
     /// the renderer's bind labels from the last frame (Envelope tool)
@@ -1023,6 +1025,9 @@ pub struct KeyboardConfig {
     pub tool_pan: egui::KeyboardShortcut,
     pub tool_eraser: egui::KeyboardShortcut,
     pub tool_envelope: egui::KeyboardShortcut,
+    pub insert_keyframe: egui::KeyboardShortcut,
+    pub insert_keyframe_all: egui::KeyboardShortcut,
+    pub delete_keyframe: egui::KeyboardShortcut,
     pub tool_pen: egui::KeyboardShortcut,
     pub fit_view: egui::KeyboardShortcut,
 }
@@ -1120,6 +1125,9 @@ impl Default for KeyboardConfig {
             tool_pan:             regular_key!(egui::Key::H),
             tool_eraser:          shortcut_key!(egui::Modifiers::SHIFT, egui::Key::K),
             tool_envelope:        shortcut_key!(egui::Modifiers::SHIFT, egui::Key::E),
+            insert_keyframe:      regular_key!(egui::Key::I),
+            insert_keyframe_all:  shortcut_key!(egui::Modifiers::SHIFT, egui::Key::I),
+            delete_keyframe:      shortcut_key!(egui::Modifiers::ALT, egui::Key::I),
             tool_pen:             regular_key!(egui::Key::K),
             fit_view:             regular_key!(egui::Key::Home),
         }
@@ -2083,8 +2091,62 @@ pub enum HandlePreset {
     SineInOut,
     Snap,
     Custom,
+    // standard easings (easings.net), as cubic Béziers so they export exactly
+    QuadIn,
+    QuadOut,
+    QuadInOut,
+    CubicIn,
+    CubicOut,
+    CubicInOut,
+    QuartIn,
+    QuartOut,
+    QuartInOut,
+    QuintIn,
+    QuintOut,
+    QuintInOut,
+    ExpoIn,
+    ExpoOut,
+    ExpoInOut,
+    CircIn,
+    CircOut,
+    CircInOut,
+    BackIn,
+    BackOut,
+    BackInOut,
 }
 enum_string!(HandlePreset);
+
+impl HandlePreset {
+    /// The presets offered in the keyframe panel, in menu order (`Custom` isn't picked).
+    pub const MENU: [HandlePreset; 26] = [
+        HandlePreset::Linear,
+        HandlePreset::SineIn,
+        HandlePreset::SineOut,
+        HandlePreset::SineInOut,
+        HandlePreset::QuadIn,
+        HandlePreset::QuadOut,
+        HandlePreset::QuadInOut,
+        HandlePreset::CubicIn,
+        HandlePreset::CubicOut,
+        HandlePreset::CubicInOut,
+        HandlePreset::QuartIn,
+        HandlePreset::QuartOut,
+        HandlePreset::QuartInOut,
+        HandlePreset::QuintIn,
+        HandlePreset::QuintOut,
+        HandlePreset::QuintInOut,
+        HandlePreset::ExpoIn,
+        HandlePreset::ExpoOut,
+        HandlePreset::ExpoInOut,
+        HandlePreset::CircIn,
+        HandlePreset::CircOut,
+        HandlePreset::CircInOut,
+        HandlePreset::BackIn,
+        HandlePreset::BackOut,
+        HandlePreset::BackInOut,
+        HandlePreset::Snap,
+    ];
+}
 
 // Despite the name, not all of these are animatable.
 // Elements with NA are not animated.
@@ -2576,6 +2638,10 @@ pub enum Events {
     ToggleEnvelopeOpen,
     ToggleShowAllEnvelopes,
     SetIkTargetSpace,
+    InsertKeyframe,
+    InsertKeyframeAll,
+    Breakdown,
+    DeleteBoneKeyframes,
     AddIk,
     RemoveIk,
     SetIkChain,
@@ -2790,6 +2856,10 @@ impl EventState {
     #[rustfmt::skip]    event_with_value!(toggle_edit_alt, Events::ToggleEditAlt, toggle, i32);
     generic_event!(add_ik, Events::AddIk);
     generic_event!(toggle_show_all_envelopes, Events::ToggleShowAllEnvelopes);
+    generic_event!(insert_keyframe, Events::InsertKeyframe);
+    generic_event!(insert_keyframe_all, Events::InsertKeyframeAll);
+    event_with_value!(breakdown, Events::Breakdown, amount, f32);
+    generic_event!(delete_bone_keyframes, Events::DeleteBoneKeyframes);
     event_with_value!(set_ik_target_space, Events::SetIkTargetSpace, parent_id, i32);
     generic_event!(bind_to_skeleton, Events::BindToSkeleton);
     generic_event!(add_bones_in_reach, Events::AddBonesInReach);
