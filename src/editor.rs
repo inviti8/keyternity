@@ -32,6 +32,7 @@ pub fn iterate_events(
         #[rustfmt::skip]
         match last_event {
             E::NewBone | E::DragBone | E::DeleteBone | E::PasteBone | E::RaiseGlobalZindex | E::SetBindPose | E::SetBindPoseAll | E::ClearBindPose | E::AddIk | E::RemoveIk => undo_states.new_undo_bones(&armature.bones),
+            E::SetIkTargetSpace => undo_states.new_undo_bones(&armature.bones),
             E::SetIkChain | E::ToggleIkEnabled | E::DeleteIkTarget => undo_states.new_undo_bone(&armature.bones[selections.bone_idx]),
             E::BindToSkeleton | E::AddBonesInReach => undo_states.new_undo_bones(&armature.bones),
             E::ToggleEnvelopeWeights | E::SetMaxInfluences | E::UnlockSelectedVerts | E::UnlockAllVerts => undo_states.new_undo_bone(&armature.bones[selections.bone_idx]),
@@ -541,6 +542,11 @@ pub fn simple_event(
             }
         }
         Events::AddIk => add_ik(armature, selections),
+        Events::SetIkTargetSpace => {
+            if let Some(tip) = armature.sel_bone(selections).map(|b| b.id) {
+                set_ik_target_space(armature, tip, value as i32);
+            }
+        }
         Events::BindToSkeleton => {
             let mut errors = vec![];
             let mut outside = 0;
@@ -1461,6 +1467,52 @@ pub fn add_ik(armature: &mut Armature, selections: &SelectionState) {
     });
 }
 
+/// Bones the IK target of `tip_id` can be parented to: not in or under its chain (that
+/// would feed back), not the target or under it, and not Bind Pose helpers. Ancestors of
+/// the chain come first, nearest first.
+pub fn ik_target_spaces(armature: &Armature, tip_id: i32) -> Vec<i32> {
+    let Some(c) = armature.bones.iter().find(|b| b.id == tip_id).and_then(|b| b.ik.clone()) else { return vec![] };
+    let target = c.target_id;
+    let first = ik::chain_ids(&armature.bones, tip_id, c.chain).first().copied().unwrap_or(tip_id);
+    let ancestors: Vec<i32> = armature.get_all_parents(false, first).iter().map(|b| b.id).collect();
+    let under_target = |id: i32| id == target || armature.get_all_parents(false, id).iter().any(|p| p.id == target);
+    let ok = |b: &Bone| {
+        b.bind_owner.is_none() && !under_target(b.id) && ik::target_allowed(&armature.bones, tip_id, c.chain, b.id)
+    };
+    let mut ids: Vec<i32> = ancestors.iter().copied().filter(|id| armature.bones.iter().any(|b| b.id == *id && ok(b))).collect();
+    ids.extend(armature.bones.iter().filter(|b| ok(b) && !ancestors.contains(&b.id)).map(|b| b.id));
+    ids
+}
+
+/// Parent the IK target of `tip_id` to `parent_id` (-1: world), keeping it where it is,
+/// so it follows that bone from then on (docs/IK.md §4.1). Returns whether it changed.
+pub fn set_ik_target_space(armature: &mut Armature, tip_id: i32, parent_id: i32) -> bool {
+    let Some(target) = armature.bones.iter().find(|b| b.id == tip_id).and_then(|b| b.ik.as_ref()).map(|c| c.target_id) else {
+        return false;
+    };
+    let Some(current) = armature.bones.iter().find(|b| b.id == target).map(|b| b.parent_id) else { return false };
+    if current == parent_id || (parent_id != -1 && !ik_target_spaces(armature, tip_id).contains(&parent_id)) {
+        return false;
+    }
+    if parent_id != -1 {
+        drag_bone(armature, parent_id, &vec![target], false);
+        return true;
+    }
+
+    // world: a root bone, at the end of the list
+    let before = armature.fk_world().into_iter().find(|b| b.id == target).unwrap();
+    let bone = armature.bones.iter().find(|b| b.id == target).unwrap().clone();
+    let mut moving = vec![bone.clone()];
+    get_all_children(&armature.bones, &mut moving, &bone);
+    let ids: Vec<i32> = moving.iter().map(|b| b.id).collect();
+    let mut moved: Vec<Bone> = ids.iter().map(|id| armature.bones.iter().find(|b| b.id == *id).unwrap().clone()).collect();
+    armature.bones.retain(|b| !ids.contains(&b.id));
+    moved[0].parent_id = -1;
+    armature.bones.extend(moved);
+    armature.keep_world(target, &before);
+    true
+}
+
 pub fn open_modal(ui: &mut crate::Ui, forced: bool, headline: String) {
     ui.modal = true;
     ui.forced_modal = forced;
@@ -1769,7 +1821,7 @@ pub fn drag_bone(
     });
 
     for id in sorted_ids {
-        let old_parents = armature.get_all_parents(false, id);
+        let before = armature.fk_world().into_iter().find(|b| b.id == id).unwrap();
 
         #[rustfmt::skip] macro_rules! dragged {()=>{armature.find_bone_mut(id).unwrap()}}
         #[rustfmt::skip] macro_rules! pointing{()=>{armature.find_bone_mut(pointing_id).unwrap()}}
@@ -1790,7 +1842,7 @@ pub fn drag_bone(
         }
 
         // adjust dragged bone so it stays in place
-        armature.offset_pos_by_parent(old_parents, id);
+        armature.keep_world(id, &before);
     }
 
     let bones = &armature.bones;

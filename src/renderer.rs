@@ -2422,6 +2422,12 @@ pub fn draw_points(
             on_point = true;
         }
 
+        // IK targets draw as a gizmo (`draw_kites`); their point stays for clicking
+        if is_ik_target(&temp_arm.bones, bone.id) {
+            for v in &mut this_verts {
+                v.color.a = 0;
+            }
+        }
         point_verts.append(&mut this_verts);
         add_offseted_indices(&mut this_indices, &mut point_indices);
     }
@@ -2723,6 +2729,11 @@ fn drag_envelope(events: &mut EventState, input: &InputStates, temp_arm: &Armatu
     }
 }
 
+/// Whether `bone_id` is the target of an IK constraint.
+fn is_ik_target(bones: &[Bone], bone_id: i32) -> bool {
+    bones.iter().any(|b| b.ik.as_ref().map_or(false, |c| c.target_id == bone_id))
+}
+
 /// World position of a bone's tail: `length` along its axis (docs/ENVELOPES.md §2),
 /// where a child at local (length, 0) would sit.
 pub fn tail_pos(bone: &Bone) -> Vec2 {
@@ -2800,6 +2811,8 @@ pub fn draw_kites(
     let mut kite_indices = vec![];
     let mut line_verts = vec![];
     let mut line_indices = vec![];
+    let mut gizmo = (vec![], vec![]);
+    let mut links = (vec![], vec![]);
 
     for p in 0..temp_arm.bones.len() {
         let bone = &temp_arm.bones[p];
@@ -2830,6 +2843,46 @@ pub fn draw_kites(
             );
             kite_verts.append(&mut this_verts);
             add_offseted_indices(&mut this_indices, &mut kite_indices);
+        }
+
+        // IK targets are controls, not bones: a circle with a cross, and a dotted
+        // line to the bone they follow
+        if is_ik_target(&temp_arm.bones, bone.id) {
+            let selected = sel_bone_ids.contains(&bone.id);
+            let mut color = config.colors.ik_target;
+            if selected {
+                color += Color::new(70, 70, 70, 0);
+            }
+            let window = camera.window;
+            let ar = camera.aspect_ratio();
+            let clip = |p: Vec2| world_vert(vert(Some(p), None, None), &cam, ar, Vec2::default()).pos;
+            let px = camera.px();
+            let center = mesh_tools::to_screen(clip(bone.pos), window);
+            let radius = 9. * px;
+            let at = |a: f32, r: f32| mesh_tools::from_screen(center + Vec2::new(a.cos(), a.sin()) * r, window);
+            let line = |a: Vec2, b: Vec2, dst: &mut (Vec<Vertex>, Vec<u32>), pattern: f32, color: Color| {
+                let quad = mesh_tools::edge_quad(a, b, 1.5 * px, pattern, color, window);
+                let base = dst.0.len() as u32;
+                dst.0.extend(quad);
+                dst.1.extend([0, 1, 2, 1, 2, 3].map(|i| i + base));
+            };
+            const SEGMENTS: usize = 24;
+            for i in 0..SEGMENTS {
+                let (a0, a1) = (i as f32, (i + 1) as f32);
+                let step = std::f32::consts::TAU / SEGMENTS as f32;
+                line(at(a0 * step, radius), at(a1 * step, radius), &mut gizmo, 1., color);
+            }
+            let quarter = std::f32::consts::FRAC_PI_2;
+            for k in 0..2 {
+                let a = k as f32 * quarter;
+                line(at(a, radius * 1.45), at(a + std::f32::consts::PI, radius * 1.45), &mut gizmo, 1., color);
+            }
+            if let Some(parent) = temp_arm.bones.iter().find(|b| b.id == bone.parent_id) {
+                let mut link = color;
+                link.a = 200;
+                line(clip(parent.pos), clip(bone.pos), &mut links, 5. * px, link);
+            }
+            continue;
         }
 
         let parent = temp_arm.bones.iter().find(|b| b.id == bone.parent_id);
@@ -2880,6 +2933,17 @@ pub fn draw_kites(
         );
         kite_verts.append(&mut this_verts);
         add_offseted_indices(&mut this_indices, &mut kite_indices);
+    }
+
+    if !links.1.is_empty() {
+        render_pass.set_bind_group(0, edge_bindgroup(renderer, EdgeStyle::Dotted), &[]);
+        setup_render_buffer(&renderer.ik_link_buffer, &links.0, &links.1, queue);
+        draw(&renderer.ik_link_buffer, render_pass, 0, links.1.len());
+    }
+    if !gizmo.1.is_empty() {
+        render_pass.set_bind_group(0, &renderer.generic_bindgroup, &[]);
+        setup_render_buffer(&renderer.ik_gizmo_buffer, &gizmo.0, &gizmo.1, queue);
+        draw(&renderer.ik_gizmo_buffer, render_pass, 0, gizmo.1.len());
     }
 
     if kite_indices.len() > 0 {

@@ -51,9 +51,14 @@ DragonBones for game engines. Older files lose their IK.
   the IK turns, and move its target. Adding IK never moves a bone or its art,
   chains can be drawn bent, and joints bend as drawn or forced clockwise or
   counter-clockwise. Weight (animatable, for IK/FK switching) and *Copy Target
-  Rotation* (for hands and feet). Two-bone chains solve exactly; longer ones use
-  FABRIK. Chains hanging off other chains solve in order. Replaces SkelForm's
-  IK families ([design](docs/IK.md))
+  Rotation* (for hands and feet), and a *Target Space*: World grounds feet, while
+  a bone such as the chest makes a hand follow the upper body. Targets draw as a
+  circle with a cross, with a dotted line to the bone they follow. Two-bone chains
+  solve exactly; longer ones use FABRIK. Chains hanging off other chains solve in
+  order. Replaces SkelForm's IK families ([design](docs/IK.md))
+- **Reparenting keeps bones in place** — dragging a bone onto another in the
+  hierarchy keeps its world position, rotation and scale, so neither it nor its
+  children move, even under rotated or scaled parents
 - **Bone length** — bones can have a length, drawn as a blade from head to tail.
   Drag the tail handle to change it without turning the bone (Ctrl+drag to aim
   it too), or use *To child* in the bone panel. Photoshop import points group

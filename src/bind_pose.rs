@@ -73,7 +73,7 @@ fn local_vertex(world_pos: Vec2, frame: &Bone, pivot_rot: f32, pivot_scale: Vec2
 
 /// Local transform that puts a child of `parent` exactly at `target`'s world transform.
 /// Inverse of `renderer::inheritance` (docs/BIND_POSE.md §2.1).
-fn local_at(parent: &Bone, target: &Bone) -> (Vec2, f32, Vec2) {
+pub fn local_at(parent: &Bone, target: &Bone) -> (Vec2, f32, Vec2) {
     let rot = if is_facing_left(parent.scale) {
         parent.rot - target.rot
     } else {

@@ -72,8 +72,11 @@ Decisions are in §9.
   skinned, *Envelope Weights*, *Max Influences*, *Add Bones in Reach*, the
   hand-weighted count with *Unlock Selected* / *Unlock All*, and the outside
   count with *Select*. The bone panel has a collapsible *Envelope* section
-  (Deform, head and tail radii, Falloff, Absolute, Copy / Paste). All disabled
-  while animating or posing.
+  (Deform, head and tail radii, Falloff, Absolute, Copy / Paste). The skin
+  controls are disabled in Pose Mode only, with a tooltip saying why: binding
+  uses the rest pose, which animating leaves alone. (They were first also
+  disabled while animating, which left Bind to Skeleton greyed out with no
+  explanation after testing a mesh in an animation.)
 - Tests: `tests/skin.rs` (9).
 
 **Step 4, Envelope tool and weight view (§4.1, §4.4)**, in `renderer.rs`

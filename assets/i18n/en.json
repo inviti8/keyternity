@@ -260,7 +260,8 @@
       "outside": "Outside every envelope: $count",
       "outside_desc": "These vertices sit outside every bone's envelope, so they follow their nearest bone fully. Widen an envelope, or weight them by hand.",
       "select": "Select",
-      "bind_failed": "Couldn't bind to the skeleton:\n\n$err",
+      "pose_mode": "Binding uses the rest pose: switch from Pose to the Armature or Animation tab.",
+    "bind_failed": "Couldn't bind to the skeleton:\n\n$err",
       "outside_report": "Bound to the skeleton. $err vertices sit outside every envelope and follow their nearest bone fully; the mesh panel can select them."
     },
     "envelope": {
@@ -291,6 +292,9 @@
       "remove": "Remove IK",
       "target": "Target:",
       "set_target": "Set Target",
+      "target_space": "Target Space ℹ:",
+      "target_space_desc": "What the target follows. World keeps it where it is when the body moves, which grounds feet. A bone, such as the chest for an arm, makes it move with that bone, so the hand follows the upper body.\n\nSwitching keeps the target where it is. Keyframes already on the target stay as they are, relative to its new parent.",
+      "world": "World",
       "remove_target": "Remove Target",
       "target_in_chain": "That bone can't be the target: it's in this IK chain, or under it, so moving the chain would move the target too.",
       "chain": "Chain ℹ:",

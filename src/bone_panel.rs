@@ -482,6 +482,33 @@ pub fn inverse_kinematics(
         });
     });
 
+    // what the target follows: the world (grounded, like feet) or a bone (like a chest,
+    // for hands that move with the upper body)
+    if let Some(target) = armature.bones.iter().find(|b| b.id == c.target_id) {
+        let name_of = |id: i32| armature.bones.iter().find(|b| b.id == id).map_or(String::new(), |b| b.name.clone());
+        let str_world = loc(shared_ui, "world");
+        ui.horizontal(|ui| {
+            ui.label(loc(shared_ui, "target_space")).on_hover_text(loc(shared_ui, "target_space_desc"));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let current = if target.parent_id == -1 { str_world.clone() } else { name_of(target.parent_id) };
+                egui::ComboBox::new("ik_target_space", "")
+                    .selected_text(utils::trunc_str(ui, &current, 110.))
+                    .width(110.)
+                    .height(400.)
+                    .show_ui(ui, |ui| {
+                        let mut parent = target.parent_id;
+                        ui.selectable_value(&mut parent, -1, &str_world);
+                        for id in editor::ik_target_spaces(armature, bone.id) {
+                            ui.selectable_value(&mut parent, id, name_of(id));
+                        }
+                        if parent != target.parent_id {
+                            events.set_ik_target_space(parent);
+                        }
+                    });
+            });
+        });
+    }
+
     let depth = ik::depth(&armature.bones, bone.id);
     ui.horizontal(|ui| {
         ui.label(loc(shared_ui, "chain")).on_hover_text(loc(shared_ui, "chain_desc"));
@@ -825,14 +852,17 @@ pub fn mesh_deformation(
                 }
             });
         })
-    });
+    })
+    .response
+    .on_disabled_hover_text(shared_ui.loc("bone_panel.skin.pose_mode"));
 
     ui.separator();
 
-    // envelope skinning (docs/ENVELOPES.md §3.4, §4.3): captured at rest
+    // envelope skinning (docs/ENVELOPES.md §3.4, §4.3): captured at rest, so not in Pose
+    // Mode (animating is fine: it leaves the setup pose alone)
     let skin = |shared_ui: &crate::Ui, key: &str| shared_ui.loc(&format!("bone_panel.skin.{key}")).clone();
-    let at_rest = !edit_mode.pose_mode && !shared_ui.is_animating(&edit_mode, &selections);
-    ui.add_enabled_ui(at_rest, |ui| {
+    let str_pose_mode = skin(shared_ui, "pose_mode");
+    ui.add_enabled_ui(!edit_mode.pose_mode, |ui| {
         ui.horizontal(|ui| {
             ui.label(skin(shared_ui, "label")).on_hover_text(skin(shared_ui, "desc"));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -918,7 +948,9 @@ pub fn mesh_deformation(
                 });
             });
         }
-    });
+    })
+    .response
+    .on_disabled_hover_text(str_pose_mode);
 
     ui.separator();
 

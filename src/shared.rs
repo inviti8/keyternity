@@ -1707,21 +1707,26 @@ impl Armature {
         parents
     }
 
-    pub fn offset_pos_by_parent(&mut self, old_parents: Vec<Bone>, bone_id: i32) {
-        for parent in old_parents {
-            let parent_pos = parent.pos;
-            self.find_bone_mut(bone_id).unwrap().pos += parent_pos;
-        }
+    /// Every bone's world transform in the setup pose, without IK.
+    pub fn fk_world(&self) -> Vec<Bone> {
+        let mut world = self.bones.clone();
+        renderer::inheritance(&mut world, std::collections::HashMap::new(), &vec![]);
+        world
+    }
 
-        if self.find_bone_mut(bone_id).unwrap().parent_id == -1 {
-            return;
-        }
-
-        let new_parents = self.get_all_parents(false, bone_id);
-        for parent in new_parents {
-            let parent_pos = parent.pos;
-            self.find_bone_mut(bone_id).unwrap().pos -= parent_pos;
-        }
+    /// After `bone_id` is reparented, set its local position, rotation and scale so it
+    /// keeps `world`, its world transform from before. Parent rotation, scale and flips
+    /// are all accounted for, so neither the bone nor its children move.
+    pub fn keep_world(&mut self, bone_id: i32, world: &Bone) {
+        let fk = self.fk_world();
+        let Some(parent_id) = self.bones.iter().find(|b| b.id == bone_id).map(|b| b.parent_id) else { return };
+        let (pos, rot, scale) = match fk.iter().find(|b| b.id == parent_id) {
+            Some(p) if p.scale.x != 0. && p.scale.y != 0. => bind_pose::local_at(p, world),
+            Some(_) => return,
+            None => (world.pos, world.rot, world.scale),
+        };
+        let bone = self.find_bone_mut(bone_id).unwrap();
+        (bone.pos, bone.rot, bone.scale) = (pos, rot, scale);
     }
 
     pub fn new_animation(&mut self) {
@@ -2467,6 +2472,9 @@ pub struct Renderer {
     /// Envelope tool: the radius handle under the cursor / being dragged
     pub envelope_hovered: Option<EnvelopeField>,
     pub envelope_drag: Option<EnvelopeField>,
+    /// IK target gizmos (circle and cross) / dotted links to their parents
+    pub ik_gizmo_buffer: RenderBuffer,
+    pub ik_link_buffer: RenderBuffer,
     /// Envelope tool: the selected mesh's binds, labelled on their bones' envelopes
     pub envelope_labels: Vec<EnvelopeLabel>,
     pub bone_buffer: RenderBuffer,
@@ -2567,6 +2575,7 @@ pub enum Events {
     EditEnvelope,
     ToggleEnvelopeOpen,
     ToggleShowAllEnvelopes,
+    SetIkTargetSpace,
     AddIk,
     RemoveIk,
     SetIkChain,
@@ -2781,6 +2790,7 @@ impl EventState {
     #[rustfmt::skip]    event_with_value!(toggle_edit_alt, Events::ToggleEditAlt, toggle, i32);
     generic_event!(add_ik, Events::AddIk);
     generic_event!(toggle_show_all_envelopes, Events::ToggleShowAllEnvelopes);
+    event_with_value!(set_ik_target_space, Events::SetIkTargetSpace, parent_id, i32);
     generic_event!(bind_to_skeleton, Events::BindToSkeleton);
     generic_event!(add_bones_in_reach, Events::AddBonesInReach);
     generic_event!(unlock_selected_verts, Events::UnlockSelectedVerts);

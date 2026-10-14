@@ -33,6 +33,13 @@ IK, and SkelForm runtimes can't play rigs with IK.
 - **Straight two-bone chains** with bend *As drawn* bend the way FABRIK settles
   from the current pose (§3.3), as the old solver did.
 - Tests: `tests/ik.rs` (16), and the PSD import IK test was rewritten.
+- **Target Space** (§4.1): `editor::ik_target_spaces` and `set_ik_target_space`.
+  It builds on a fix to reparenting: dragging a bone onto another in the hierarchy
+  kept only its position, by adding and subtracting parent positions, so under a
+  rotated or scaled parent it jumped (and PSD import aims group bones, so most
+  parents are rotated). `Armature::keep_world` now keeps the world position,
+  rotation and scale, as the inverse of `renderer::inheritance`. Tests:
+  `tests/ik_space.rs` (4).
 
 
 ## 1. What was wrong
@@ -143,8 +150,15 @@ The IK section on any bone with a parent:
   new target bone at the bone's current world position, parented to the root
   and named "<bone> Target". The art doesn't move, because the target is where
   the tip already is.
-- **With a constraint:** Enabled, Target (pick, select, clear), Chain length,
-  Bend, Weight and Copy target rotation, plus *Remove IK*.
+- **With a constraint:** Enabled, Target (pick, select, clear), **Target Space**,
+  Chain length, Bend, Weight and Copy target rotation, plus *Remove IK*.
+- **Target Space** (added after review): what the target follows. *World* (the
+  default) keeps it in place when the body moves, which grounds feet; a bone such
+  as the chest makes it move with that bone, so a hand follows the upper body.
+  Switching reparents the target bone and keeps it where it is. The list offers the
+  chain's ancestors first (nearest first), then every other bone outside the chain;
+  bones in or under the chain, or under the target, would feed back and aren't
+  offered. Keyframes already on the target are kept as local values.
 - **Bones in someone else's chain:** "Turned by IK on <tip>", which selects the
   tip when clicked.
 
@@ -170,6 +184,10 @@ FK pose that weight < 1 blends from.
 - **Paste:** the constraint is copied with the bone. If its target is pasted
   too, it points to the copy.
 - **Delete:** deleting a target clears `target_id` on constraints that use it.
+- **Canvas** (added after review): an IK target draws as a control, not a bone: a
+  circle with a cross in the IK target color (brighter when selected), and a
+  dotted line to the bone it follows, instead of the bone kite from its parent.
+  Its point is invisible but still selects it.
 - **Armature panel:** IK icon on tips (tooltip shows the chain length) and the
   target icon on targets.
 - **Warnings:** *NoIkTarget* (constraint without a target) and *IkTargetInChain*
