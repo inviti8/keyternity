@@ -110,7 +110,7 @@ pub fn skeleton(world: &[Bone], mesh_id: i32) -> Vec<i32> {
 }
 
 /// The bone a bind of `mesh` skins with: a Bind Pose helper stands in for its parent.
-fn bind_bone(bones: &[Bone], mesh_id: i32, bind: &BoneBind) -> i32 {
+pub fn bind_bone(bones: &[Bone], mesh_id: i32, bind: &BoneBind) -> i32 {
     match find(bones, bind.bone_id) {
         Some(h) if h.bind_owner == Some(mesh_id) => h.parent_id,
         _ => bind.bone_id,
@@ -205,14 +205,26 @@ fn apply(armature: &mut Armature, world: &[Bone], mesh_id: i32, bone_ids: &[i32]
         }
     }
 
+    // locked vertices set to 0 by hand stay listed in their binds (`edit_shares`)
+    let listed: Vec<(i32, i32)> = mesh
+        .binds
+        .iter()
+        .filter(|b| !b.is_path && b.bone_id != -1)
+        .flat_map(|b| {
+            let bone = bind_bone(&armature.bones, mesh_id, b);
+            b.verts.iter().map(move |bv| (bone, bv.id))
+        })
+        .collect();
+
     let targets: Vec<i32> = used.iter().map(|id| bind_pose::bind_target(armature, *id, mesh_id)).collect();
     let mut binds: Vec<BoneBind> =
         targets.iter().map(|t| BoneBind { bone_id: *t, is_path: false, verts: vec![] }).collect();
     for (vid, shares) in &per_vert {
         let share = |id: i32| shares.iter().find(|s| s.0 == id).map_or(0., |s| s.1);
         let seq: Vec<f32> = used.iter().map(|id| share(*id)).collect();
+        let locked = mesh.locked_verts.contains(vid);
         for (k, w) in envelope::bind_weights(share(mesh_id), &seq).into_iter().enumerate() {
-            if w > 1e-6 {
+            if w > 1e-6 || locked && listed.contains(&(used[k], *vid as i32)) {
                 binds[k].verts.push(BoneBindVert { id: *vid as i32, weight: w });
             }
         }
@@ -336,6 +348,167 @@ pub fn maintain(armature: &mut Armature, pose_mode: bool) {
             armature.find_bone_mut(id).unwrap().skin_sig = sig;
         }
     }
+}
+
+/// The bone nearest the rest position `p` among `bone_ids` other than `exclude`, by
+/// distance to its outer envelope, for shares that have nowhere else to go.
+fn nearest_bone(world: &[Bone], bone_ids: &[i32], exclude: i32, p: Vec2) -> Option<i32> {
+    bone_ids
+        .iter()
+        .filter(|id| **id != exclude)
+        .map(|id| (*id, skinner(world, *id)))
+        .min_by(|a, b| {
+            let ga = a.1.envelope.gap(a.1.head, a.1.tail, p);
+            let gb = b.1.envelope.gap(b.1.head, b.1.tail, p);
+            ga.partial_cmp(&gb).unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(|(id, _)| id)
+}
+
+/// Set `bone_id`'s share of each vertex in `edits` (vertex id, share), keeping every
+/// vertex's shares summing to 1 (docs/ENVELOPES.md §4.5): the other bones scale to
+/// make up the rest, and a vertex with no other bone gives the rest to the nearest
+/// other skin bone (or the owner). Edited vertices are locked. With `keep_listed`, a
+/// vertex set to 0 stays listed in the bind (at 0), so a slider can be dragged
+/// through 0 without its row vanishing. Painting a bone the mesh has no bind for adds
+/// one.
+pub fn edit_shares(armature: &mut Armature, mesh_id: i32, bone_id: i32, edits: &[(u32, f32)], keep_listed: bool) {
+    let Some(mesh) = find(&armature.bones, mesh_id).cloned() else { return };
+    let world = setup_world(armature);
+    let rest = bind_pose::drawn_vertices(armature, &world, mesh_id);
+    let skin = skin_bones(&armature.bones, &mesh);
+    let max = if mesh.max_influences == 0 { DEFAULT_MAX_INFLUENCES } else { mesh.max_influences } as usize;
+
+    let mut all = current_shares(&armature.bones, &mesh);
+    let mut edited = vec![];
+    for (vid, value) in edits {
+        let Some(i) = mesh.vertices.iter().position(|v| v.id == *vid) else { continue };
+        let fallback = nearest_bone(&world, &skin, bone_id, rest[i]).unwrap_or(mesh_id);
+        let shares = all.entry(*vid).or_insert_with(|| vec![(mesh_id, 1.)]);
+        weights::set_share(shares, bone_id, *value, fallback);
+        if mesh.envelope_weights {
+            weights::limit(shares, max, bone_id, mesh_id);
+        }
+        edited.push(*vid);
+    }
+    let keep = if keep_listed { edited.clone() } else { vec![] };
+    write_shares(armature, mesh_id, &all, &keep);
+
+    let mesh = armature.find_bone_mut(mesh_id).unwrap();
+    for vid in edited {
+        lock_vertex(mesh, vid);
+    }
+}
+
+/// One dab of weight painting on `mesh_id`'s vertices `dab` (vertex id, brush
+/// falloff there), painting `bone_id` in `mode` at `strength` (§4.5).
+pub fn paint(armature: &mut Armature, mesh_id: i32, bone_id: i32, dab: &[(u32, f32)], mode: weights::PaintMode, strength: f32) {
+    let Some(mesh) = find(&armature.bones, mesh_id).cloned() else { return };
+    let all = current_shares(&armature.bones, &mesh);
+    let share = |vid: u32| all.get(&vid).map_or(0., |s| weights::share_of(s, bone_id));
+
+    let mut neighbours: HashMap<u32, Vec<u32>> = HashMap::new();
+    if mode == weights::PaintMode::Smooth {
+        for (a, b) in topology::edges(&mesh.indices) {
+            let (Some(va), Some(vb)) = (mesh.vertices.get(a as usize), mesh.vertices.get(b as usize)) else { continue };
+            neighbours.entry(va.id).or_default().push(vb.id);
+            neighbours.entry(vb.id).or_default().push(va.id);
+        }
+    }
+
+    let edits: Vec<(u32, f32)> = dab
+        .iter()
+        .map(|(vid, f)| {
+            let around = neighbours.get(vid).filter(|n| !n.is_empty());
+            let avg = around.map_or(share(*vid), |n| n.iter().map(|v| share(*v)).sum::<f32>() / n.len() as f32);
+            (*vid, weights::painted(mode, share(*vid), strength * f, avg))
+        })
+        .filter(|(vid, value)| (value - share(*vid)).abs() > 1e-5)
+        .collect();
+    if !edits.is_empty() {
+        edit_shares(armature, mesh_id, bone_id, &edits, false);
+    }
+}
+
+/// Write every vertex's shares (`all`; vertices missing from it are left unbound) back
+/// as bind weights. Weight binds keep their order and their vertices' order, so the
+/// bind panel's rows stay put; a bone with no bind yet gets one at the end. Vertices in
+/// `keep_zero` stay listed in binds they were in, at weight 0.
+fn write_shares(armature: &mut Armature, mesh_id: i32, all: &HashMap<u32, weights::Shares>, keep_zero: &[u32]) {
+    let mesh = find(&armature.bones, mesh_id).unwrap().clone();
+    let mut binds = mesh.binds.clone();
+    let mut slots: Vec<usize> = (0..binds.len()).filter(|k| !binds[*k].is_path && binds[*k].bone_id != -1).collect();
+    let mut bones: Vec<i32> = slots.iter().map(|k| bind_bone(&armature.bones, mesh_id, &binds[*k])).collect();
+
+    // bones without a bind, in armature order
+    let mut new_bones: Vec<i32> = vec![];
+    for shares in all.values() {
+        for (id, _) in shares {
+            if *id != mesh_id && !bones.contains(id) && !new_bones.contains(id) {
+                new_bones.push(*id);
+            }
+        }
+    }
+    let order = |id: &i32| armature.bones.iter().position(|b| b.id == *id).unwrap_or(usize::MAX);
+    new_bones.sort_by_key(order);
+    for id in new_bones {
+        let target = bind_pose::bind_target(armature, id, mesh_id);
+        binds.push(BoneBind { bone_id: target, is_path: false, verts: vec![] });
+        slots.push(binds.len() - 1);
+        bones.push(id);
+    }
+
+    let mut weights_of: Vec<HashMap<i32, f32>> = vec![HashMap::new(); slots.len()];
+    for v in &mesh.vertices {
+        let Some(shares) = all.get(&v.id) else { continue };
+        // a bone with several binds keeps its share on the first
+        let seq: Vec<f32> = (0..slots.len())
+            .map(|p| if bones.iter().position(|b| *b == bones[p]) == Some(p) { weights::share_of(shares, bones[p]) } else { 0. })
+            .collect();
+        let owner = weights::share_of(shares, mesh_id);
+        for (p, w) in envelope::bind_weights(owner, &seq).into_iter().enumerate() {
+            weights_of[p].insert(v.id as i32, w);
+        }
+    }
+
+    for (p, k) in slots.iter().enumerate() {
+        let listed: Vec<i32> = binds[*k].verts.iter().map(|bv| bv.id).collect();
+        let keep = |id: i32, w: f32| w > 1e-6 || (listed.contains(&id) && keep_zero.contains(&(id as u32)));
+        let mut verts: Vec<BoneBindVert> = vec![];
+        // existing rows first, in their order, then new ones in vertex order
+        for id in &listed {
+            let w = weights_of[p].get(id).copied().unwrap_or(0.);
+            if keep(*id, w) && !verts.iter().any(|bv| bv.id == *id) {
+                verts.push(BoneBindVert { id: *id, weight: w });
+            }
+        }
+        for v in &mesh.vertices {
+            let id = v.id as i32;
+            let w = weights_of[p].get(&id).copied().unwrap_or(0.);
+            if w > 1e-6 && !listed.contains(&id) {
+                verts.push(BoneBindVert { id, weight: w });
+            }
+        }
+        binds[*k].verts = verts;
+    }
+
+    armature.find_bone_mut(mesh_id).unwrap().binds = binds;
+}
+
+/// For a weight bind of a bind-posed mesh: its bone, and each vertex's share of that
+/// bone, which hand weighting shows and edits instead of the raw blend weights.
+/// `None` for path binds, unassigned binds and classic (not bind-posed) meshes.
+pub fn bind_shares(bones: &[Bone], mesh: &Bone, bind_idx: usize) -> Option<(i32, HashMap<i32, f32>)> {
+    let bind = mesh.binds.get(bind_idx)?;
+    if !mesh.bind_pose || bind.is_path || bind.bone_id == -1 {
+        return None;
+    }
+    let bone = bind_bone(bones, mesh.id, bind);
+    let shares = current_shares(bones, mesh)
+        .into_iter()
+        .map(|(vid, s)| (vid as i32, weights::share_of(&s, bone)))
+        .collect();
+    Some((bone, shares))
 }
 
 /// Lock a vertex of an envelope-weighted mesh after a hand edit, so recomputing keeps it.

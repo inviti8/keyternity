@@ -819,6 +819,19 @@ pub fn kb_inputs(
     if input.consume_shortcut(&config.keys.tool_envelope) {
         events.set_tool(Tool::Envelope as usize);
     }
+    // Shift+W, likewise before Rotate's W
+    if input.consume_shortcut(&config.keys.tool_paint_weights) {
+        events.set_tool(Tool::PaintWeights as usize);
+    }
+    // brush size while painting weights
+    if edit_mode.tool == Tool::PaintWeights {
+        if input.key_pressed(egui::Key::OpenBracket) {
+            events.set_paint_radius(edit_mode.paint_radius / 1.2);
+        }
+        if input.key_pressed(egui::Key::CloseBracket) {
+            events.set_paint_radius(edit_mode.paint_radius * 1.2);
+        }
+    }
     if input.consume_shortcut(&config.keys.transform_move) {
         events.edit_mode_move();
     }
@@ -1791,6 +1804,7 @@ enum ToolIcon {
     #[allow(dead_code)]
     Snap,
     Envelope,
+    PaintWeights,
 }
 
 /// The canvas toolbar (docs/TOPOLOGY_TOOLS.md §2): tools on the left, the active
@@ -1921,6 +1935,16 @@ fn toolbar(
             if tool_button(ui, shared_ui, config, ToolIcon::Envelope, selected, true, hover).clicked() {
                 events.set_tool(Tool::Envelope as usize);
             }
+            let hover = format!(
+                "{} ({})\n\n{}",
+                shared_ui.loc("toolbar.paint_weights"),
+                keys.tool_paint_weights.display(),
+                shared_ui.loc("toolbar.paint_weights_desc")
+            );
+            let selected = edit_mode.tool == Tool::PaintWeights;
+            if tool_button(ui, shared_ui, config, ToolIcon::PaintWeights, selected, true, hover).clicked() {
+                events.set_tool(Tool::PaintWeights as usize);
+            }
 
             // mesh actions, while editing the selected bone's mesh
             if editing_mesh {
@@ -1983,8 +2007,86 @@ fn toolbar(
                 tool_options(ui, edit_mode, has_ik, editing_mesh, events, camera, shared_ui, config);
             });
         });
+
+        // weight painting's options don't fit beside the tools: a second row
+        if edit_mode.tool == Tool::PaintWeights {
+            ui.separator();
+            ui.horizontal_wrapped(|ui| {
+                paint_options(ui, edit_mode, events, shared_ui, config, armature, selections);
+            });
+        }
     });
     shared_ui.toolbar_rect = Some(panel.response.rect);
+}
+
+/// Paint Weights options (docs/ENVELOPES.md §4.5), on their own toolbar row, left to
+/// right: the bone being painted (one of the mesh's weight binds), the mode, radius,
+/// strength and a hint. Too many to fit beside the tools.
+fn paint_options(
+    ui: &mut egui::Ui,
+    edit_mode: &EditMode,
+    events: &mut EventState,
+    shared_ui: &mut crate::Ui,
+    config: &Config,
+    armature: &Armature,
+    selections: &SelectionState,
+) {
+    let loc = |shared_ui: &crate::Ui, key: &str| shared_ui.loc(&format!("toolbar.paint.{key}"));
+    let mut dim = config.colors.text;
+    dim -= Color::new(50, 50, 50, 0);
+
+    // the bones this mesh can be painted with: its weight binds
+    let mesh = armature.sel_bone(selections).filter(|_| selections.bone_ids.len() == 1);
+    let binds: Vec<(usize, String)> = mesh.map_or(vec![], |m| {
+        (0..m.binds.len())
+            .filter_map(|k| {
+                let (bone, _) = skin::bind_shares(&armature.bones, m, k)?;
+                let name = armature.bones.iter().find(|b| b.id == bone).map_or(String::new(), |b| b.name.clone());
+                Some((k, format!("{k}  {name}")))
+            })
+            .collect()
+    });
+    if binds.is_empty() {
+        ui.label(egui::RichText::new(loc(shared_ui, "needs_skin")).color(dim));
+        return;
+    }
+
+    ui.label(loc(shared_ui, "bone")).on_hover_text(loc(shared_ui, "bone_desc"));
+    let current = binds.iter().find(|(k, _)| *k as i32 == selections.bind).map_or(String::new(), |b| b.1.clone());
+    egui::ComboBox::new("paint_bone", "").selected_text(current).show_ui(ui, |ui| {
+        for (k, name) in &binds {
+            if ui.selectable_label(*k as i32 == selections.bind, name).clicked() {
+                events.select_bind(*k as i32);
+            }
+        }
+    });
+    ui.add_space(10.);
+
+    use crate::weights::PaintMode;
+    for (mode, key) in [(PaintMode::Add, "add"), (PaintMode::Subtract, "subtract"), (PaintMode::Smooth, "smooth")] {
+        let desc = loc(shared_ui, &format!("{key}_desc"));
+        if selection_button(loc(shared_ui, key), edit_mode.paint_mode == mode, ui).on_hover_text(desc).clicked() {
+            events.set_paint_mode(mode as usize);
+        }
+    }
+    ui.add_space(10.);
+
+    ui.label(loc(shared_ui, "radius")).on_hover_text(loc(shared_ui, "radius_desc"));
+    let (edited, value, _) = ui.float_input("paint_radius".to_string(), shared_ui, edit_mode.paint_radius.round(), 1., None);
+    if edited && value > 0. {
+        events.set_paint_radius(value);
+    }
+    ui.add_space(10.);
+
+    ui.label(loc(shared_ui, "strength")).on_hover_text(loc(shared_ui, "strength_desc"));
+    let mut strength = edit_mode.paint_strength;
+    let slider = egui::Slider::new(&mut strength, 0.0..=1.0).max_decimals(2);
+    if ui.add_sized([140., 18.], slider).changed() {
+        events.set_paint_strength(strength);
+    }
+    ui.add_space(10.);
+
+    ui.label(egui::RichText::new(loc(shared_ui, "hint")).color(dim));
 }
 
 /// Laid out right to left, so items are added in reverse.
@@ -1998,6 +2100,11 @@ fn tool_options(
     shared_ui: &mut crate::Ui,
     config: &Config,
 ) {
+    // weight painting has its own row (`toolbar`)
+    if edit_mode.tool == Tool::PaintWeights {
+        return;
+    }
+
     // pen: snapping and angle lock, and how to finish
     if edit_mode.tool == Tool::Pen {
         let mut col = config.colors.text;

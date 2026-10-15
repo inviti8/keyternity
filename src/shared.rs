@@ -1026,6 +1026,7 @@ pub struct KeyboardConfig {
     pub tool_pan: egui::KeyboardShortcut,
     pub tool_eraser: egui::KeyboardShortcut,
     pub tool_envelope: egui::KeyboardShortcut,
+    pub tool_paint_weights: egui::KeyboardShortcut,
     pub insert_keyframe: egui::KeyboardShortcut,
     pub insert_keyframe_all: egui::KeyboardShortcut,
     pub delete_keyframe: egui::KeyboardShortcut,
@@ -1126,6 +1127,7 @@ impl Default for KeyboardConfig {
             tool_pan:             regular_key!(egui::Key::H),
             tool_eraser:          shortcut_key!(egui::Modifiers::SHIFT, egui::Key::K),
             tool_envelope:        shortcut_key!(egui::Modifiers::SHIFT, egui::Key::E),
+            tool_paint_weights:   shortcut_key!(egui::Modifiers::SHIFT, egui::Key::W),
             insert_keyframe:      regular_key!(egui::Key::I),
             insert_keyframe_all:  shortcut_key!(egui::Modifiers::SHIFT, egui::Key::I),
             delete_keyframe:      shortcut_key!(egui::Modifiers::ALT, egui::Key::I),
@@ -2262,6 +2264,8 @@ pub enum Tool {
     Eraser,
     /// Envelope radii and the weight view (docs/ENVELOPES.md §4.1, §4.4)
     Envelope,
+    /// Weight painting on the selected mesh (docs/ENVELOPES.md §4.5)
+    PaintWeights,
 }
 
 impl Tool {
@@ -2294,6 +2298,10 @@ pub struct EditMode {
     pub eraser_delete: bool,
     /// Envelope tool: show every deforming bone's envelope, not just the selected ones
     pub show_all_envelopes: bool,
+    /// Paint Weights: brush mode, radius (screen px) and strength (0..1)
+    pub paint_mode: crate::weights::PaintMode,
+    pub paint_radius: f32,
+    pub paint_strength: f32,
     /// Pen: don't snap to vertices and edges (Shift held does the same).
     pub pen_no_snap: bool,
     /// Pen: keep segments at multiples of 45°.
@@ -2482,6 +2490,12 @@ pub struct Renderer {
     /// Zoom tool press: (anchor in screen px, zoom at press).
     pub zoom_drag: Option<(Vec2, f32)>,
     pub zoom_dragged: bool,
+    /// Paint Weights: a stroke is in progress; where and when (egui time) its last dab
+    /// was; the dab for the pending PaintWeights event (vertex id, falloff) and its mode.
+    pub painting: bool,
+    pub paint_last: Option<(Vec2, f32)>,
+    pub paint_dab: Option<(Vec<(u32, f32)>, crate::weights::PaintMode)>,
+    pub paint_buffer: RenderBuffer,
     /// Eraser: a stroke is in progress (left button held since a press on the canvas).
     pub erasing: bool,
     /// Eraser: cursor position (screen px) of the stroke's last erase.
@@ -2629,6 +2643,10 @@ pub enum Events {
     TogglePhysFolded,
     ToggleIkEnabled,
     BindToSkeleton,
+    PaintWeights,
+    SetPaintMode,
+    SetPaintRadius,
+    SetPaintStrength,
     ClearAllBinds,
     ToggleEnvelopeWeights,
     SetMaxInfluences,
@@ -2678,6 +2696,7 @@ pub enum Events {
     CenterBoneVerts,
     TraceBoneVerts,
     SetBindWeight,
+    SetVertShare,
     SetBindPose,
     SetBindPoseAll,
     TogglePoseMode,
@@ -2864,6 +2883,10 @@ impl EventState {
     generic_event!(delete_bone_keyframes, Events::DeleteBoneKeyframes);
     event_with_value!(set_ik_target_space, Events::SetIkTargetSpace, parent_id, i32);
     generic_event!(bind_to_skeleton, Events::BindToSkeleton);
+    generic_event!(paint_weights, Events::PaintWeights);
+    event_with_value!(set_paint_mode, Events::SetPaintMode, mode, usize);
+    event_with_value!(set_paint_radius, Events::SetPaintRadius, radius, f32);
+    event_with_value!(set_paint_strength, Events::SetPaintStrength, strength, f32);
     generic_event!(clear_all_binds, Events::ClearAllBinds);
     generic_event!(add_bones_in_reach, Events::AddBonesInReach);
     generic_event!(unlock_selected_verts, Events::UnlockSelectedVerts);
@@ -3019,6 +3042,16 @@ impl EventState {
         self.events.push(Events::ToggleBindPathing);
         self.values.push(bind_idx as f32);
         self.values.push(if toggle { 1. } else { 0. });
+    }
+
+    /// Set a vertex's normalized share of `bone_id` on the selected mesh
+    /// (`skin::edit_shares`); with `keep_listed` it stays in the bind at 0.
+    pub fn set_vert_share(&mut self, vert_id: i32, bone_id: i32, share: f32, keep_listed: bool) {
+        self.events.push(Events::SetVertShare);
+        self.values.push(vert_id as f32);
+        self.values.push(bone_id as f32);
+        self.values.push(share);
+        self.values.push(if keep_listed { 1. } else { 0. });
     }
 
     pub fn set_bind_weight(&mut self, bind_idx: u32, vert_idx: usize, weight: f32) {

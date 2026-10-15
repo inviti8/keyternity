@@ -4,6 +4,11 @@ use crate::*;
 use image::GenericImageView;
 use topology::VertSite;
 use utils::shortest_angle_delta;
+
+/// Weight painting dabs at least this far apart (screen px), or this often (s) while
+/// the brush is held still.
+const PAINT_SPACING_PX: f32 = 4.;
+const PAINT_INTERVAL: f32 = 0.05;
 use wgpu::{BindGroup, BindGroupLayout, Device, Queue, RenderPass};
 
 /// The `main` of this module.
@@ -273,8 +278,9 @@ pub fn render(
                     Color::new(min + fade as u8, min + fade as u8, min + fade as u8, 0);
             }
 
-            // select bone if clicked
-            if !camera.on_ui && input.left_pressed && !renderer.on_point {
+            // select bone if clicked (not while painting weights)
+            let painting = edit_mode.tool == Tool::PaintWeights;
+            if !camera.on_ui && input.left_pressed && !renderer.on_point && !painting {
                 let bones = &armature.bones;
                 let idx = bones.iter().position(|bone| bone.id == on_click_id);
                 if idx != None {
@@ -542,6 +548,10 @@ pub fn render(
     #[rustfmt::skip]
     envelope_tool(config, camera, input, edit_mode, armature, &temp_arm, selections, renderer, queue, render_pass, events);
 
+    // weight painting brush and the painted bone's shares
+    #[rustfmt::skip]
+    paint_tool(config, camera, input, edit_mode, armature, &temp_arm, selections, renderer, queue, render_pass, events);
+
     // draw bone center points, and kites representing hierarchy
     #[rustfmt::skip]
     draw_points(config, camera, input, edit_mode, &mut temp_arm, selected_bone_ids.clone(), selections, renderer, queue, render_pass, events, armature);
@@ -560,7 +570,7 @@ pub fn render(
     let ring_enabled = config.transform_rot_radius > 0. && config.transform_scale_radius > 0.;
     let idle_mouse = !input.left_down && !input.left_clicked || camera.on_ui;
     let selected = armature.sel_bone(&sel) != None && selections.bone_ids.len() == 1;
-    let ring_tool = edit_mode.tool != Tool::Envelope;
+    let ring_tool = !matches!(edit_mode.tool, Tool::Envelope | Tool::PaintWeights);
     if !edit_mode.editing_mesh && !has_ik && idle_mouse && selected && ring_enabled && ring_tool {
         #[rustfmt::skip]
         transform_ring(config, camera, armature, &mut temp_arm, render_pass, renderer, events, edit_mode, &sel, queue, &mouse_pos);
@@ -579,6 +589,7 @@ pub fn render(
         && !renderer.dragging_tail
         && renderer.envelope_hovered.is_none()
         && renderer.envelope_drag.is_none()
+        && edit_mode.tool != Tool::PaintWeights
     {
         let mut unselect = true;
         for event in &events.events {
@@ -655,7 +666,7 @@ pub fn render(
         }
         return;
     }
-    if edit_mode.tool == Tool::Envelope {
+    if matches!(edit_mode.tool, Tool::Envelope | Tool::PaintWeights) {
         return;
     }
 
@@ -1429,9 +1440,14 @@ pub fn bone_vertices(
     let mut bind_rows: std::collections::HashMap<i32, (usize, f32)> = Default::default();
     let bind_idx = selections.bind as usize;
     if selections.bind != -1 {
-        if let Some(bind) = armature.sel_bone(&sel).and_then(|bone| bone.binds.get(bind_idx)) {
-            for (row, v) in bind.verts.iter().enumerate() {
-                bind_rows.insert(v.id, (row, v.weight));
+        if let Some(mesh) = armature.sel_bone(&sel) {
+            if let Some(bind) = mesh.binds.get(bind_idx) {
+                // bind-posed: each vertex's share of the bind's bone (docs/ENVELOPES.md §4.5)
+                let shares = skin::bind_shares(&armature.bones, mesh, bind_idx).map(|s| s.1);
+                for (row, v) in bind.verts.iter().enumerate() {
+                    let w = shares.as_ref().map_or(v.weight, |s| s.get(&v.id).copied().unwrap_or(0.));
+                    bind_rows.insert(v.id, (row, w));
+                }
             }
         }
     }
@@ -2389,7 +2405,8 @@ pub fn draw_points(
         // bones can be selected by clicking on their point, except ones IK drives
         // (they're picked in the hierarchy, or here once their IK is off)
         let ik_driven = ik::role(&armature.bones, bone.id) != ik::Role::None;
-        let mouse_on_it = !ik_driven && utils::in_bounding_box(&input.mouse, &this_verts, &camera.window).1;
+        let painting = edit_mode.tool == Tool::PaintWeights;
+        let mouse_on_it = !ik_driven && !painting && utils::in_bounding_box(&input.mouse, &this_verts, &camera.window).1;
         if mouse_on_it && !camera.on_ui {
             color = bone.group_color.into();
             if bone.group_color.a == 0 {
@@ -2709,6 +2726,122 @@ fn envelope_tool(
         render_pass.set_bind_group(0, &renderer.generic_bindgroup, &[]);
         setup_render_buffer(&renderer.envelope_buffer, &fill.0, &fill.1, queue);
         draw(&renderer.envelope_buffer, render_pass, 0, fill.1.len());
+    }
+}
+
+/// Weight painting (docs/ENVELOPES.md §4.5): a brush on the selected bind-posed mesh
+/// that paints the selected bind's bone, over that bone's shares (blue 0 → red 1,
+/// white rings on hand-weighted vertices). Vertices are hit where they're drawn.
+fn paint_tool(
+    config: &Config,
+    camera: &Camera,
+    input: &InputStates,
+    edit_mode: &EditMode,
+    armature: &Armature,
+    temp_arm: &Armature,
+    selections: &SelectionState,
+    renderer: &mut Renderer,
+    queue: &wgpu::Queue,
+    render_pass: &mut RenderPass,
+    events: &mut EventState,
+) {
+    if !input.left_down {
+        renderer.painting = false;
+    }
+    if edit_mode.tool != Tool::PaintWeights || selections.bone_ids.len() != 1 || selections.bind < 0 {
+        renderer.painting = false;
+        return;
+    }
+    let Some(mesh) = armature.sel_bone(selections) else { return };
+    let Some((_, shares)) = skin::bind_shares(&armature.bones, mesh, selections.bind as usize) else {
+        renderer.painting = false;
+        return;
+    };
+    let Some(drawn) = temp_arm.bones.iter().find(|b| b.id == mesh.id).filter(|b| !b.hidden) else { return };
+
+    let zero = Vec2::ZERO;
+    let mut fill: (Vec<Vertex>, Vec<u32>) = (vec![], vec![]);
+    let radius = config.center_point_radius * config.mesh_vert_size.clamp(0.1, 3.) * camera.zoom;
+    for wv in &drawn.world_verts {
+        let share = shares.get(&(wv.id as i32)).copied().unwrap_or(0.);
+        if mesh.locked_verts.contains(&wv.id) {
+            let white = Color::new(255, 255, 255, 255);
+            let (mut v, mut i) = draw_point(&wv.pos, camera, config, &zero, white, zero, 0., radius * 1.5);
+            add_offseted_indices(&mut i, &mut fill.1);
+            fill.0.append(&mut v);
+        }
+        let mut color = mesh_tools::hsv(240. * (1. - share.clamp(0., 1.)), 1., 1.);
+        color.a = if share > 0. { 255 } else { 140 };
+        let (mut v, mut i) = draw_point(&wv.pos, camera, config, &zero, color, zero, 0., radius);
+        add_offseted_indices(&mut i, &mut fill.1);
+        fill.0.append(&mut v);
+    }
+
+    // the brush: Shift smooths, Ctrl swaps Add and Subtract, for as long as they're held
+    let px = camera.px();
+    let brush = edit_mode.paint_radius.max(1.) * px;
+    let mode = if input.holding_shift {
+        weights::PaintMode::Smooth
+    } else if input.holding_mod {
+        match edit_mode.paint_mode {
+            weights::PaintMode::Add => weights::PaintMode::Subtract,
+            weights::PaintMode::Subtract => weights::PaintMode::Add,
+            m => m,
+        }
+    } else {
+        edit_mode.paint_mode
+    };
+    if !camera.on_ui {
+        let ring = match mode {
+            weights::PaintMode::Add => Color::new(255, 120, 90, 230),
+            weights::PaintMode::Subtract => Color::new(90, 160, 255, 230),
+            weights::PaintMode::Smooth => Color::new(235, 235, 235, 230),
+        };
+        let segments = 48;
+        let at = |k: usize| {
+            let a = k as f32 / segments as f32 * std::f32::consts::TAU;
+            mesh_tools::from_screen(input.mouse + Vec2::new(a.cos(), a.sin()) * brush, camera.window)
+        };
+        for k in 0..segments {
+            let quad = mesh_tools::edge_quad(at(k), at(k + 1), 1.5 * px, 1., ring, camera.window);
+            let base = fill.0.len() as u32;
+            fill.0.extend(quad);
+            fill.1.extend([0, 1, 2, 1, 2, 3].map(|i| i + base));
+        }
+    }
+
+    // a stroke: one undo step, a dab each time the brush moves on or a moment passes
+    if !camera.on_ui && input.left_pressed {
+        events.save_bone(selections.bone_idx);
+        renderer.painting = true;
+        renderer.paint_last = None;
+    }
+    if renderer.painting {
+        let due = renderer.paint_last.map_or(true, |(at, time)| {
+            (input.mouse - at).mag() >= PAINT_SPACING_PX * px || edit_mode.time - time >= PAINT_INTERVAL
+        });
+        if due {
+            let dab: Vec<(u32, f32)> = drawn
+                .world_verts
+                .iter()
+                .filter_map(|wv| {
+                    let d = (mesh_tools::to_screen(wv.pos, camera.window) - input.mouse).mag();
+                    let f = weights::falloff(d, brush);
+                    (f > 0.).then_some((wv.id, f))
+                })
+                .collect();
+            if !dab.is_empty() {
+                renderer.paint_dab = Some((dab, mode));
+                events.paint_weights();
+            }
+            renderer.paint_last = Some((input.mouse, edit_mode.time));
+        }
+    }
+
+    if !fill.1.is_empty() {
+        render_pass.set_bind_group(0, &renderer.generic_bindgroup, &[]);
+        setup_render_buffer(&renderer.paint_buffer, &fill.0, &fill.1, queue);
+        draw(&renderer.paint_buffer, render_pass, 0, fill.1.len());
     }
 }
 

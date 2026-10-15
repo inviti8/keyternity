@@ -83,6 +83,7 @@ pub mod topology;
 pub mod ui;
 pub mod utils;
 pub mod warnings;
+pub mod weights;
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
@@ -1101,6 +1102,7 @@ impl BackendRenderer {
             renderer.wireframe_edge_buffer.init(&self.gpu.device, mesh_max);
             renderer.envelope_buffer.init(&self.gpu.device, mesh_max);
             renderer.envelope_edge_buffer.init(&self.gpu.device, max);
+            renderer.paint_buffer.init(&self.gpu.device, mesh_max);
             renderer.ik_gizmo_buffer.init(&self.gpu.device, max);
             renderer.ik_link_buffer.init(&self.gpu.device, max);
             renderer.ring_buffer.init(&self.gpu.device, 100);

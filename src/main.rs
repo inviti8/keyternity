@@ -116,6 +116,8 @@ fn main() -> Result<(), winit::error::EventLoopError> {
 }
 
 fn init_shared(shared: &mut Shared) {
+    shared.edit_mode.paint_radius = 40.;
+    shared.edit_mode.paint_strength = 0.5;
     shared.selections.bone_idx = usize::MAX;
     shared.camera.zoom = 2000.;
     shared.selections.anim = usize::MAX;

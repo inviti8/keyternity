@@ -7,7 +7,8 @@ DragonBones can use too.
 
 **Status:** steps 1–4 implemented (§0): bone length, the envelope maths, Bind to
 Skeleton with live envelope weights, and the Envelope tool with the weight view.
-Weight painting and the weight table are design.
+Step 5 in part: normalized hand weights and weight painting (Add, Subtract,
+Smooth). Painting's Set and Blur modes and the weight table are still design.
 Decisions are in §9.
 
 
@@ -106,6 +107,45 @@ Decisions are in §9.
   panel, so a stray vertex outside every envelope can be added to the right bind.
   The renderer computes the positions; egui draws them behind the panels.
 - Tests: `tests/envelope_tool.rs` (5).
+
+**Step 5, normalized hand weights and weight painting (§4.5)**, in `src/weights.rs`
+(share maths) and `skin.rs` (`edit_shares`, `paint`, `bind_shares`):
+- **Hand weights are shares** on bind-posed meshes. Before, the bind panel's
+  sliders edited the raw blend weights, where a later bind overrides an earlier
+  one: a vertex at 1 in two binds moved only with the later bone, and the earlier
+  slider still read 1. The sliders (the bind's list and the selected vertex's
+  weights) now show each vertex's share of the bind's bone and edit it with the
+  other bones scaling to make up the rest. A vertex with no other bone gives the
+  rest to the nearest other skin bone (by envelope), else its owner. Shares are
+  converted back with §3.3's formula, so files and runtimes are unchanged. Classic
+  (not bind-posed) meshes keep raw weights, since their vertex positions depend on
+  the binds.
+- Double-clicking a vertex with a bind selected gives it fully to that bind's bone,
+  or, if it already has a share, removes it (the rest renormalizes). One undo step.
+- **Fixed:** vertices added to a bind one after another disappeared. Each add
+  locked the vertex, which re-ran the live recompute, which converts to shares; a
+  vertex added at weight 1 to an earlier bind had a 0 share there if a later bind
+  also held it, so it was dropped. Adds are now full shares, so they survive.
+- A slider dragged to 0 keeps its row (the vertex stays in the bind at weight 0,
+  through recomputes, while it's locked), so it can be dragged back up.
+- Bind rows keep their order when weights change.
+- **Paint Weights tool (Shift+W)**, toolbar button after Envelope. Paints the
+  selected mesh with the bone of the selected bind, picked in the tool options
+  (the mesh's weight binds; choosing the tool picks the first if none is). Modes
+  **Add**, **Subtract**, **Smooth** (toward the neighbours' average along mesh
+  edges); Shift smooths and Ctrl swaps Add and Subtract while held. Radius in
+  screen px (`[` and `]` scale it by 1.2), strength 0–1; falloff
+  `(1 − (d/r)²)²`. A dab every 4 px of movement or every 0.05 s held still, each
+  moving a share by up to 0.15 × strength (Smooth: half way to the average at full
+  strength). Vertices are hit where drawn, so it works in Pose Mode. Each stroke
+  is one undo step; painted vertices are locked; *Max influences* is kept by
+  dropping the weakest other bone; shares under 0.001 are pruned.
+- While painting, the mesh shows the painted bone's shares (blue to red, white
+  rings on hand-weighted vertices) and the brush ring is colored by mode. The tool
+  doesn't select or move bones.
+- Not done: Set and Blur modes, painting a bone that has no bind yet (add the bind
+  first), Alt-click to pick the bone on the canvas, the weight table (§4.6).
+- Tests: `tests/weights.rs` (8).
 
 
 ## 1. Today

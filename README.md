@@ -84,7 +84,10 @@ DragonBones for game engines. Older files lose their IK.
   envelope are flagged. **Clear All Binds** (after a confirmation) removes a mesh's
   binds and weights to start the skinning over, leaving the art as drawn. The **Envelope tool** (Shift+E) shows the capsules and has
   handles to resize them, and colors each mesh vertex by the selected bone's weight,
-  blue to red ([design](docs/ENVELOPES.md))
+  blue to red. **Paint Weights** (Shift+W) brushes a bone's weight onto a mesh
+  with Add, Subtract and Smooth, and hand weights are normalized: raising one
+  bone's share lowers the others, so a vertex's weights always total 100%
+  ([design](docs/ENVELOPES.md))
 - **Canvas toolbar** — a toolbar above the canvas with Move, Rotate and Scale,
   the navigation tools, the mesh tools, and the mesh actions (Trace, Center,
   Reset, Re-triangulate). The active tool's options sit on its right

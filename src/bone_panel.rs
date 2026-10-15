@@ -329,7 +329,7 @@ pub fn draw(
             ui.add_space(10.);
             ui.separator();
             is_hovering =
-                selected_verts_inputs(ui, shared_ui, selections, &bone, events) || is_hovering;
+                selected_verts_inputs(ui, shared_ui, selections, &bone, armature, events) || is_hovering;
         }
         // if no vertex labels were hovered from both funcs above, set hovered vert to none
         if !is_hovering && selections.hovering_vert_id != -1 {
@@ -1061,6 +1061,14 @@ pub fn mesh_deformation(
 
     let selected = selections.bind;
     let bind = armature.sel_bone(&sel).unwrap().binds[selected as usize].clone();
+    // bind-posed meshes show and edit each vertex's share of this bind's bone, kept
+    // normalized across the binds (docs/ENVELOPES.md §4.5); classic ones the raw weight
+    let mesh = armature.sel_bone(&sel).unwrap();
+    let shares = skin::bind_shares(&armature.bones, mesh, selected as usize);
+    let value_of = |w: usize| match &shares {
+        Some((_, s)) => s.get(&bind.verts[w].id).copied().unwrap_or(0.),
+        None => bind.verts[w].weight,
+    };
     let mut is_hovering = false;
     if bind.verts.len() == 0 {
         ui.label(shared_ui.loc("bone_panel.mesh_deformation.no_bound_verts"));
@@ -1089,7 +1097,7 @@ pub fn mesh_deformation(
                 if config.bind_weight_colors {
                     let size = egui::vec2(11., 11.);
                     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
-                    let fill = mesh_tools::bind_vert_color(w, bind.verts[w].weight);
+                    let fill = mesh_tools::bind_vert_color(w, value_of(w));
                     let hue = mesh_tools::bind_hue(w);
                     ui.painter().rect_filled(rect, 2., fill);
                     let stroke = egui::Stroke::new(1., hue);
@@ -1102,7 +1110,8 @@ pub fn mesh_deformation(
                     events.set_hovering_vert_id(bind.verts[w].id);
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let mut new_weight = bind.verts[w].weight;
+                    let value = value_of(w);
+                    let mut new_weight = value;
                     let slider = ui.add(egui::Slider::new(&mut new_weight, (0.)..=1.));
                     if slider.hovered() {
                         is_hovering = true;
@@ -1111,11 +1120,14 @@ pub fn mesh_deformation(
                     if slider.drag_started() {
                         events.save_bone(selections.bone_idx as usize);
                     }
-                    if new_weight != bind.verts[w].weight {
+                    if new_weight != value {
                         if !slider.dragged() {
                             events.save_bone(selections.bone_idx as usize);
                         }
-                        events.set_bind_weight(selections.bind as u32, w, new_weight);
+                        match &shares {
+                            Some((bone, _)) => events.set_vert_share(bind.verts[w].id, *bone, new_weight, true),
+                            None => events.set_bind_weight(selections.bind as u32, w, new_weight),
+                        }
                     }
                 });
             }));
@@ -1134,6 +1146,7 @@ pub fn selected_verts_inputs(
     shared_ui: &mut crate::Ui,
     selections: &SelectionState,
     bone: &Bone,
+    armature: &Armature,
     events: &mut EventState,
 ) -> bool {
     let mut hovering_id = -1;
@@ -1251,15 +1264,29 @@ pub fn selected_verts_inputs(
                 continue;
             }
 
-            // bind weight slider
+            // bind weight slider: the vertex's share of the bind's bone when bind-posed
+            let shares = skin::bind_shares(&armature.bones, bone, bi);
             ui.horizontal(|ui| {
                 ui.label(format!("#{}:", bi));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let bind_vert = &bone.binds[bi].verts[bind_vert_idx.unwrap()];
-                    let mut new_weight = bind_vert.weight;
-                    ui.add(egui::Slider::new(&mut new_weight, (0.)..=1.));
-                    if new_weight != bind_vert.weight {
-                        events.set_bind_weight(bi as u32, bind_vert_idx.unwrap(), new_weight);
+                    let value = match &shares {
+                        Some((_, s)) => s.get(&bind_vert.id).copied().unwrap_or(0.),
+                        None => bind_vert.weight,
+                    };
+                    let mut new_weight = value;
+                    let slider = ui.add(egui::Slider::new(&mut new_weight, (0.)..=1.));
+                    if slider.drag_started() {
+                        events.save_bone(selections.bone_idx);
+                    }
+                    if new_weight != value {
+                        if !slider.dragged() {
+                            events.save_bone(selections.bone_idx);
+                        }
+                        match &shares {
+                            Some((b, _)) => events.set_vert_share(bind_vert.id, *b, new_weight, true),
+                            None => events.set_bind_weight(bi as u32, bind_vert_idx.unwrap(), new_weight),
+                        }
                     }
                 });
             });

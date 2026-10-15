@@ -36,6 +36,7 @@ pub fn iterate_events(
             E::SetIkChain | E::ToggleIkEnabled | E::DeleteIkTarget => undo_states.new_undo_bone(&armature.bones[selections.bone_idx]),
             E::BindToSkeleton | E::ClearAllBinds | E::AddBonesInReach => undo_states.new_undo_bones(&armature.bones),
             E::ToggleEnvelopeWeights | E::SetMaxInfluences | E::UnlockSelectedVerts | E::UnlockAllVerts => undo_states.new_undo_bone(&armature.bones[selections.bone_idx]),
+            E::ClickVertex if selections.bind != -1 => undo_states.new_undo_bone(&armature.bones[selections.bone_idx]),
             E::NewAnimation | E::DeleteAnim => undo_states.new_undo_anims(&armature.animations),
             E::DeleteSelectedTextures       => undo_states.new_undo_style(&armature.sel_style(&selections).unwrap()),
             E::DeleteStyle | E::NewStyle    => undo_states.new_undo_styles(&armature.styles),
@@ -226,6 +227,14 @@ pub fn iterate_events(
 
         events.events.remove(0);
         events.values.drain(0..=2);
+    } else if event == Events::SetVertShare {
+        let (vert, bone, share) = (events.values[0] as u32, events.values[1] as i32, events.values[2]);
+        let keep = events.values[3] == 1.;
+        if let Some(mesh_id) = armature.sel_bone(&selections).map(|b| b.id) {
+            skin::edit_shares(armature, mesh_id, bone, &[(vert, share)], keep);
+        }
+        events.events.remove(0);
+        events.values.drain(0..=3);
     } else if event == Events::ToggleBindPathing {
         let sel_bind = events.values[0] as usize;
         let is_pathing = events.values[1] == 1.;
@@ -409,8 +418,33 @@ pub fn simple_event(
                 edit_mode.editing_mesh = true;
                 selections.vert_ids = vec![];
             }
+            // painting needs a bone to paint: the first weight bind, if none is picked
+            if edit_mode.tool == Tool::PaintWeights {
+                edit_mode.editing_mesh = false;
+                let mesh = armature.sel_bone(&selections);
+                let picked = mesh.map_or(false, |m| skin::bind_shares(&armature.bones, m, selections.bind.max(0) as usize).is_some() && selections.bind >= 0);
+                if !picked {
+                    if let Some(m) = mesh {
+                        let first = (0..m.binds.len()).find(|k| skin::bind_shares(&armature.bones, m, *k).is_some());
+                        selections.bind = first.map_or(-1, |k| k as i32);
+                    }
+                }
+            }
         }
         Events::SetEraserDelete => edit_mode.eraser_delete = value == 1.,
+        Events::SetPaintMode => edit_mode.paint_mode = weights::PaintMode::from_repr(value as usize).unwrap_or_default(),
+        Events::SetPaintRadius => edit_mode.paint_radius = value.clamp(2., 1000.),
+        Events::SetPaintStrength => edit_mode.paint_strength = value.clamp(0., 1.),
+        // a dab of the brush (undo is saved when the stroke starts)
+        Events::PaintWeights => {
+            let Some((dab, mode)) = renderer.paint_dab.take() else { return };
+            let Some(mesh) = armature.sel_bone(&selections).cloned() else { return };
+            if selections.bind < 0 {
+                return;
+            }
+            let Some((bone, _)) = skin::bind_shares(&armature.bones, &mesh, selections.bind as usize) else { return };
+            skin::paint(armature, mesh.id, bone, &dab, mode, edit_mode.paint_strength);
+        }
         Events::ToggleShowAllEnvelopes => edit_mode.show_all_envelopes = !edit_mode.show_all_envelopes,
         Events::TogglePenAngleLock => edit_mode.pen_angle_lock = !edit_mode.pen_angle_lock,
         Events::TogglePenSnap => edit_mode.pen_no_snap = !edit_mode.pen_no_snap,
@@ -928,6 +962,17 @@ pub fn simple_event(
             let id = bone_mut.id;
             let idx = selections.bind as usize;
             let vert_id = bone_mut.vertices[value as usize].id;
+
+            // bind-posed: the vertex goes fully to this bind's bone, or leaves it (its
+            // share goes to the other bones), keeping shares normalized
+            let mesh = bone_mut.clone();
+            if let Some((bind_bone, shares)) = skin::bind_shares(&armature.bones, &mesh, idx) {
+                let share = shares.get(&(vert_id as i32)).copied().unwrap_or(0.);
+                let value = if share > 0. { 0. } else { 1. };
+                skin::edit_shares(armature, id, bind_bone, &[(vert_id, value)], false);
+                return;
+            }
+            let bone_mut = &mut armature.sel_bone_mut(&selections).unwrap();
             let bind = &bone_mut.binds[idx];
 
             // add/remove vertex to bind
