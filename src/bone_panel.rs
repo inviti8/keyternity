@@ -1068,7 +1068,10 @@ pub fn mesh_deformation(
         // a vertex hovered on the canvas highlights its row and scrolls to it,
         // once per hover (docs/MESH_DISPLAY.md §3.3)
         let canvas_hover = selections.hovering_vert_id;
-        let pointer_on_panel = ui.ui_contains_pointer();
+        // the panel's visible area: `ui_contains_pointer` only covers what's been laid out
+        // so far, which misses these rows, so hovering a slider (which highlights its
+        // vertex) looked like a canvas hover and scrolled the list under the pointer
+        let pointer_on_panel = ui.rect_contains_pointer(ui.clip_rect());
         let scrolled_id = egui::Id::new("bind_row_scrolled_to");
         let last_scrolled: i32 = ui.data(|d| d.get_temp(scrolled_id)).unwrap_or(-1);
         if canvas_hover == -1 || pointer_on_panel {
@@ -1120,6 +1123,7 @@ pub fn mesh_deformation(
                 row.response.scroll_to_me(Some(egui::Align::Center));
                 ui.data_mut(|d| d.insert_temp(scrolled_id, canvas_hover));
             }
+            ui.add_space(2.);
         }
     }
     is_hovering
