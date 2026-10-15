@@ -422,6 +422,7 @@ pub enum SettingsState {
     Keyboard,
     Colors,
     Misc,
+    Agent,
 }
 
 #[derive(Clone, Default, PartialEq, Debug, FromRepr)]
@@ -569,6 +570,10 @@ pub struct Ui {
 
     pub settings_state: SettingsState,
     pub translucent_settings: bool,
+    /// the skinning agent's MCP server, for Settings: its URL while running, or why it
+    /// couldn't start (docs/AI_SKINNING.md §7.2)
+    pub agent_url: Option<String>,
+    pub agent_error: Option<String>,
 
     pub changing_key: String,
 
@@ -871,6 +876,12 @@ pub struct Config {
     pub bind_weight_colors: bool,
     /// Mesh vertex markers' size, relative to bone center points
     pub mesh_vert_size: f32,
+    /// The skinning agent's MCP server (docs/AI_SKINNING.md §7.2): on, its first port,
+    /// its bearer token (made on first run), and read-only (looking tools only)
+    pub agent_access: bool,
+    pub agent_port: u16,
+    pub agent_token: String,
+    pub agent_read_only: bool,
 
     #[serde(skip)]
     pub colors: ColorConfig,
@@ -930,6 +941,10 @@ impl Default for Config {
             mesh_edge_outline: true,
             bind_weight_colors: true,
             mesh_vert_size: 1.,
+            agent_access: true,
+            agent_port: 0,
+            agent_token: String::new(),
+            agent_read_only: false,
         }
     }
 }
@@ -2300,6 +2315,9 @@ pub struct EditMode {
     pub show_all_envelopes: bool,
     /// Paint Weights: brush mode, radius (screen px) and strength (0..1)
     pub paint_mode: crate::weights::PaintMode,
+    /// Paint Weights: draw an outline instead of brushing; on release the mode applies
+    /// to every vertex inside
+    pub paint_lasso: bool,
     pub paint_radius: f32,
     pub paint_strength: f32,
     /// Pen: don't snap to vertices and edges (Shift held does the same).
@@ -2495,6 +2513,10 @@ pub struct Renderer {
     pub painting: bool,
     pub paint_last: Option<(Vec2, f32)>,
     pub paint_dab: Option<(Vec<(u32, f32)>, crate::weights::PaintMode)>,
+    /// Paint Weights lasso: the outline being drawn (screen px), and the vertices it
+    /// closed around for the pending PaintLasso event, with the mode.
+    pub lasso: Vec<Vec2>,
+    pub lasso_hit: Option<(Vec<u32>, crate::weights::PaintMode)>,
     pub paint_buffer: RenderBuffer,
     /// Eraser: a stroke is in progress (left button held since a press on the canvas).
     pub erasing: bool,
@@ -2644,6 +2666,8 @@ pub enum Events {
     ToggleIkEnabled,
     BindToSkeleton,
     PaintWeights,
+    PaintLasso,
+    TogglePaintLasso,
     SetPaintMode,
     SetPaintRadius,
     SetPaintStrength,
@@ -2884,6 +2908,8 @@ impl EventState {
     event_with_value!(set_ik_target_space, Events::SetIkTargetSpace, parent_id, i32);
     generic_event!(bind_to_skeleton, Events::BindToSkeleton);
     generic_event!(paint_weights, Events::PaintWeights);
+    generic_event!(paint_lasso, Events::PaintLasso);
+    generic_event!(toggle_paint_lasso, Events::TogglePaintLasso);
     event_with_value!(set_paint_mode, Events::SetPaintMode, mode, usize);
     event_with_value!(set_paint_radius, Events::SetPaintRadius, radius, f32);
     event_with_value!(set_paint_strength, Events::SetPaintStrength, strength, f32);
@@ -3195,6 +3221,9 @@ pub struct Shared {
 
     // buffered armature from imported PSD
     pub psd_armature: Armature,
+
+    /// the skinning agent's state between tool calls (docs/AI_SKINNING.md)
+    pub agent: crate::agent::AgentState,
 }
 
 // generate non-clashing id

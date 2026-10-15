@@ -86,8 +86,14 @@ DragonBones for game engines. Older files lose their IK.
   handles to resize them, and colors each mesh vertex by the selected bone's weight,
   blue to red. **Paint Weights** (Shift+W) brushes a bone's weight onto a mesh
   with Add, Subtract and Smooth, and hand weights are normalized: raising one
-  bone's share lowers the others, so a vertex's weights always total 100%
+  bone's share lowers the others, so a vertex's weights always total 100%.
+  Its **Lasso** assigns everything inside an outline in one go
   ([design](docs/ENVELOPES.md))
+- **AI skinning** — Keyternity runs a local MCP server, so an agent such as
+  Claude Code can skin the open rig: it reads the rig, looks at rendered
+  pictures of the art and bones, assigns drawn parts to bones, and test-poses
+  the rig to find folds and stretching. Connect it once from *Settings → Agent*
+  ([design](docs/AI_SKINNING.md))
 - **Canvas toolbar** — a toolbar above the canvas with Move, Rotate and Scale,
   the navigation tools, the mesh tools, and the mesh actions (Trace, Center,
   Reset, Re-triangulate). The active tool's options sit on its right

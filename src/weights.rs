@@ -6,6 +6,8 @@
 //! hand edits go through shares: setting one bone's share scales the others to
 //! make up the rest, as Max and Blender (Auto Normalize) do.
 
+use crate::Vec2;
+use std::collections::{BinaryHeap, HashMap};
 use strum::FromRepr;
 
 /// A vertex's shares: (bone id, share), summing to 1.
@@ -114,4 +116,145 @@ pub fn falloff(d: f32, radius: f32) -> f32 {
     }
     let t = 1. - (d / radius).powi(2);
     t * t
+}
+
+// --- regions (docs/AI_SKINNING.md §4.1) ----------------------------------------
+
+
+/// Whether `p` is inside `polygon` (even-odd rule; any winding).
+pub fn in_polygon(p: Vec2, polygon: &[Vec2]) -> bool {
+    let mut inside = false;
+    let n = polygon.len();
+    for i in 0..n {
+        let (a, b) = (polygon[i], polygon[(i + n - 1) % n]);
+        if (a.y > p.y) != (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x {
+            inside = !inside;
+        }
+    }
+    inside
+}
+
+/// Distance from `p` to the nearest edge of `polygon`.
+pub fn polygon_edge_distance(p: Vec2, polygon: &[Vec2]) -> f32 {
+    let n = polygon.len();
+    (0..n)
+        .map(|i| {
+            let (a, b) = (polygon[i], polygon[(i + 1) % n]);
+            let ab = b - a;
+            let len2 = ab.x * ab.x + ab.y * ab.y;
+            let t = if len2 > 0. { (((p - a).x * ab.x + (p - a).y * ab.y) / len2).clamp(0., 1.) } else { 0. };
+            (p - (a + ab * t)).mag()
+        })
+        .fold(f32::MAX, f32::min)
+}
+
+/// Distance from the nearest of `sources` to every vertex, along mesh `edges`
+/// (vertex index pairs) with vertices at `pos`: geodesic, so it goes round gaps in
+/// the mesh instead of across them. Unreachable vertices get `f32::MAX`.
+pub fn geodesic(pos: &[Vec2], edges: &[(u32, u32)], sources: &[usize]) -> Vec<f32> {
+    let mut next: Vec<Vec<usize>> = vec![vec![]; pos.len()];
+    for &(a, b) in edges {
+        next[a as usize].push(b as usize);
+        next[b as usize].push(a as usize);
+    }
+    let mut dist = vec![f32::MAX; pos.len()];
+    // distances are never negative, so their bits order like the floats
+    let mut heap = BinaryHeap::new();
+    for &s in sources {
+        dist[s] = 0.;
+        heap.push(std::cmp::Reverse((0u32, s)));
+    }
+    while let Some(std::cmp::Reverse((bits, v))) = heap.pop() {
+        let d = f32::from_bits(bits);
+        if d > dist[v] {
+            continue;
+        }
+        for &u in &next[v] {
+            let nd = d + (pos[u] - pos[v]).mag();
+            if nd < dist[u] {
+                dist[u] = nd;
+                heap.push(std::cmp::Reverse((nd.to_bits(), u)));
+            }
+        }
+    }
+    dist
+}
+
+/// Shares from a segmentation (§4.1 `assign_parts`): `labels[v]` is the bone vertex
+/// `v` was drawn into (or `None`), `pos` the rest positions and `edges` the mesh's.
+/// A labelled vertex goes fully to its bone, except within `blend` (measured along
+/// the mesh) of another part, where the two blend, half and half at the boundary.
+/// Unlabelled vertices are left out of the result.
+pub fn part_shares(pos: &[Vec2], edges: &[(u32, u32)], labels: &[Option<i32>], blend: f32) -> HashMap<usize, Shares> {
+    let mut bones: Vec<i32> = labels.iter().flatten().copied().collect();
+    bones.sort();
+    bones.dedup();
+    let dist: Vec<(i32, Vec<f32>)> = bones
+        .iter()
+        .map(|b| {
+            let sources: Vec<usize> = (0..labels.len()).filter(|v| labels[*v] == Some(*b)).collect();
+            (*b, geodesic(pos, edges, &sources))
+        })
+        .collect();
+
+    let mut out = HashMap::new();
+    for v in 0..labels.len() {
+        let Some(own) = labels[v] else { continue };
+        let mut shares: Shares = vec![];
+        for (bone, d) in &dist {
+            let raw = if *bone == own {
+                1.
+            } else if blend > 0. && d[v] < blend {
+                (1. - d[v] / blend).powi(2)
+            } else {
+                0.
+            };
+            if raw > 0. {
+                shares.push((*bone, raw));
+            }
+        }
+        tidy(&mut shares);
+        out.insert(v, shares);
+    }
+    out
+}
+
+/// The share of the child bone across a joint (§4.1 `blend_joint`): `x` is how far
+/// along the child bone's direction a point is from the joint; the share eases from
+/// 0 at `-width / 2` to 1 at `width / 2`.
+pub fn joint_share(x: f32, width: f32) -> f32 {
+    if width <= 0. {
+        return if x >= 0. { 1. } else { 0. };
+    }
+    let t = (x / width + 0.5).clamp(0., 1.);
+    t * t * (3. - 2. * t)
+}
+
+/// Every vertex's shares averaged with its edge neighbours', `iterations` times, for
+/// the vertices in `only` (§4.1 `smooth_region` over all bones). `all` holds every
+/// vertex's shares by index.
+pub fn blur(all: &mut Vec<Shares>, edges: &[(u32, u32)], only: &[usize], iterations: u32) {
+    let mut next: Vec<Vec<usize>> = vec![vec![]; all.len()];
+    for &(a, b) in edges {
+        next[a as usize].push(b as usize);
+        next[b as usize].push(a as usize);
+    }
+    for _ in 0..iterations {
+        let before = all.clone();
+        for &v in only {
+            let mut sum: HashMap<i32, f32> = HashMap::new();
+            let around = std::iter::once(v).chain(next[v].iter().copied());
+            let mut n = 0.;
+            for u in around {
+                n += 1.;
+                for (bone, s) in &before[u] {
+                    *sum.entry(*bone).or_default() += s;
+                }
+            }
+            let mut shares: Shares = sum.into_iter().map(|(b, s)| (b, s / n)).collect();
+            shares.sort_by_key(|s| s.0);
+            tidy(&mut shares);
+            all[v] = shares;
+        }
+    }
 }

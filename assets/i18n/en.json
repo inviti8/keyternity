@@ -503,6 +503,24 @@
       "bound_vert": "Bound Vertex",
       "attachment_point": "Attachment Point"
     },
+    "agent": {
+      "heading": "Agent",
+      "desc": "Let an AI agent, such as Claude Code, skin the rig open in Keyternity: it sees the art and bones, weights the meshes and test-poses them. Its edits are ordinary undoable edits; review them and save, or don't.",
+      "on": "Agent access ℹ:",
+      "on_desc": "Run a local MCP server while Keyternity is open, on this computer only (127.0.0.1), so an agent you've set up can use Keyternity's skinning tools.",
+      "read_only": "Read-only ℹ:",
+      "read_only_desc": "The agent can look at the rig (rig data, pictures, test poses) but not change it.",
+      "port": "Port ℹ:",
+      "port_desc": "The server's port. If it's taken, the next free one of the following nine is used.",
+      "running": "Running at $url",
+      "failed": "Couldn't start: $error",
+      "off": "Off",
+      "connect": "To connect Claude Code, run this once in a terminal:",
+      "copy": "Copy Command",
+      "other_clients": "Other MCP clients: Streamable HTTP at $url, with the header Authorization: Bearer $token",
+      "regenerate": "Regenerate Token",
+      "regenerate_desc": "Make a new token (on Apply). Agents set up with the old one can no longer connect until you add the new command."
+    },
     "miscellaneous": {
       "heading": "Miscellaneous",
       "autosave_frequency": "Autosave frequency (seconds):",
@@ -658,6 +676,8 @@
       "subtract_desc": "Lower the bone's weight under the brush; the other bones take it up (Ctrl: add).",
       "smooth": "Smooth",
       "smooth_desc": "Even out the bone's weight with the neighbouring vertices (or hold Shift).",
+      "lasso": "Lasso",
+      "lasso_desc": "Draw an outline instead of brushing. On release, every vertex inside goes fully to the bone (Add), leaves it (Subtract), or has its weight smoothed (Smooth). Shift and Ctrl change the mode as they do for the brush.",
       "radius": "Radius ℹ:",
       "radius_desc": "Brush radius in screen pixels. [ and ] resize it.",
       "strength": "Strength ℹ:",

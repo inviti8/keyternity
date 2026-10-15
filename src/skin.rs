@@ -430,6 +430,147 @@ pub fn paint(armature: &mut Armature, mesh_id: i32, bone_id: i32, dab: &[(u32, f
     }
 }
 
+/// `mesh_id`'s vertices where they're drawn in the setup pose (world units), in
+/// vertex order: what region outlines are drawn against.
+pub fn rest_positions(armature: &Armature, mesh_id: i32) -> Vec<Vec2> {
+    let world = setup_world(armature);
+    bind_pose::drawn_vertices(armature, &world, mesh_id)
+}
+
+/// Replace the shares of the vertices in `new` (vertex id → shares) and lock them,
+/// keeping *Max influences* by dropping each vertex's weakest bones.
+pub fn set_shares(armature: &mut Armature, mesh_id: i32, new: HashMap<u32, weights::Shares>) {
+    let Some(mesh) = find(&armature.bones, mesh_id).cloned() else { return };
+    let max = if mesh.max_influences == 0 { DEFAULT_MAX_INFLUENCES } else { mesh.max_influences } as usize;
+    let mut all = current_shares(&armature.bones, &mesh);
+    let edited: Vec<u32> = new.keys().copied().collect();
+    for (vid, mut shares) in new {
+        let strongest = shares.iter().fold((mesh_id, -1.), |b, s| if s.1 > b.1 { *s } else { b }).0;
+        weights::limit(&mut shares, max, strongest, mesh_id);
+        all.insert(vid, shares);
+    }
+    write_shares(armature, mesh_id, &all, &[]);
+    let mesh = armature.find_bone_mut(mesh_id).unwrap();
+    for vid in edited {
+        lock_vertex(mesh, vid);
+    }
+}
+
+/// Assign drawn parts to bones (docs/AI_SKINNING.md §4.1): each part is a bone and an
+/// outline in world units at rest; a vertex inside an outline goes to its bone (the
+/// last part wins where outlines overlap), blending with neighbouring parts over
+/// `blend` measured along the mesh. Vertices in no part keep their weights. Returns
+/// how many vertices were assigned.
+pub fn assign_parts(armature: &mut Armature, mesh_id: i32, parts: &[(i32, Vec<Vec2>)], blend: f32) -> usize {
+    let Some(mesh) = find(&armature.bones, mesh_id).cloned() else { return 0 };
+    let pos = rest_positions(armature, mesh_id);
+    let labels: Vec<Option<i32>> = pos
+        .iter()
+        .map(|p| parts.iter().rev().find(|(_, outline)| weights::in_polygon(*p, outline)).map(|(bone, _)| *bone))
+        .collect();
+    let edges = topology::edges(&mesh.indices);
+    let shares = weights::part_shares(&pos, &edges, &labels, blend);
+    let count = shares.len();
+    let new = shares.into_iter().map(|(v, s)| (mesh.vertices[v].id, s)).collect();
+    set_shares(armature, mesh_id, new);
+    count
+}
+
+/// Set `bone`'s share to `share` for the vertices inside `outline` (world units at
+/// rest), fading in over `feather` from the outline's edge (§4.1 `set_region`).
+/// Returns how many vertices changed.
+pub fn set_region(armature: &mut Armature, mesh_id: i32, outline: &[Vec2], bone: i32, share: f32, feather: f32) -> usize {
+    let Some(mesh) = find(&armature.bones, mesh_id).cloned() else { return 0 };
+    let pos = rest_positions(armature, mesh_id);
+    let all = current_shares(&armature.bones, &mesh);
+    let edits: Vec<(u32, f32)> = mesh
+        .vertices
+        .iter()
+        .zip(&pos)
+        .filter(|(_, p)| weights::in_polygon(**p, outline))
+        .map(|(v, p)| {
+            let current = all.get(&v.id).map_or(0., |s| weights::share_of(s, bone));
+            let t = if feather > 0. { (weights::polygon_edge_distance(*p, outline) / feather).min(1.) } else { 1. };
+            (v.id, current + (share - current) * t)
+        })
+        .collect();
+    edit_shares(armature, mesh_id, bone, &edits, false);
+    edits.len()
+}
+
+/// Smooth weights over the vertices in `vertex_ids` (§4.1 `smooth_region`): one bone's
+/// share toward its neighbours' average, or with `bone` `None`, every bone's at once
+/// (a blur that evens out seams). Returns how many vertices were smoothed.
+pub fn smooth_vertices(armature: &mut Armature, mesh_id: i32, vertex_ids: &[u32], bone: Option<i32>, iterations: u32) -> usize {
+    let Some(mesh) = find(&armature.bones, mesh_id).cloned() else { return 0 };
+    if let Some(bone) = bone {
+        let dab: Vec<(u32, f32)> = vertex_ids.iter().map(|v| (*v, 1.)).collect();
+        for _ in 0..iterations {
+            paint(armature, mesh_id, bone, &dab, weights::PaintMode::Smooth, 1.);
+        }
+        return dab.len();
+    }
+    let current = current_shares(&armature.bones, &mesh);
+    let mut all: Vec<weights::Shares> =
+        mesh.vertices.iter().map(|v| current.get(&v.id).cloned().unwrap_or_else(|| vec![(mesh_id, 1.)])).collect();
+    let only: Vec<usize> = (0..mesh.vertices.len()).filter(|i| vertex_ids.contains(&mesh.vertices[*i].id)).collect();
+    weights::blur(&mut all, &topology::edges(&mesh.indices), &only, iterations);
+    let new = only.iter().map(|i| (mesh.vertices[*i].id, all[*i].clone())).collect();
+    set_shares(armature, mesh_id, new);
+    only.len()
+}
+
+/// The vertices of `mesh_id` inside `outline` (world units at rest), or every vertex
+/// with no outline.
+pub fn vertices_in(armature: &Armature, mesh_id: i32, outline: Option<&[Vec2]>) -> Vec<u32> {
+    let Some(mesh) = find(&armature.bones, mesh_id) else { return vec![] };
+    let pos = rest_positions(armature, mesh_id);
+    mesh.vertices
+        .iter()
+        .zip(&pos)
+        .filter(|(_, p)| outline.map_or(true, |o| weights::in_polygon(**p, o)))
+        .map(|(v, _)| v.id)
+        .collect()
+}
+
+/// Re-blend the seam between `parent` and `child` (§4.1 `blend_joint`): across `width`
+/// centred on the child's head, each vertex's combined share of the two eases from
+/// the parent to the child along the child's direction. Vertices outside that band,
+/// or with no share of either, are left alone. Returns how many vertices changed.
+pub fn blend_joint(armature: &mut Armature, mesh_id: i32, parent: i32, child: i32, width: f32) -> usize {
+    let Some(mesh) = find(&armature.bones, mesh_id).cloned() else { return 0 };
+    let world = setup_world(armature);
+    let Some(c) = find(&world, child) else { return 0 };
+    let joint = c.pos;
+    let tail = renderer::tail_pos(c);
+    let dir = if (tail - joint).mag() > 1e-3 {
+        (tail - joint) / (tail - joint).mag()
+    } else {
+        Vec2::new(c.rot.cos(), c.rot.sin())
+    };
+    let pos = bind_pose::drawn_vertices(armature, &world, mesh_id);
+    let all = current_shares(&armature.bones, &mesh);
+
+    let mut new = HashMap::new();
+    for (v, p) in mesh.vertices.iter().zip(&pos) {
+        let Some(shares) = all.get(&v.id) else { continue };
+        let total = weights::share_of(shares, parent) + weights::share_of(shares, child);
+        let x = (p.x - joint.x) * dir.x + (p.y - joint.y) * dir.y;
+        if total < 0.01 || x.abs() > width / 2. {
+            continue;
+        }
+        let to_child = weights::joint_share(x, width) * total;
+        let mut s: weights::Shares = shares.iter().filter(|s| s.0 != parent && s.0 != child).copied().collect();
+        s.push((parent, total - to_child));
+        s.push((child, to_child));
+        s.retain(|x| x.1 > 0.);
+        new.insert(v.id, s);
+    }
+    let count = new.len();
+    set_shares(armature, mesh_id, new);
+    count
+}
+
 /// Write every vertex's shares (`all`; vertices missing from it are left unbound) back
 /// as bind weights. Weight binds keep their order and their vertices' order, so the
 /// bind panel's rows stay put; a bone with no bind yet gets one at the end. Vertices in

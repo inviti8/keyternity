@@ -74,6 +74,11 @@ pub fn draw(
                     tab!(str_keyboard, shared::SettingsState::Keyboard);
                     tab!(str_colors, shared::SettingsState::Colors);
                     tab!(str_misc, shared::SettingsState::Misc);
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        let str_agent = shared_ui.loc("settings_modal.agent.heading").clone();
+                        tab!(str_agent, shared::SettingsState::Agent);
+                    }
 
                     if shared_ui.settings_state != shared::SettingsState::Rendering {
                         shared_ui.translucent_settings = false;
@@ -108,6 +113,7 @@ pub fn draw(
                         shared::SettingsState::Keyboard => keyboard(ui, shared_ui),
                         shared::SettingsState::Colors => colors(ui, shared_ui),
                         shared::SettingsState::Misc => misc(ui, shared_ui, config),
+                        shared::SettingsState::Agent => agent(ui, shared_ui, config),
                     });
 
                     events.update_config();
@@ -537,6 +543,59 @@ fn misc(ui: &mut egui::Ui, shared_ui: &mut crate::Ui, config: &crate::Config) {
                 panic!();
             }
         })
+    });
+}
+
+/// Agent access (docs/AI_SKINNING.md §7.2): the skinning agent's MCP server.
+fn agent(ui: &mut egui::Ui, shared_ui: &mut crate::Ui, config: &crate::Config) {
+    let loc = |shared_ui: &crate::Ui, key: &str| shared_ui.loc(&format!("settings_modal.agent.{key}"));
+    ui.heading(loc(shared_ui, "heading"));
+    ui.label(loc(shared_ui, "desc"));
+    ui.add_space(8.);
+
+    basic_checkbox(ui, &loc(shared_ui, "on"), &loc(shared_ui, "on_desc"), &mut shared_ui.updated_config.agent_access, config, false);
+    basic_checkbox(ui, &loc(shared_ui, "read_only"), &loc(shared_ui, "read_only_desc"), &mut shared_ui.updated_config.agent_read_only, config, true);
+    #[cfg(not(target_arch = "wasm32"))]
+    alt_hor(ui, config, false, |ui| {
+        ui.label(loc(shared_ui, "port")).on_hover_text(loc(shared_ui, "port_desc"));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let port = shared_ui.updated_config.agent_port;
+            let shown = if port == 0 { crate::agent::server::DEFAULT_PORT } else { port } as f32;
+            let (edited, value, _) = ui.float_input("agent_port".to_string(), shared_ui, shown, 1., None);
+            if edited && (1024. ..=65525.).contains(&value) {
+                shared_ui.updated_config.agent_port = value as u16;
+            }
+        });
+    });
+    ui.add_space(10.);
+
+    // status, and how to connect
+    let status = match (&shared_ui.agent_url, &shared_ui.agent_error) {
+        (Some(url), _) => loc(shared_ui, "running").replace("$url", url),
+        (None, Some(e)) => loc(shared_ui, "failed").replace("$error", e),
+        (None, None) => loc(shared_ui, "off"),
+    };
+    ui.label(status);
+    let token = config.agent_token.clone();
+    if let Some(url) = shared_ui.agent_url.clone() {
+        ui.add_space(6.);
+        ui.label(loc(shared_ui, "connect"));
+        let command = format!("claude mcp add --transport http keyternity {url} --header \"Authorization: Bearer {token}\"");
+        ui.add(egui::Label::new(egui::RichText::new(&command).monospace()).wrap());
+        ui.horizontal(|ui| {
+            if ui.skf_button(loc(shared_ui, "copy")).clicked() {
+                ui.ctx().copy_text(command.clone());
+            }
+        });
+        ui.add_space(6.);
+        ui.label(loc(shared_ui, "other_clients").replace("$url", &url).replace("$token", &token));
+    }
+    ui.add_space(10.);
+    #[cfg(not(target_arch = "wasm32"))]
+    ui.horizontal(|ui| {
+        if ui.skf_button(loc(shared_ui, "regenerate")).on_hover_text(loc(shared_ui, "regenerate_desc")).clicked() {
+            shared_ui.updated_config.agent_token = crate::agent::server::new_token();
+        }
     });
 }
 

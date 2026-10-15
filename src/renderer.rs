@@ -2791,7 +2791,7 @@ fn paint_tool(
     } else {
         edit_mode.paint_mode
     };
-    if !camera.on_ui {
+    if !camera.on_ui && !edit_mode.paint_lasso {
         let ring = match mode {
             weights::PaintMode::Add => Color::new(255, 120, 90, 230),
             weights::PaintMode::Subtract => Color::new(90, 160, 255, 230),
@@ -2810,8 +2810,55 @@ fn paint_tool(
         }
     }
 
+    // lasso: draw an outline; on release the mode applies to every vertex inside
+    if edit_mode.paint_lasso {
+        renderer.painting = false;
+        if !camera.on_ui && input.left_pressed {
+            events.save_bone(selections.bone_idx);
+            renderer.lasso = vec![input.mouse];
+        }
+        let drawing = !renderer.lasso.is_empty();
+        if drawing && input.left_down {
+            if renderer.lasso.last().map_or(true, |l| (input.mouse - *l).mag() >= PAINT_SPACING_PX * px) {
+                renderer.lasso.push(input.mouse);
+            }
+        } else if drawing {
+            let outline = std::mem::take(&mut renderer.lasso);
+            if outline.len() >= 3 {
+                let ids: Vec<u32> = drawn
+                    .world_verts
+                    .iter()
+                    .filter(|wv| weights::in_polygon(mesh_tools::to_screen(wv.pos, camera.window), &outline))
+                    .map(|wv| wv.id)
+                    .collect();
+                renderer.lasso_hit = Some((ids, mode));
+                events.paint_lasso();
+            }
+        }
+        let line = Color::new(235, 235, 235, 230);
+        let n = renderer.lasso.len();
+        for k in 0..n {
+            let close = k + 1 == n;
+            if close && n < 3 {
+                break;
+            }
+            let (a, b) = (renderer.lasso[k], if close { input.mouse } else { renderer.lasso[k + 1] });
+            let quad = mesh_tools::edge_quad(
+                mesh_tools::from_screen(a, camera.window),
+                mesh_tools::from_screen(b, camera.window),
+                1.5 * px,
+                1.,
+                line,
+                camera.window,
+            );
+            let base = fill.0.len() as u32;
+            fill.0.extend(quad);
+            fill.1.extend([0, 1, 2, 1, 2, 3].map(|i| i + base));
+        }
+    }
+
     // a stroke: one undo step, a dab each time the brush moves on or a moment passes
-    if !camera.on_ui && input.left_pressed {
+    if !edit_mode.paint_lasso && !camera.on_ui && input.left_pressed {
         events.save_bone(selections.bone_idx);
         renderer.painting = true;
         renderer.paint_last = None;

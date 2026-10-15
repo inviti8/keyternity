@@ -435,6 +435,27 @@ pub fn simple_event(
         Events::SetPaintMode => edit_mode.paint_mode = weights::PaintMode::from_repr(value as usize).unwrap_or_default(),
         Events::SetPaintRadius => edit_mode.paint_radius = value.clamp(2., 1000.),
         Events::SetPaintStrength => edit_mode.paint_strength = value.clamp(0., 1.),
+        Events::TogglePaintLasso => edit_mode.paint_lasso = !edit_mode.paint_lasso,
+        // a closed lasso: Add gives the vertices fully to the bone, Subtract takes them
+        // off it, Smooth smooths its share (undo is saved when the lasso starts)
+        Events::PaintLasso => {
+            let Some((ids, mode)) = renderer.lasso_hit.take() else { return };
+            let Some(mesh) = armature.sel_bone(&selections).cloned() else { return };
+            if selections.bind < 0 || ids.is_empty() {
+                return;
+            }
+            let Some((bone, _)) = skin::bind_shares(&armature.bones, &mesh, selections.bind as usize) else { return };
+            match mode {
+                weights::PaintMode::Add | weights::PaintMode::Subtract => {
+                    let value = if mode == weights::PaintMode::Add { 1. } else { 0. };
+                    let edits: Vec<(u32, f32)> = ids.iter().map(|v| (*v, value)).collect();
+                    skin::edit_shares(armature, mesh.id, bone, &edits, false);
+                }
+                weights::PaintMode::Smooth => {
+                    skin::smooth_vertices(armature, mesh.id, &ids, Some(bone), 3);
+                }
+            }
+        }
         // a dab of the brush (undo is saved when the stroke starts)
         Events::PaintWeights => {
             let Some((dab, mode)) = renderer.paint_dab.take() else { return };

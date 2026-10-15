@@ -7,6 +7,7 @@ name = "Keyternity"
 version = "0.5.2"
 dependencies = [
  "backtrace",
+ "base64",
  "bytemuck",
  "console_error_panic_hook",
  "console_log",

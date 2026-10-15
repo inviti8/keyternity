@@ -54,6 +54,7 @@ use winit::{
 /// Keyternity's repository (releases, issues, translations).
 pub const REPO_URL: &str = "https://github.com/inviti8/keyternity";
 
+pub mod agent;
 pub mod armature_window;
 pub mod atlas_modal;
 pub mod auto_mesh;
@@ -902,6 +903,10 @@ impl BackendRenderer {
                 &mut shared.undo_states,
             );
         }
+
+        // the skinning agent's tool calls, queued by its MCP server
+        #[cfg(not(target_arch = "wasm32"))]
+        agent::server::poll(shared);
 
         // keep Bind Pose helpers consistent with the rest pose (no-op without helpers)
         let rest = shared

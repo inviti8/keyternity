@@ -5,10 +5,70 @@ agent looks at the character art, the mesh and the skeleton, weights the meshes,
 checks its work by posing the rig, and leaves the result for the artist to review
 and touch up with the paint tools.
 
-**Status:** design, decisions made (§10). Nothing here is built.
+**Status:** steps 1–3 of the work plan (§9) built: the region tools, the
+pictures and test poses, and the MCP server with every tool (§0). The workflow
+prompt is written; evals, the built-in button and the how-to are next.
 
 **Builds on:** envelope skinning and normalized shares (`ENVELOPES.md`), weight
 painting (`ENVELOPES.md` §0 step 5), Bind Pose (`BIND_POSE.md`).
+
+
+## 0. As built
+
+**Connecting:** *Settings → Agent* shows the server's address and a command to
+copy, run once in a terminal:
+`claude mcp add --transport http keyternity http://127.0.0.1:47870/mcp --header
+"Authorization: Bearer <token>"`. Then, in Claude Code, with a rig open in
+Keyternity: "skin the character", or the `skin_character` prompt.
+
+**Region maths** (`weights.rs`, `skin.rs`; `tests/regions.rs`, 5):
+- `in_polygon`, `polygon_edge_distance`, `geodesic` (Dijkstra along mesh edges,
+  so distances go round gaps), `part_shares` (labelled vertices to shares: full
+  share inside a part, `(1 − d/blend)²` toward neighbouring parts, normalized),
+  `joint_share` (smoothstep across a joint), `blur` (every bone's shares averaged
+  with edge neighbours).
+- `skin::assign_parts`, `set_region`, `smooth_vertices`, `blend_joint`,
+  `set_shares`, `vertices_in`, `rest_positions`. Outlines are tested against the
+  vertices' rest positions (world units, as drawn in the setup pose).
+- **Lasso** in Paint Weights (a toggle in the tool's row): draw an outline; on
+  release the vertices inside go fully to the bone (Add), leave it (Subtract), or
+  are smoothed 3 times (Smooth). Shift and Ctrl change the mode as for the brush.
+  One undo step.
+
+**Pictures** (`agent/render.rs`): on the CPU, not the GPU pipeline the design
+suggested, so a picture is made inside the tool call on the main thread and in
+tests. Textured triangles (nearest sample, z order), then wireframe, vertex ids
+(a 3×5 pixel digit font), a weight view (art dimmed, vertices blue→red), and
+bones as blades or rings in a 12-colour palette labelled with their id. The
+result text gives the pixel→world mapping and the bones' id, name and colour.
+`distortion` compares a mesh's triangles at rest and posed: flips, area changes
+over 50%, the largest edge stretch.
+
+**Tools** (`agent/mod.rs`; `tests/agent.rs`, 7): `get_rig`, `get_mesh`,
+`render`, `pose_test`, `bind_to_skeleton`, `set_envelope`, `set_bone_length`,
+`assign_parts`, `set_region`, `smooth`, `blend_joint`, `set_weights`, `unlock`,
+`checkpoint`, `revert`. JSON schemas are strict (every object closed). Editing
+tools leave Pose Mode and push one undo step each (dropped again if the call
+fails); read-only mode refuses them. `pose_test` turns IK off in its copy unless
+`use_ik` is set, since IK would override the rotations being tested; Bind Pose
+helpers stay at rest so the meshes deform. Checkpoints hold copies of the bones
+for the session.
+
+**Server** (`agent/server.rs`): MCP Streamable HTTP, plain JSON responses (GET
+gets 405), protocol versions 2025-11-25, 2025-06-18 and 2025-03-26. Methods:
+`initialize` (with the instructions text), `ping`, `tools/list`, `tools/call`,
+`prompts/list`, `prompts/get` (`skin_character`, with optional artist notes);
+notifications get 202. HTTP/1.1 on `std::net` (a thread per connection,
+keep-alive, Content-Length or chunked bodies, 16 MB cap), bound to 127.0.0.1,
+port 47870 or the next free of nine. `tiny_http` was tried first and dropped: a
+process that had served a request and then shut the server down never exited.
+Bearer token required; requests with a non-local `Origin` are refused. Tool calls
+go to the main thread through a channel, drained once a frame (`poll`), and wait
+up to 2 minutes. Settings: on (default), read-only, port, token (made on first
+run, *Regenerate Token*), status and the copyable command.
+
+**Not done yet:** the eval set (§8), the built-in button (§7.3), docs for
+artists beyond Settings' text, mesh refinement suggestions as a tool.
 
 
 ## 1. What makes skinning hard for an agent

@@ -2069,6 +2069,11 @@ fn paint_options(
             events.set_paint_mode(mode as usize);
         }
     }
+    ui.add_space(6.);
+    let lasso_desc = loc(shared_ui, "lasso_desc");
+    if selection_button(loc(shared_ui, "lasso"), edit_mode.paint_lasso, ui).on_hover_text(lasso_desc).clicked() {
+        events.toggle_paint_lasso();
+    }
     ui.add_space(10.);
 
     ui.label(loc(shared_ui, "radius")).on_hover_text(loc(shared_ui, "radius_desc"));
