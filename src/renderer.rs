@@ -69,9 +69,12 @@ pub fn render(
         events.set_hovering_vert_id(-1);
     }
 
-    // temporary armature, to be used for rendering
+    // temporary armature, to be used for rendering. It carries the styles (names and
+    // sizes, not images) so it can tell which posed bones show a texture: attachments
+    // (`is_attachment`) are drawn from it.
     let mut temp_arm = Armature::default();
     temp_arm.bones = renderer.temp_bones.clone();
+    temp_arm.styles = armature.styles.clone();
 
     // animate next and previous frame armatures for onions
     let mut next_arm = Armature::default();
