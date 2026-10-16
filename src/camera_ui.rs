@@ -88,7 +88,8 @@ pub fn camera_event(
         Events::FitCamera => {
             let bounds = if str_value == "anims" {
                 let all: Vec<usize> = (0..armature.animations.len()).collect();
-                render_camera::animation_bounds(armature, &all)
+                let cam = armature.cameras.iter().find(|c| c.id == id);
+                render_camera::animation_bounds(armature, &all, cam)
             } else {
                 render_camera::pose_bounds(armature, &armature.bones)
             };
@@ -505,6 +506,34 @@ pub fn panel(
                 });
         });
     });
+
+    ui.horizontal(|ui| {
+        ui.label(loc(shared_ui, "follow")).on_hover_text(loc(shared_ui, "follow_desc"));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let none = loc(shared_ui, "follow_none");
+            let name = |id: Option<i32>| id.and_then(|id| armature.bones.iter().find(|b| b.id == id)).map_or(none.clone(), |b| b.name.clone());
+            egui::ComboBox::new("camera_follow", "")
+                .selected_text(name(edited.follow))
+                .width(110.)
+                .height(400.)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut edited.follow, None, none.clone());
+                    for bone in armature.bones.iter().filter(|b| b.bind_owner.is_none()) {
+                        ui.selectable_value(&mut edited.follow, Some(bone.id), bone.name.clone());
+                    }
+                });
+        });
+    });
+    if edited.follow.is_some() {
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.checkbox(&mut edited.follow_y, "Y");
+                ui.checkbox(&mut edited.follow_x, "X");
+                let muted: egui::Color32 = config.colors.text.into();
+                ui.label(egui::RichText::new(loc(shared_ui, "follow_axes")).color(muted.gamma_multiply(0.7)));
+            });
+        });
+    }
 
     ui.horizontal(|ui| {
         ui.label(loc(shared_ui, "background"));

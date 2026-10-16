@@ -118,7 +118,7 @@ fn manifest_uses_the_output_size() {
     };
     let opts = SequenceOptions { size_value: 50., ..Default::default() };
     let frames = es::plan(&arm, &opts).unwrap();
-    let m = es::manifest("alice", &arm, &cam, &opts, &frames, None);
+    let m = es::manifest("alice", &arm, &cam, &opts, &frames, &es::Layout::default());
     assert_eq!(m["size"], serde_json::json!([100, 200]));
     assert_eq!(m["scale"], 1.0);
     // world (0, -50) is 100 world units below the centre... in camera px (100, 300); halved
@@ -150,7 +150,7 @@ fn phaser_files() {
     assert_eq!(files[0], serde_json::json!({ "type": "image", "key": "walk/walk_0000", "url": "walk/walk_0000.png" }));
     assert_eq!(files.last().unwrap()["url"], "alice_anims.json");
 
-    let extra = es::extra_files("alice", &arm, &RenderCamera::default(), &opts, &frames, None);
+    let extra = es::extra_files("alice", &arm, &RenderCamera::default(), &opts, &frames, &es::Layout::default());
     let names: Vec<&str> = extra.iter().map(|(n, _)| n.as_str()).collect();
     assert_eq!(names, vec!["alice_frames.json", "alice_anims.json", "alice_pack.json"]);
 }
@@ -207,7 +207,7 @@ fn writer_writes_frames_then_extra_files() {
     let dir = std::env::temp_dir().join(format!("keyternity_seq_test_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let extra = vec![("rig_frames.json".to_string(), "{}".to_string())];
-    let mut writer = es::Writer::spawn(es::Target::Folder(dir.clone()), (4, 4), (2, 2), extra, None);
+    let mut writer = es::Writer::spawn(es::Target::Folder(dir.clone()), (4, 4), (2, 2), png(), es::WriteMode::Files, Box::new(move |_| extra));
     // blue in BGRA order: B=255
     let blue_bgra: Vec<u8> = [255u8, 0, 0, 255].repeat(16);
     for i in 0..3 {
@@ -226,7 +226,7 @@ fn writer_writes_frames_then_extra_files() {
 #[test]
 fn writer_stops_on_a_bad_frame() {
     let dir = std::env::temp_dir().join(format!("keyternity_seq_bad_{}", std::process::id()));
-    let mut writer = es::Writer::spawn(es::Target::Folder(dir.clone()), (4, 4), (4, 4), vec![], None);
+    let mut writer = es::Writer::spawn(es::Target::Folder(dir.clone()), (4, 4), (4, 4), png(), es::WriteMode::Files, Box::new(|_| vec![]));
     writer.send(es::RawFrame { path: "a.png".into(), pixels: vec![0; 7], bgra: false });
     writer.close();
     assert!(wait(&mut writer).is_err());
@@ -293,7 +293,7 @@ fn atlas_formats() {
     let frames = es::plan(&arm, &opts).unwrap();
     let cam = RenderCamera { resolution: Vec2::new(100., 200.), pivot: Vec2::new(0., -50.), round_to: 1, ..Default::default() };
     let one = es::pack_sheets("alice", &arm, &frames, (100, 200), &opts).unwrap();
-    let hash = es::atlas_json(&cam, &opts, &frames, &one);
+    let hash = es::atlas_json(&cam, &opts, &frames, &one, None);
     let f = &hash["frames"]["walk_0001"];
     assert_eq!(f["frame"], serde_json::json!({ "x": 102, "y": 0, "w": 100, "h": 200 }));
     assert_eq!(f["sourceSize"], serde_json::json!({ "w": 100, "h": 200 }));
@@ -305,7 +305,7 @@ fn atlas_formats() {
     small.sheet_max = 256;
     let many = es::pack_sheets("alice", &arm, &frames, (100, 200), &small).unwrap();
     assert!(many.files.len() > 1);
-    let multi = es::atlas_json(&cam, &small, &frames, &many);
+    let multi = es::atlas_json(&cam, &small, &frames, &many, None);
     let textures = multi["textures"].as_array().unwrap();
     assert_eq!(textures.len(), many.files.len());
     assert_eq!(textures[0]["image"], "alice_0.png");
@@ -320,7 +320,7 @@ fn atlas_formats() {
     assert_eq!(pack["alice"]["files"][0], serde_json::json!({ "type": "atlas", "key": "alice", "textureURL": "alice.png", "atlasURL": "alice_atlas.json" }));
     let pack = es::phaser_pack("alice", &frames, Some(&many));
     assert_eq!(pack["alice"]["files"][0]["type"], "multiatlas");
-    let names: Vec<String> = es::extra_files("alice", &arm, &cam, &opts, &frames, Some(&one)).into_iter().map(|(n, _)| n).collect();
+    let names: Vec<String> = es::extra_files("alice", &arm, &cam, &opts, &frames, &es::Layout { sheets: Some(&one), ..Default::default() }).into_iter().map(|(n, _)| n).collect();
     assert_eq!(names, vec!["alice_frames.json", "alice_atlas.json", "alice_anims.json", "alice_pack.json"]);
 }
 
@@ -337,7 +337,7 @@ fn writer_fills_sheets() {
     assert_eq!(plan.sizes, vec![(2, 10)]);
     let dir = std::env::temp_dir().join(format!("keyternity_sheet_test_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    let mut writer = es::Writer::spawn(es::Target::Folder(dir.clone()), (2, 2), (2, 2), vec![], Some(plan));
+    let mut writer = es::Writer::spawn(es::Target::Folder(dir.clone()), (2, 2), (2, 2), png(), es::WriteMode::Grid(plan), Box::new(|_| vec![]));
     for (i, f) in frames.iter().enumerate() {
         let px = [i as u8 * 100, 0, 0, 255].repeat(4);
         writer.send(es::RawFrame { path: f.path.clone(), pixels: px, bgra: false });
@@ -402,4 +402,228 @@ fn engine_notes_for_the_summary() {
     assert!(sheet.contains("Slice Grid By Cell Size 100 × 200, Padding 2"), "{sheet}");
     let no_phaser = SequenceOptions { phaser: false, ..Default::default() };
     assert!(!es::engine_notes("alice", &cam, &no_phaser, None).contains("Phaser"));
+}
+
+
+fn png() -> es::Encoding {
+    es::Encoding::new(&SequenceOptions::default(), None)
+}
+
+#[test]
+fn formats_name_and_encode() {
+    let arm = rig();
+    let opts = SequenceOptions { format: es::ImageFormat::Webp, ..Default::default() };
+    assert_eq!(es::plan(&arm, &opts).unwrap()[0].path, "walk/walk_0000.webp");
+    let sheet_opts = SequenceOptions { format: es::ImageFormat::Jpg, ..sheet_opts() };
+    let frames = es::plan(&arm, &sheet_opts).unwrap();
+    assert_eq!(es::pack_sheets("alice", &arm, &frames, (10, 10), &sheet_opts).unwrap().files, vec!["alice.jpg"]);
+
+    // half-transparent red
+    let img = image::RgbaImage::from_pixel(4, 4, image::Rgba([255, 0, 0, 128]));
+    let webp = es::Encoding::new(&opts, None).encode(&img).unwrap();
+    let back = image::load_from_memory(&webp).unwrap().into_rgba8();
+    assert_eq!(back.get_pixel(0, 0).0, [255, 0, 0, 128], "lossless with alpha");
+    // JPG over a blue background
+    let jpg_opts = SequenceOptions { format: es::ImageFormat::Jpg, jpg_quality: 100, ..Default::default() };
+    let jpg = es::Encoding::new(&jpg_opts, Some(Color::new(0, 0, 255, 255))).encode(&img).unwrap();
+    let back = image::load_from_memory(&jpg).unwrap().into_rgb8();
+    let p = back.get_pixel(1, 1).0;
+    assert!(p[0] > 110 && p[0] < 145 && p[2] > 110 && p[2] < 145, "{p:?}");
+}
+
+#[test]
+fn trims_to_visible_pixels() {
+    let mut img = image::RgbaImage::new(10, 8);
+    img.put_pixel(3, 2, image::Rgba([1, 2, 3, 255]));
+    img.put_pixel(6, 5, image::Rgba([4, 5, 6, 10]));
+    let t = es::trim_bounds(&img);
+    assert_eq!(t, es::Trim { x: 3, y: 2, w: 4, h: 4 });
+    let c = es::crop(&img, t);
+    assert_eq!(c.dimensions(), (4, 4));
+    assert_eq!(c.get_pixel(0, 0).0, [1, 2, 3, 255]);
+    assert_eq!(c.get_pixel(3, 3).0, [4, 5, 6, 10]);
+    assert_eq!(es::trim_bounds(&image::RgbaImage::new(5, 5)), es::Trim { x: 0, y: 0, w: 1, h: 1 });
+}
+
+#[test]
+fn packs_trimmed_frames_without_overlap() {
+    let arm = rig();
+    let mut opts = sheet_opts();
+    opts.trim = true;
+    opts.sheet_max = 128;
+    let frames = es::plan(&arm, &opts).unwrap();
+    let sizes: Vec<(u32, u32)> = (0..frames.len() as u32).map(|i| (20 + i * 7, 60 - i * 3)).collect();
+    let plan = es::pack_trimmed("alice", &arm, &frames, &sizes, &opts).unwrap();
+    assert_eq!(plan.rects, sizes);
+    for i in 0..frames.len() {
+        let (s, x, y) = plan.placements[i];
+        let (w, h) = sizes[i];
+        assert!(x + w <= plan.sizes[s].0 && y + h <= plan.sizes[s].1, "frame {i} off its sheet");
+        assert!(plan.sizes[s].0 <= 128 && plan.sizes[s].1 <= 128);
+        for j in 0..i {
+            let (s2, x2, y2) = plan.placements[j];
+            let (w2, h2) = sizes[j];
+            let apart = s != s2 || x + w + 2 <= x2 || x2 + w2 + 2 <= x || y + h + 2 <= y2 || y2 + h2 + 2 <= y;
+            assert!(apart, "frames {i} and {j} overlap or touch");
+        }
+    }
+    assert!(plan.files.len() > 1, "{:?}", plan.sizes);
+    assert!(es::pack_trimmed("alice", &arm, &frames, &[(200, 10); 10], &opts).is_err());
+}
+
+#[test]
+fn atlas_and_manifest_carry_trims() {
+    let arm = rig();
+    let mut opts = sheet_opts();
+    opts.trim = true;
+    let frames: Vec<_> = es::plan(&arm, &opts).unwrap().into_iter().take(2).collect();
+    let cam = RenderCamera { resolution: Vec2::new(100., 200.), round_to: 1, ..Default::default() };
+    let trims = [es::Trim { x: 10, y: 20, w: 30, h: 40 }, es::Trim { x: 0, y: 0, w: 100, h: 200 }];
+    let plan = es::pack_trimmed("alice", &arm, &frames, &[(30, 40), (100, 200)], &opts).unwrap();
+    let atlas = es::atlas_json(&cam, &opts, &frames, &plan, Some(&trims));
+    let f = &atlas["frames"]["walk_0000"];
+    assert_eq!(f["trimmed"], true);
+    assert_eq!(f["frame"]["w"], 30);
+    assert_eq!(f["spriteSourceSize"], serde_json::json!({ "x": 10, "y": 20, "w": 30, "h": 40 }));
+    assert_eq!(f["sourceSize"], serde_json::json!({ "w": 100, "h": 200 }));
+    assert_eq!(atlas["frames"]["walk_0001"]["trimmed"], false);
+    let layout = es::Layout { sheets: Some(&plan), trims: Some(&trims), motion: Some(&[[1.5, -2.], [0., 0.]]) };
+    let m = es::manifest("alice", &arm, &cam, &opts, &frames, &layout);
+    let f0 = &m["animations"][0]["frames"][0];
+    assert_eq!(f0["offset"], serde_json::json!([10, 20]));
+    assert_eq!(f0["trimmed_size"], serde_json::json!([30, 40]));
+    assert_eq!(f0["rect"][2], 30);
+    assert_eq!(f0["root_motion"], serde_json::json!([1.5, -2.0]));
+}
+
+#[test]
+fn godot_sprite_frames() {
+    let arm = rig();
+    let opts = SequenceOptions { step: 2, godot: true, godot_dir: "res://art/alice".into(), ..Default::default() };
+    let frames = es::plan(&arm, &opts).unwrap();
+    let cam = RenderCamera { resolution: Vec2::new(100., 200.), round_to: 1, ..Default::default() };
+    let tres = es::godot_tres(&arm, &cam, &opts, &frames, &es::Layout::default());
+    assert!(tres.starts_with(&format!("[gd_resource type=\"SpriteFrames\" load_steps={} format=3]", frames.len() + 1)), "{tres}");
+    assert!(tres.contains("[ext_resource type=\"Texture2D\" path=\"res://art/alice/walk/walk_0000.png\" id=\"1\"]"));
+    assert!(tres.contains("\"name\": &\"walk\""));
+    assert!(tres.contains("\"speed\": 12.0"), "walk: 24 fps on twos");
+    assert!(tres.contains("\"texture\": ExtResource(\"1\")"));
+    // idle: frames 0 and 2 of 0..=3, at 6 fps on twos; both full length
+    assert!(tres.contains("\"speed\": 6.0"));
+
+    // sheets with trims: atlas regions with margins
+    let mut sopts = sheet_opts();
+    sopts.trim = true;
+    sopts.godot = true;
+    let two: Vec<_> = es::plan(&arm, &sopts).unwrap().into_iter().take(2).collect();
+    let plan = es::pack_trimmed("alice", &arm, &two, &[(30, 40), (100, 200)], &sopts).unwrap();
+    let trims = [es::Trim { x: 10, y: 20, w: 30, h: 40 }, es::Trim { x: 0, y: 0, w: 100, h: 200 }];
+    let tres = es::godot_tres(&arm, &cam, &sopts, &two, &es::Layout { sheets: Some(&plan), trims: Some(&trims), ..Default::default() });
+    assert!(tres.contains("path=\"res://alice.png\""), "{tres}");
+    assert!(tres.contains("[sub_resource type=\"AtlasTexture\" id=\"AtlasTexture_0\"]"));
+    assert!(tres.contains("margin = Rect2(10, 20, 70, 160)"));
+    assert!(tres.contains("\"texture\": SubResource(\"AtlasTexture_0\")"));
+    assert!(tres.contains("load_steps=4"), "1 sheet + 2 regions + 1");
+    assert_eq!(es::godot_prefix(" res://a\\b "), "res://a/b/");
+    assert_eq!(es::godot_prefix(""), "res://");
+}
+
+#[test]
+fn writer_trims_and_packs_at_the_end() {
+    let arm = rig();
+    let mut opts = sheet_opts();
+    opts.trim = true;
+    let frames: Vec<_> = es::plan(&arm, &opts).unwrap().into_iter().take(2).collect();
+    let dir = std::env::temp_dir().join(format!("keyternity_packed_test_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let (arm2, f2, o2) = (Armature { animations: arm.animations.clone(), ..Default::default() }, frames.clone(), opts.clone());
+    let packer: es::Packer = Box::new(move |sizes| es::pack_trimmed("alice", &arm2, &f2, sizes, &o2));
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(vec![]));
+    let seen2 = seen.clone();
+    let finish: es::Finisher = Box::new(move |layout| {
+        *seen2.lock().unwrap() = layout.trims.unwrap().to_vec();
+        vec![("alice_atlas.json".to_string(), "{}".to_string())]
+    });
+    let mut writer = es::Writer::spawn(es::Target::Folder(dir.clone()), (8, 8), (8, 8), png(), es::WriteMode::Packed(packer), finish);
+    // one opaque 2×3 block at (5, 4) in each 8×8 frame
+    for f in &frames {
+        let mut px = vec![0u8; 8 * 8 * 4];
+        for y in 4..7 {
+            for x in 5..7 {
+                px[(y * 8 + x) * 4..(y * 8 + x) * 4 + 4].copy_from_slice(&[9, 9, 9, 255]);
+            }
+        }
+        writer.send(es::RawFrame { path: f.path.clone(), pixels: px, bgra: false });
+    }
+    writer.close();
+    wait(&mut writer).unwrap();
+    assert_eq!(*seen.lock().unwrap(), vec![es::Trim { x: 5, y: 4, w: 2, h: 3 }; 2]);
+    let sheet = image::open(dir.join("alice.png")).unwrap().into_rgba8();
+    assert_eq!(sheet.dimensions(), (2 + 2 + 2, 3), "two 2×3 frames, 2 px apart");
+    assert_eq!(writer.sheets.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert!(dir.join("alice_atlas.json").exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn sliding_rig() -> Armature {
+    let size = Vec2::new(20., 10.);
+    let (vertices, indices) = keyternity_lib::renderer::create_tex_rect(&size);
+    let bone = Bone {
+        id: 0,
+        parent_id: -1,
+        name: "body".into(),
+        tex: "body".into(),
+        scale: Vec2::new(1., 1.),
+        pivot_scale: Vec2::new(1., 1.),
+        vertices,
+        indices,
+        ..Default::default()
+    };
+    let key = |frame: i32, x: f32| Keyframe { frame, bone_id: 0, element: AnimElement::PositionX, value: x, ..Default::default() };
+    let tex = Texture { name: "body".into(), size, ..Default::default() };
+    Armature {
+        bones: vec![bone],
+        styles: vec![Style { id: 0, name: "Default".into(), active: true, textures: vec![tex] }],
+        animations: vec![Animation { id: 0, name: "slide".into(), fps: 10, keyframes: vec![key(0, 0.), key(4, 40.)], ..Default::default() }],
+        ..Default::default()
+    }
+}
+
+#[test]
+fn following_a_bone_keeps_frames_in_place() {
+    let arm = sliding_rig();
+    let frames = es::plan(&arm, &SequenceOptions::default()).unwrap();
+    let mut cam = RenderCamera { resolution: Vec2::new(60., 40.), round_to: 1, ..Default::default() };
+    assert!(!es::outside_frames(&arm, &frames, &cam).is_empty(), "the slide leaves a still camera");
+    cam.follow = Some(0);
+    assert!(es::outside_frames(&arm, &frames, &cam).is_empty(), "a following camera keeps it");
+    let offsets = es::follow_offsets(&arm, &frames, &cam);
+    for (o, x) in offsets.iter().zip([0., 10., 20., 30., 40.]) {
+        assert!((o.x - x).abs() < 1e-3 && o.y.abs() < 1e-3, "{o}");
+    }
+    let opts = SequenceOptions { size_value: 50., ..Default::default() };
+    let motion = es::root_motion(&cam, &opts, &offsets).unwrap();
+    assert!((motion[4][0] - 20.).abs() < 1e-3 && motion[4][1].abs() < 1e-3, "{:?}", motion[4]);
+    // only x
+    cam.follow_x = false;
+    assert!(es::follow_offsets(&arm, &frames, &cam).iter().all(|o| o.x == 0.));
+    cam.follow = None;
+    assert!(es::root_motion(&cam, &opts, &offsets).is_none());
+    // fitting a following camera only needs the art's own size
+    cam.follow = Some(0);
+    cam.follow_x = true;
+    let (min, max) = keyternity_lib::render_camera::animation_bounds(&arm, &[0], Some(&cam)).unwrap();
+    assert!(((max - min).x - 20.).abs() < 1e-3, "{min} {max}");
+}
+
+#[test]
+fn export_again_repeats_the_last_export() {
+    let mut ui = Ui::default();
+    assert!(!keyternity_lib::export_modal::export_again(&mut ui));
+    ui.sequence_opts.last_dest = Some("C:/out".into());
+    ui.sequence_opts.last_sheets = true;
+    assert!(keyternity_lib::export_modal::export_again(&mut ui));
+    assert_eq!(*ui.saving.lock().unwrap(), Saving::FrameSequence);
+    assert_eq!(ui.file_path.lock().unwrap()[0], std::path::PathBuf::from("C:/out"));
+    assert!(ui.sequence_sheets && ui.sequence_overwrite_ok);
 }

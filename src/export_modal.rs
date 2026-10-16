@@ -389,6 +389,25 @@ pub fn dragonbones_export(
     });
 }
 
+/// Ctrl+Shift+E: re-run the last frame sequence or spritesheet export.
+pub const EXPORT_AGAIN: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND.plus(egui::Modifiers::SHIFT), egui::Key::E);
+
+/// Re-run the last frame sequence or spritesheet export to the same place, overwriting
+/// its files (§8.4). False if there's no last export to repeat.
+pub fn export_again(shared_ui: &mut crate::Ui) -> bool {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(dest) = shared_ui.sequence_opts.last_dest.clone() {
+        *shared_ui.file_path.lock().unwrap() = vec![std::path::PathBuf::from(dest)];
+        shared_ui.sequence_sheets = shared_ui.sequence_opts.last_sheets;
+        shared_ui.sequence_overwrite_ok = true;
+        *shared_ui.saving.lock().unwrap() = crate::Saving::FrameSequence;
+        return true;
+    }
+    let _ = shared_ui;
+    false
+}
+
 /// The Frame Sequence tab, or with `sheets` the Spritesheet tab (docs/FRAME_SEQUENCES.md
 /// §5, §6.1, §6.2): the same options, plus how the sheets are laid out.
 pub fn sequence_export(ui: &mut egui::Ui, shared_ui: &mut crate::Ui, config: &Config, armature: &Armature, sheets: bool) {
@@ -493,7 +512,8 @@ pub fn sequence_export(ui: &mut egui::Ui, shared_ui: &mut crate::Ui, config: &Co
 
     // sheet layout
     if sheets {
-        alt_hor(ui, config, true, |ui| {
+        basic_checkbox(ui, &loc(shared_ui, "trim"), &loc(shared_ui, "trim_desc"), &mut opts.trim, config, false);
+        ui.add_enabled_ui(!opts.trim, |ui| alt_hor(ui, config, true, |ui| {
             ui.label(loc(shared_ui, "columns")).on_hover_text(loc(shared_ui, "columns_desc"));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let auto = loc(shared_ui, "columns_auto");
@@ -517,7 +537,7 @@ pub fn sequence_export(ui: &mut egui::Ui, shared_ui: &mut crate::Ui, config: &Co
                     opts.sheet_columns = 0;
                 }
             });
-        });
+        }));
         alt_hor(ui, config, false, |ui| {
             ui.label(loc(shared_ui, "sheet_max")).on_hover_text(loc(shared_ui, "sheet_max_desc"));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -597,7 +617,50 @@ pub fn sequence_export(ui: &mut egui::Ui, shared_ui: &mut crate::Ui, config: &Co
                 });
         });
     });
-    basic_checkbox(ui, &loc(shared_ui, "phaser"), &loc(shared_ui, "phaser_desc"), &mut opts.phaser, config, true);
+    alt_hor(ui, config, true, |ui| {
+        ui.label(loc(shared_ui, "format")).on_hover_text(loc(shared_ui, "format_desc"));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            use crate::export_sequence::ImageFormat;
+            if opts.format == ImageFormat::Jpg {
+                let (e, v, _) = ui.float_input("sequence_jpg_quality".into(), shared_ui, opts.jpg_quality as f32, 1., None);
+                if e {
+                    opts.jpg_quality = (v.round() as i64).clamp(1, 100) as u8;
+                }
+                ui.label(loc(shared_ui, "quality"));
+            }
+            let name = |f: ImageFormat| match f {
+                ImageFormat::Png => "PNG",
+                ImageFormat::Webp => "WebP",
+                ImageFormat::Jpg => "JPG",
+            };
+            egui::ComboBox::new("sequence_format", "")
+                .selected_text(name(opts.format))
+                .width(70.)
+                .show_ui(ui, |ui| {
+                    for f in [ImageFormat::Png, ImageFormat::Webp, ImageFormat::Jpg] {
+                        ui.selectable_value(&mut opts.format, f, name(f));
+                    }
+                });
+        });
+    });
+    basic_checkbox(ui, &loc(shared_ui, "phaser"), &loc(shared_ui, "phaser_desc"), &mut opts.phaser, config, false);
+    basic_checkbox(ui, &loc(shared_ui, "godot"), &loc(shared_ui, "godot_desc"), &mut opts.godot, config, true);
+    if opts.godot {
+        alt_hor(ui, config, true, |ui| {
+            ui.label(loc(shared_ui, "godot_dir")).on_hover_text(loc(shared_ui, "godot_dir_desc"));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let options = Some(crate::ui::TextInputOptions {
+                    size: crate::Vec2::new(160., 20.),
+                    default: "res://".to_string(),
+                    ..Default::default()
+                });
+                let (e, v, _) = ui.text_input("sequence_godot_dir".into(), shared_ui, opts.godot_dir.clone(), options);
+                if e {
+                    opts.godot_dir = es::godot_prefix(&v);
+                }
+            });
+        });
+    }
 
     // what it'll write, or why it can't
     ui.add_space(4.);
@@ -606,6 +669,9 @@ pub fn sequence_export(ui: &mut egui::Ui, shared_ui: &mut crate::Ui, config: &Co
     let note = es::plan(armature, &planned).and_then(|frames| {
         if !sheets {
             return Ok(loc(shared_ui, "plan_note").replace("$n", &frames.len().to_string()).replace("$first", &frames[0].path));
+        }
+        if planned.trim {
+            return Ok(loc(shared_ui, "plan_note_trimmed").replace("$n", &frames.len().to_string()));
         }
         let Some(cam) = camera else {
             return Ok(loc(shared_ui, "plan_note_sheets_auto").replace("$n", &frames.len().to_string()));

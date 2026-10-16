@@ -25,7 +25,35 @@ Status: **Phase 1 in progress.** Built so far:
   code (and `load.spritesheet` for a single grid sheet), the Godot AnimatedSprite2D
   offset, and Unity's custom pivot and grid slicing.
 
-Phase 1 is complete apart from checking the files in Phaser and Godot.
+Phase 1 is complete (b9c57175).
+
+**Phase 2**, built:
+- **Formats:** PNG, lossless WebP, or JPG (with a quality setting, filled with the
+  camera's background or white), for frames and sheets.
+- **Trim and Pack** (Spritesheet tab): each frame is cropped to its visible pixels.
+  The writer keeps the cropped frames, then packs them onto shelves, tallest first,
+  with each sheet cropped to its contents (`pack_trimmed`). The atlas records each
+  frame's offset (`trimmed`, `spriteSourceSize`, `sourceSize`), and so does the
+  manifest (`offset`, `trimmed_size`). Frame sequences don't trim, because a cropped
+  image on its own loses its offset.
+- **Godot 4:** `<rig>.tres`, a SpriteFrames resource (`godot_tres`). For a sequence it
+  has one ext_resource per image; for sheets, AtlasTexture regions, with a `margin`
+  restoring trimmed offsets. Each animation has its speed (fps / step) and relative
+  frame durations. A Godot Folder option sets the `res://` path prefix.
+- **Follow bone** (camera panel): the camera follows a bone's movement on X and/or Y
+  (`render_camera::follow_offset`). Moving animations export in place, the manifest
+  records `root_motion` in output pixels, and Fit and the out-of-frame check follow
+  too.
+- **Export Again** (Ctrl+Shift+E, and in the File menu once there's been an
+  export): re-runs the last frame sequence or spritesheet export to the same folder or
+  zip, overwriting without asking. The destination is saved with the other options
+  in `editor.json`.
+- The writer gets the format (`Encoding`), the layout mode (`WriteMode`: files, grid,
+  or packed) and a `Finisher` that builds the data files from the final `Layout`
+  (sheets, trims, root motion).
+
+Still to check in the engines: Phaser (pack paths, atlas `anchor`, trimmed frames)
+and Godot (opening the `.tres`, margins).
 
 The decisions are in §9.
 

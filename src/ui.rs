@@ -788,6 +788,10 @@ pub fn kb_inputs(
         utils::save_native(shared_ui);
     }
 
+    // before Ctrl+E, which would match it too
+    if input.consume_shortcut(&export_modal::EXPORT_AGAIN) && !export_modal::export_again(shared_ui) {
+        events.open_export_modal();
+    }
     if input.consume_shortcut(&config.keys.export) {
         events.open_export_modal();
     }
@@ -1629,6 +1633,14 @@ fn menu_file_button(
         if top_bar_button!(str_export, Some(&config.keys.export)).clicked() {
             events.open_export_modal();
             ui.close();
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if shared_ui.sequence_opts.last_dest.is_some() {
+            let str_again = &shared_ui.loc("top_bar.file.export_again");
+            if top_bar_button!(str_again, Some(&export_modal::EXPORT_AGAIN)).clicked() {
+                export_modal::export_again(shared_ui);
+                ui.close();
+            }
         }
         let str_startup = &shared_ui.loc("top_bar.file.startup");
         if top_bar_button!(str_startup, None).clicked() {

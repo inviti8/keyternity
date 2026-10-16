@@ -71,6 +71,7 @@
       "save": "Save",
       "save_as": "Save As",
       "export": "Export",
+      "export_again": "Export Again",
       "startup": "Startup"
     },
     "edit": {
@@ -145,6 +146,16 @@
     "header_sequence": "Frame Sequence",
     "header_spritesheet": "Spritesheet",
     "sequence": {
+      "plan_note_trimmed": "$n frames, trimmed and packed onto sheets when exporting",
+      "trim": "Trim and Pack ℹ:",
+      "trim_desc": "Crop each frame to its visible pixels and pack them tightly, for smaller sheets. The atlas keeps each frame's offset, so Phaser, PixiJS and Godot draw it in the right place.",
+      "format": "Format ℹ:",
+      "format_desc": "PNG: lossless, with transparency. WebP: lossless and smaller, with transparency. JPG: smallest, without transparency (filled with the camera's background, or white).",
+      "quality": "Quality:",
+      "godot": "Godot SpriteFrames ℹ:",
+      "godot_desc": "Also write <rig>.tres, a Godot 4 SpriteFrames resource for an AnimatedSprite2D, with every animation at its speed.",
+      "godot_dir": "Godot Folder ℹ:",
+      "godot_dir_desc": "Where the exported files will be in your Godot project, e.g. res://art/alice/. The .tres refers to the images by this path.",
       "header_sheets": "Spritesheet",
       "columns": "Columns ℹ:",
       "columns_desc": "Auto makes each sheet as square as it can. Fixed sets how many frames go across.",
@@ -261,6 +272,10 @@
     }
   },
   "camera_panel": {
+    "follow": "Follow ℹ:",
+    "follow_desc": "A bone for the camera to follow through animations, such as the root or hips. Walks and jumps that move across the canvas stay in frame and export in place; the manifest records how far the bone moved (root_motion), so a game can move the sprite.",
+    "follow_none": "Nothing",
+    "follow_axes": "Follow on:",
     "heading": "Render Camera",
     "name": "Name:",
     "position": "Position:",

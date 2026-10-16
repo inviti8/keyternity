@@ -20,6 +20,27 @@ pub enum SizeMode {
     Height,
 }
 
+/// The image format frames and sheets are written in.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq, Debug, Default)]
+pub enum ImageFormat {
+    #[default]
+    Png,
+    /// lossless WebP: smaller than PNG, with alpha
+    Webp,
+    /// JPG: no alpha, filled with the camera's background (white if transparent)
+    Jpg,
+}
+
+impl ImageFormat {
+    pub fn ext(&self) -> &'static str {
+        match self {
+            ImageFormat::Png => "png",
+            ImageFormat::Webp => "webp",
+            ImageFormat::Jpg => "jpg",
+        }
+    }
+}
+
 /// One animation's part in an export.
 #[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Debug)]
 #[serde(default)]
@@ -71,6 +92,19 @@ pub struct SequenceOptions {
     pub sheet_padding: u32,
     /// spritesheets: each animation starts its own sheet
     pub sheet_per_anim: bool,
+    pub format: ImageFormat,
+    /// JPG quality, 1-100
+    pub jpg_quality: u8,
+    /// spritesheets: crop each frame to its visible pixels and pack them tightly
+    pub trim: bool,
+    /// write a Godot 4 SpriteFrames resource (§7.2)
+    pub godot: bool,
+    /// where the exported files sit in the Godot project ("res://art/alice/")
+    pub godot_dir: String,
+    /// the last export's folder or zip, for Export Again (§8.4)
+    pub last_dest: Option<String>,
+    /// the last export was spritesheets
+    pub last_sheets: bool,
 }
 
 impl Default for SequenceOptions {
@@ -92,6 +126,13 @@ impl Default for SequenceOptions {
             sheet_max: 4096,
             sheet_padding: 2,
             sheet_per_anim: false,
+            format: ImageFormat::Png,
+            jpg_quality: 90,
+            trim: false,
+            godot: false,
+            godot_dir: "res://".to_string(),
+            last_dest: None,
+            last_sheets: false,
         }
     }
 }
@@ -112,11 +153,14 @@ impl SequenceOptions {
     }
 }
 
-/// The options as an export uses them: spritesheet frames are named without folders.
+/// The options as an export uses them: spritesheet frames are named without folders,
+/// and only spritesheets trim (a trimmed frame on its own loses its offset).
 pub fn effective(opts: &SequenceOptions, sheets: bool) -> SequenceOptions {
     let mut o = opts.clone();
     if sheets {
         o.anim_folders = false;
+    } else {
+        o.trim = false;
     }
     o
 }
@@ -191,7 +235,7 @@ pub fn plan(armature: &Armature, opts: &SequenceOptions) -> Result<Vec<PlannedFr
             frames.push(PlannedFrame {
                 anim: a,
                 frame: f,
-                path: format!("{key}.png"),
+                path: format!("{key}.{}", opts.format.ext()),
                 key,
                 duration: shown as f32 / fps,
             });
@@ -239,28 +283,100 @@ pub fn export_camera(armature: &Armature, opts: &SequenceOptions) -> Option<Rend
         .filter(|(_, a)| opts.choice(a.id).export)
         .map(|(i, _)| i)
         .collect();
-    let (min, max) = render_camera::animation_bounds(armature, &chosen)?;
+    let (min, max) = render_camera::animation_bounds(armature, &chosen, None)?;
     let cam = RenderCamera { name: "Auto".to_string(), ..Default::default() };
     Some(render_camera::fit(&cam, min, max, 8.))
 }
 
+/// A frame cropped to its visible pixels: its offset in the full frame, and its size.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Trim {
+    pub x: u32,
+    pub y: u32,
+    pub w: u32,
+    pub h: u32,
+}
+
+/// What the data files describe besides the frames: where they went on sheets, how
+/// they were trimmed, and how far a followed bone moved the camera.
+#[derive(Clone, Copy, Default)]
+pub struct Layout<'a> {
+    pub sheets: Option<&'a SheetPlan>,
+    /// per planned frame
+    pub trims: Option<&'a [Trim]>,
+    /// per planned frame: the camera's movement in output pixels (x right, y down)
+    pub motion: Option<&'a [[f32; 2]]>,
+}
+
+/// The visible part of `img` (alpha above 0). An empty frame keeps one pixel.
+pub fn trim_bounds(img: &image::RgbaImage) -> Trim {
+    let (w, h) = img.dimensions();
+    let raw = img.as_raw();
+    let (mut x0, mut y0, mut x1, mut y1) = (w, h, 0, 0);
+    for y in 0..h {
+        let row = &raw[(y * w * 4) as usize..((y + 1) * w * 4) as usize];
+        let mut first = None;
+        let mut last = 0;
+        for (x, p) in row.chunks_exact(4).enumerate() {
+            if p[3] > 0 {
+                first.get_or_insert(x as u32);
+                last = x as u32;
+            }
+        }
+        if let Some(f) = first {
+            x0 = x0.min(f);
+            x1 = x1.max(last);
+            y0 = y0.min(y);
+            y1 = y;
+        }
+    }
+    if x0 > x1 || y0 > y1 {
+        return Trim { x: 0, y: 0, w: 1, h: 1 };
+    }
+    Trim { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 }
+}
+
+/// `img` cropped to `t`.
+pub fn crop(img: &image::RgbaImage, t: Trim) -> image::RgbaImage {
+    let mut out = image::RgbaImage::new(t.w, t.h);
+    let (w, raw) = (img.width() as usize, img.as_raw());
+    let dst: &mut [u8] = &mut out;
+    for r in 0..t.h as usize {
+        let s = ((t.y as usize + r) * w + t.x as usize) * 4;
+        dst[r * t.w as usize * 4..(r + 1) * t.w as usize * 4].copy_from_slice(&raw[s..s + t.w as usize * 4]);
+    }
+    out
+}
+
 /// The manifest (§7): sizes and pivot in output pixels, and every frame's file (or, for
-/// spritesheets, its sheet and rectangle).
-pub fn manifest(rig: &str, armature: &Armature, cam: &RenderCamera, opts: &SequenceOptions, frames: &[PlannedFrame], sheets: Option<&SheetPlan>) -> Value {
+/// spritesheets, its sheet and rectangle), trim and root motion.
+pub fn manifest(rig: &str, armature: &Armature, cam: &RenderCamera, opts: &SequenceOptions, frames: &[PlannedFrame], layout: &Layout) -> Value {
     let (factor, (w, h)) = output_size(cam, opts);
     let pivot = cam.pivot_px() * factor;
+    let sheets = layout.sheets;
     let mut anims = vec![];
     for (a, anim) in armature.animations.iter().enumerate() {
         let list: Vec<Value> = frames
             .iter()
             .enumerate()
             .filter(|(_, f)| f.anim == a)
-            .map(|(i, f)| match sheets {
-                Some(s) => {
-                    let (sheet, x, y) = s.placements[i];
-                    json!({ "name": f.key, "sheet": sheet, "rect": [x, y, s.cell.0, s.cell.1], "frame": f.frame, "duration": round4(f.duration) })
+            .map(|(i, f)| {
+                let mut e = match sheets {
+                    Some(s) => {
+                        let (sheet, x, y) = s.placements[i];
+                        let (rw, rh) = s.rects[i];
+                        json!({ "name": f.key, "sheet": sheet, "rect": [x, y, rw, rh], "frame": f.frame, "duration": round4(f.duration) })
+                    }
+                    None => json!({ "file": f.path, "frame": f.frame, "duration": round4(f.duration) }),
+                };
+                if let Some(t) = layout.trims.map(|t| t[i]) {
+                    e["offset"] = json!([t.x, t.y]);
+                    e["trimmed_size"] = json!([t.w, t.h]);
                 }
-                None => json!({ "file": f.path, "frame": f.frame, "duration": round4(f.duration) }),
+                if let Some(m) = layout.motion.map(|m| m[i]) {
+                    e["root_motion"] = json!([round4(m[0]), round4(m[1])]);
+                }
+                e
             })
             .collect();
         if list.is_empty() {
@@ -334,18 +450,95 @@ pub fn phaser_pack(rig: &str, frames: &[PlannedFrame], sheets: Option<&SheetPlan
 }
 
 /// The extra files an export writes beside the frames or sheets: (name, contents).
-pub fn extra_files(rig: &str, armature: &Armature, cam: &RenderCamera, opts: &SequenceOptions, frames: &[PlannedFrame], sheets: Option<&SheetPlan>) -> Vec<(String, String)> {
+pub fn extra_files(rig: &str, armature: &Armature, cam: &RenderCamera, opts: &SequenceOptions, frames: &[PlannedFrame], layout: &Layout) -> Vec<(String, String)> {
     let pretty = |v: Value| serde_json::to_string_pretty(&v).unwrap();
-    let mut files = vec![(format!("{rig}_frames.json"), pretty(manifest(rig, armature, cam, opts, frames, sheets)))];
+    let sheets = layout.sheets;
+    let mut files = vec![(format!("{rig}_frames.json"), pretty(manifest(rig, armature, cam, opts, frames, layout)))];
     if let Some(s) = sheets {
-        files.push((format!("{rig}_atlas.json"), pretty(atlas_json(cam, opts, frames, s))));
+        files.push((format!("{rig}_atlas.json"), pretty(atlas_json(cam, opts, frames, s, layout.trims))));
     }
     if opts.phaser {
         let atlas = sheets.map(|_| rig);
         files.push((format!("{rig}_anims.json"), pretty(phaser_anims(armature, opts, frames, atlas))));
         files.push((format!("{rig}_pack.json"), pretty(phaser_pack(rig, frames, sheets))));
     }
+    if opts.godot {
+        files.push((format!("{rig}.tres"), godot_tres(armature, cam, opts, frames, layout)));
+    }
     files
+}
+
+/// `dir` as a Godot path prefix ending in "/": "res://" if empty.
+pub fn godot_prefix(dir: &str) -> String {
+    let d = dir.trim().replace('\\', "/");
+    if d.is_empty() {
+        return "res://".to_string();
+    }
+    if d.ends_with('/') { d } else { format!("{d}/") }
+}
+
+/// A Godot 4 SpriteFrames resource (§7.2) for an AnimatedSprite2D: one animation per
+/// exported animation, at its FPS (divided by the step), each frame's relative
+/// duration, and the frame textures: the images, or AtlasTexture regions of the sheets
+/// (with a margin restoring a trimmed frame's offset).
+pub fn godot_tres(armature: &Armature, cam: &RenderCamera, opts: &SequenceOptions, frames: &[PlannedFrame], layout: &Layout) -> String {
+    let prefix = godot_prefix(&opts.godot_dir);
+    let (_, (fw, fh)) = output_size(cam, opts);
+    let mut ext = String::new();
+    let mut sub = String::new();
+    let mut count = 0;
+    // the texture each frame shows
+    let mut textures = vec![];
+    match layout.sheets {
+        Some(s) => {
+            for (i, file) in s.files.iter().enumerate() {
+                ext += &format!("[ext_resource type=\"Texture2D\" path=\"{prefix}{file}\" id=\"{}\"]\n", i + 1);
+                count += 1;
+            }
+            for (i, _) in frames.iter().enumerate() {
+                let (sheet, x, y) = s.placements[i];
+                let (w, h) = s.rects[i];
+                sub += &format!("\n[sub_resource type=\"AtlasTexture\" id=\"AtlasTexture_{i}\"]\natlas = ExtResource(\"{}\")\nregion = Rect2({x}, {y}, {w}, {h})\n", sheet + 1);
+                if let Some(t) = layout.trims.map(|t| t[i]) {
+                    sub += &format!("margin = Rect2({}, {}, {}, {})\n", t.x, t.y, fw.saturating_sub(t.w), fh.saturating_sub(t.h));
+                }
+                count += 1;
+                textures.push(format!("SubResource(\"AtlasTexture_{i}\")"));
+            }
+        }
+        None => {
+            for (i, f) in frames.iter().enumerate() {
+                ext += &format!("[ext_resource type=\"Texture2D\" path=\"{prefix}{}\" id=\"{}\"]\n", f.path, i + 1);
+                count += 1;
+                textures.push(format!("ExtResource(\"{}\")", i + 1));
+            }
+        }
+    }
+
+    let mut anims = vec![];
+    for (a, anim) in armature.animations.iter().enumerate() {
+        let speed = anim.fps.max(1) as f32 / opts.step.max(1) as f32;
+        let list: Vec<String> = frames
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| f.anim == a)
+            .map(|(i, f)| format!("{{\n\"duration\": {:?},\n\"texture\": {}\n}}", round4(f.duration * speed), textures[i]))
+            .collect();
+        if list.is_empty() {
+            continue;
+        }
+        let name = anim.name.replace('\\', "\\\\").replace('"', "\\\"");
+        anims.push(format!(
+            "{{\n\"frames\": [{}],\n\"loop\": true,\n\"name\": &\"{name}\",\n\"speed\": {:?}\n}}",
+            list.join(", "),
+            round4(speed)
+        ));
+    }
+    format!(
+        "[gd_resource type=\"SpriteFrames\" load_steps={} format=3]\n\n{ext}{sub}\n[resource]\nanimations = [{}]\n",
+        count + 1,
+        anims.join(", ")
+    )
 }
 
 /// Where each frame goes on the spritesheets (§6.2): a uniform grid of `cell`-sized
@@ -359,6 +552,77 @@ pub struct SheetPlan {
     pub sizes: Vec<(u32, u32)>,
     /// for each planned frame: (sheet, x, y)
     pub placements: Vec<(usize, u32, u32)>,
+    /// for each planned frame: its size on the sheet (`cell`, or trimmed)
+    pub rects: Vec<(u32, u32)>,
+}
+
+/// Frames in sheet groups: one group, or one per animation.
+fn sheet_groups(frames: &[PlannedFrame], per_anim: bool) -> Vec<Vec<usize>> {
+    let mut groups: Vec<Vec<usize>> = vec![];
+    for (i, f) in frames.iter().enumerate() {
+        if groups.is_empty() || (per_anim && frames[groups.last().unwrap()[0]].anim != f.anim) {
+            groups.push(vec![]);
+        }
+        groups.last_mut().unwrap().push(i);
+    }
+    groups
+}
+
+/// Name the sheets: "walk.png", or "walk_0.png", "walk_1.png" when there are several.
+fn name_sheets(plan: &mut SheetPlan, ext: &str) {
+    let bases = plan.files.clone();
+    for (s, base) in bases.iter().enumerate() {
+        let count = bases.iter().filter(|b| *b == base).count();
+        let nth = bases[..s].iter().filter(|b| *b == base).count();
+        plan.files[s] = if count == 1 { format!("{base}.{ext}") } else { format!("{base}_{nth}.{ext}") };
+    }
+}
+
+/// Pack frames of different `sizes` (trimmed) tightly onto sheets: shelves of frames
+/// sorted tallest first, each sheet cropped to what it holds.
+pub fn pack_trimmed(rig: &str, armature: &Armature, frames: &[PlannedFrame], sizes: &[(u32, u32)], opts: &SequenceOptions) -> Result<SheetPlan, String> {
+    let pad = opts.sheet_padding;
+    let max = opts.sheet_max.max(64);
+    if let Some((w, h)) = sizes.iter().find(|(w, h)| *w > max || *h > max) {
+        return Err(format!("A frame is {w}×{h} px, larger than the {max} px sheet limit. Use a smaller output size or a larger sheet size."));
+    }
+    let mut plan = SheetPlan {
+        cell: (0, 0),
+        padding: pad,
+        files: vec![],
+        sizes: vec![],
+        placements: vec![(0, 0, 0); frames.len()],
+        rects: sizes.to_vec(),
+    };
+    for group in sheet_groups(frames, opts.sheet_per_anim) {
+        let mut order = group.clone();
+        order.sort_by(|a, b| sizes[*b].1.cmp(&sizes[*a].1));
+        let base = if opts.sheet_per_anim { sanitize(&armature.animations[frames[group[0]].anim].name) } else { rig.to_string() };
+        // shelves: x along the current one, its top and height
+        let (mut x, mut top, mut shelf, mut used) = (0u32, 0u32, 0u32, (0u32, 0u32));
+        let mut sheet = plan.files.len();
+        plan.files.push(base.clone());
+        for i in order {
+            let (w, h) = sizes[i];
+            if x > 0 && x + w > max {
+                top += shelf + pad;
+                (x, shelf) = (0, 0);
+            }
+            if top + h > max {
+                plan.sizes.push(used);
+                sheet = plan.files.len();
+                plan.files.push(base.clone());
+                (x, top, shelf, used) = (0, 0, 0, (0, 0));
+            }
+            plan.placements[i] = (sheet, x, top);
+            used = (used.0.max(x + w), used.1.max(top + h));
+            shelf = shelf.max(h);
+            x += w + pad;
+        }
+        plan.sizes.push(used);
+    }
+    name_sheets(&mut plan, opts.format.ext());
+    Ok(plan)
 }
 
 /// Lay `frames` of size `cell` out on sheets. Errors if a frame is bigger than the
@@ -377,18 +641,15 @@ pub fn pack_sheets(rig: &str, armature: &Armature, frames: &[PlannedFrame], cell
     let max_cols = if opts.sheet_columns > 0 { opts.sheet_columns.min(max_cols) } else { max_cols };
     let per_sheet = (max_cols * max_rows) as usize;
 
-    // groups: one for everything, or one per animation
-    let mut groups: Vec<Vec<usize>> = vec![];
-    for (i, f) in frames.iter().enumerate() {
-        let new_group = groups.is_empty() || (opts.sheet_per_anim && frames[groups.last().unwrap()[0]].anim != f.anim);
-        if new_group {
-            groups.push(vec![]);
-        }
-        groups.last_mut().unwrap().push(i);
-    }
-
-    let mut plan = SheetPlan { cell, padding: pad, files: vec![], sizes: vec![], placements: vec![(0, 0, 0); frames.len()] };
-    for group in groups {
+    let mut plan = SheetPlan {
+        cell,
+        padding: pad,
+        files: vec![],
+        sizes: vec![],
+        placements: vec![(0, 0, 0); frames.len()],
+        rects: vec![cell; frames.len()],
+    };
+    for group in sheet_groups(frames, opts.sheet_per_anim) {
         for chunk in group.chunks(per_sheet) {
             let n = chunk.len() as u32;
             let mut cols = if opts.sheet_columns > 0 {
@@ -412,38 +673,34 @@ pub fn pack_sheets(rig: &str, armature: &Armature, frames: &[PlannedFrame], cell
             plan.files.push(base);
         }
     }
-    // name the sheets: "walk.png", or "walk_0.png", "walk_1.png" when there are several
-    let bases = plan.files.clone();
-    for (s, base) in bases.iter().enumerate() {
-        let count = bases.iter().filter(|b| *b == base).count();
-        let nth = bases[..s].iter().filter(|b| *b == base).count();
-        plan.files[s] = if count == 1 { format!("{base}.png") } else { format!("{base}_{nth}.png") };
-    }
+    name_sheets(&mut plan, opts.format.ext());
     Ok(plan)
 }
 
 /// The atlas (§7.1): TexturePacker "JSON Hash" for one sheet (Phaser `load.atlas`,
 /// PixiJS), Phaser's multiatlas format for several (`load.multiatlas`). The pivot is
 /// given both as `anchor` (Phaser) and `pivot` (TexturePacker), normalised.
-pub fn atlas_json(cam: &RenderCamera, opts: &SequenceOptions, frames: &[PlannedFrame], sheets: &SheetPlan) -> Value {
+pub fn atlas_json(cam: &RenderCamera, opts: &SequenceOptions, frames: &[PlannedFrame], sheets: &SheetPlan, trims: Option<&[Trim]>) -> Value {
     let (factor, (w, h)) = output_size(cam, opts);
     let pivot = cam.pivot_px() * factor;
     let anchor = json!({ "x": round4(pivot.x / w as f32), "y": round4(pivot.y / h as f32) });
     let entry = |i: usize| {
         let (_, x, y) = sheets.placements[i];
+        let t = trims.map_or(Trim { x: 0, y: 0, w, h }, |t| t[i]);
         json!({
-            "frame": { "x": x, "y": y, "w": w, "h": h },
+            "frame": { "x": x, "y": y, "w": t.w, "h": t.h },
             "rotated": false,
-            "trimmed": false,
-            "spriteSourceSize": { "x": 0, "y": 0, "w": w, "h": h },
+            "trimmed": t.w != w || t.h != h,
+            "spriteSourceSize": { "x": t.x, "y": t.y, "w": t.w, "h": t.h },
             "sourceSize": { "w": w, "h": h },
             "anchor": anchor,
             "pivot": anchor,
         })
     };
+    let format = if opts.format == ImageFormat::Jpg { "RGB888" } else { "RGBA8888" };
     let meta = |s: usize| {
         let (sw, sh) = sheets.sizes[s];
-        json!({ "image": sheets.files[s], "format": "RGBA8888", "size": { "w": sw, "h": sh }, "scale": 1 })
+        json!({ "image": sheets.files[s], "format": format, "size": { "w": sw, "h": sh }, "scale": 1 })
     };
     let app = json!({ "app": "Keyternity", "version": env!("CARGO_PKG_VERSION") });
     if sheets.files.len() == 1 {
@@ -474,6 +731,31 @@ pub fn atlas_json(cam: &RenderCamera, opts: &SequenceOptions, frames: &[PlannedF
     json!({ "textures": textures, "meta": app })
 }
 
+/// How far the camera moves for each planned frame (world units): by its followed
+/// bone's movement from the rest pose.
+pub fn follow_offsets(armature: &Armature, frames: &[PlannedFrame], cam: &RenderCamera) -> Vec<crate::shared::Vec2> {
+    if cam.follow.is_none() {
+        return vec![crate::shared::Vec2::ZERO; frames.len()];
+    }
+    let mut arm = Armature { bones: armature.bones.clone(), animations: armature.animations.clone(), ..Default::default() };
+    frames
+        .iter()
+        .map(|f| {
+            let posed = arm.animate(f.anim, f.frame, Some(&armature.bones));
+            render_camera::follow_offset(cam, &armature.bones, &posed)
+        })
+        .collect()
+}
+
+/// `follow_offsets` in output pixels (x right, y down): the root motion an engine can
+/// apply to move the in-place sprite. None if the camera follows nothing.
+pub fn root_motion(cam: &RenderCamera, opts: &SequenceOptions, offsets: &[crate::shared::Vec2]) -> Option<Vec<[f32; 2]>> {
+    cam.follow?;
+    let (factor, _) = output_size(cam, opts);
+    let s = cam.scale * factor;
+    Some(offsets.iter().map(|o| [o.x * s, -o.y * s]).collect())
+}
+
 /// The chosen frames that go outside `cam`, as "walk: frames 8–11" per animation.
 /// `tolerance` is in output pixels at scale 1.
 pub fn outside_frames(armature: &Armature, frames: &[PlannedFrame], cam: &RenderCamera) -> Vec<String> {
@@ -483,7 +765,8 @@ pub fn outside_frames(armature: &Armature, frames: &[PlannedFrame], cam: &Render
     let mut out: Vec<(usize, Vec<i32>)> = vec![];
     for f in frames {
         let posed = arm.animate(f.anim, f.frame, Some(&armature.bones));
-        let Some((lo, hi)) = render_camera::pose_bounds(armature, &posed) else { continue };
+        let shift = render_camera::follow_offset(cam, &armature.bones, &posed);
+        let Some((lo, hi)) = render_camera::pose_bounds(armature, &posed).map(|(lo, hi)| (lo - shift, hi - shift)) else { continue };
         let outside = lo.x < min.x - tolerance || lo.y < min.y - tolerance || hi.x > max.x + tolerance || hi.y > max.y + tolerance;
         if outside {
             match out.last_mut() {
@@ -672,39 +955,90 @@ pub struct RawFrame {
     pub bgra: bool,
 }
 
+/// How the writer encodes images.
+#[derive(Clone, Copy, Debug)]
+pub struct Encoding {
+    pub format: ImageFormat,
+    pub jpg_quality: u8,
+    /// what JPG's missing alpha is filled with
+    pub background: [u8; 3],
+}
+
+impl Encoding {
+    pub fn new(opts: &SequenceOptions, background: Option<Color>) -> Encoding {
+        let bg = background.map_or([255, 255, 255], |c| [c.r, c.g, c.b]);
+        Encoding { format: opts.format, jpg_quality: opts.jpg_quality.clamp(1, 100), background: bg }
+    }
+
+    pub fn encode(&self, img: &image::RgbaImage) -> Result<Vec<u8>, String> {
+        use image::ImageEncoder;
+        let (w, h) = img.dimensions();
+        let mut buf = vec![];
+        let result = match self.format {
+            ImageFormat::Png => image::codecs::png::PngEncoder::new(&mut buf).write_image(img.as_raw(), w, h, image::ExtendedColorType::Rgba8),
+            ImageFormat::Webp => image::codecs::webp::WebPEncoder::new_lossless(&mut buf).write_image(img.as_raw(), w, h, image::ExtendedColorType::Rgba8),
+            ImageFormat::Jpg => {
+                // over the background, without alpha
+                let bg = self.background;
+                let mut rgb = Vec::with_capacity((w * h * 3) as usize);
+                for p in img.as_raw().chunks_exact(4) {
+                    let a = p[3] as u32;
+                    for c in 0..3 {
+                        rgb.push(((p[c] as u32 * a + bg[c] as u32 * (255 - a) + 127) / 255) as u8);
+                    }
+                }
+                image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, self.jpg_quality).write_image(&rgb, w, h, image::ExtendedColorType::Rgb8)
+            }
+        };
+        result.map_err(|e| e.to_string())?;
+        Ok(buf)
+    }
+}
+
+/// Builds a packed layout once every trimmed frame's size is known.
+pub type Packer = Box<dyn FnOnce(&[(u32, u32)]) -> Result<SheetPlan, String> + Send>;
+/// Builds the data files (manifest, atlas, Phaser, Godot) from the final layout.
+pub type Finisher = Box<dyn FnOnce(&Layout) -> Vec<(String, String)> + Send>;
+
+/// How the writer lays frames out.
+pub enum WriteMode {
+    /// each frame its own file
+    Files,
+    /// onto spritesheets laid out beforehand: each written when the next starts
+    Grid(SheetPlan),
+    /// trimmed, kept until the end, then packed onto spritesheets
+    Packed(Packer),
+}
+
 /// Frames the writer may hold at once; rendering waits while it's this far behind.
 pub const MAX_QUEUED: usize = 3;
 
-/// The background thread that shrinks, encodes and writes frames, then the extra
+/// The background thread that shrinks, trims, encodes and writes frames, then the data
 /// files, so the app stays responsive (§8.3).
 pub struct Writer {
     tx: Option<std::sync::mpsc::Sender<RawFrame>>,
     /// sent but not yet written
     pub queued: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     pub written: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    /// spritesheets written (known for packed sheets only at the end)
+    pub sheets: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     handle: Option<std::thread::JoinHandle<Result<(), String>>>,
 }
 
 impl Writer {
-    /// With `sheets`, frames are copied onto spritesheets (each written when the next
-    /// starts, and the last at the end) instead of written one by one.
-    pub fn spawn(mut target: Target, render: (u32, u32), out: (u32, u32), extra: Vec<(String, String)>, sheets: Option<SheetPlan>) -> Writer {
+    pub fn spawn(mut target: Target, render: (u32, u32), out: (u32, u32), enc: Encoding, mode: WriteMode, finish: Finisher) -> Writer {
         use std::sync::atomic::Ordering;
         let (tx, rx) = std::sync::mpsc::channel::<RawFrame>();
         let queued = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let written = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let (q, w) = (queued.clone(), written.clone());
+        let sheets_written = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (q, w, sw) = (queued.clone(), written.clone(), sheets_written.clone());
         let handle = std::thread::spawn(move || -> Result<(), String> {
-            let encode = |img: &image::RgbaImage| -> Result<Vec<u8>, String> {
-                let mut png = vec![];
-                use image::ImageEncoder;
-                image::codecs::png::PngEncoder::new(&mut png)
-                    .write_image(img.as_raw(), img.width(), img.height(), image::ExtendedColorType::Rgba8)
-                    .map_err(|e| e.to_string())?;
-                Ok(png)
-            };
-            // the sheet being filled: (index, image)
+            let trimming = matches!(mode, WriteMode::Packed(_));
+            // grid: the sheet being filled; packed: every trimmed frame
             let mut sheet: Option<(usize, image::RgbaImage)> = None;
+            let mut kept: Vec<image::RgbaImage> = vec![];
+            let mut trims: Vec<Trim> = vec![];
             let mut index = 0;
             for mut frame in rx {
                 if frame.pixels.len() != (render.0 * render.1 * 4) as usize {
@@ -718,33 +1052,60 @@ impl Writer {
                     }
                     image::RgbaImage::from_raw(render.0, render.1, frame.pixels).unwrap()
                 };
-                match &sheets {
-                    None => target.write(&frame.path, &encode(&img)?)?,
-                    Some(plan) => {
+                match &mode {
+                    WriteMode::Files => target.write(&frame.path, &enc.encode(&img)?)?,
+                    WriteMode::Grid(plan) => {
                         let (s, x, y) = plan.placements[index];
                         if sheet.as_ref().map(|(i, _)| *i) != Some(s) {
                             if let Some((i, done)) = sheet.take() {
-                                target.write(&plan.files[i], &encode(&done)?)?;
+                                target.write(&plan.files[i], &enc.encode(&done)?)?;
+                                sw.fetch_add(1, Ordering::SeqCst);
                             }
-                            sheet = Some((s, image::RgbaImage::new(plan.sizes[s].0, plan.sizes[s].1)));
+                            sheet = Some((s, blank(plan.sizes[s], &enc)));
                         }
-                        let (_, dst) = sheet.as_mut().unwrap();
-                        copy_into(dst, &img, x, y);
+                        copy_into(&mut sheet.as_mut().unwrap().1, &img, x, y);
+                    }
+                    WriteMode::Packed(_) => {
+                        let t = trim_bounds(&img);
+                        kept.push(crop(&img, t));
+                        trims.push(t);
                     }
                 }
                 index += 1;
                 q.fetch_sub(1, Ordering::SeqCst);
                 w.fetch_add(1, Ordering::SeqCst);
             }
-            if let (Some(plan), Some((i, done))) = (&sheets, sheet.take()) {
-                target.write(&plan.files[i], &encode(&done)?)?;
-            }
-            for (name, contents) in extra {
+
+            let files = match mode {
+                WriteMode::Files => finish(&Layout::default()),
+                WriteMode::Grid(plan) => {
+                    if let Some((i, done)) = sheet.take() {
+                        target.write(&plan.files[i], &enc.encode(&done)?)?;
+                        sw.fetch_add(1, Ordering::SeqCst);
+                    }
+                    finish(&Layout { sheets: Some(&plan), ..Default::default() })
+                }
+                WriteMode::Packed(packer) => {
+                    let sizes: Vec<(u32, u32)> = kept.iter().map(|i| i.dimensions()).collect();
+                    let plan = packer(&sizes)?;
+                    for s in 0..plan.files.len() {
+                        let mut img = blank(plan.sizes[s], &enc);
+                        for (i, frame) in kept.iter().enumerate().filter(|(i, _)| plan.placements[*i].0 == s) {
+                            let (_, x, y) = plan.placements[i];
+                            copy_into(&mut img, frame, x, y);
+                        }
+                        target.write(&plan.files[s], &enc.encode(&img)?)?;
+                        sw.fetch_add(1, Ordering::SeqCst);
+                    }
+                    finish(&Layout { sheets: Some(&plan), trims: trimming.then_some(&trims[..]), ..Default::default() })
+                }
+            };
+            for (name, contents) in files {
                 target.write(&name, contents.as_bytes())?;
             }
             target.close()
         });
-        Writer { tx: Some(tx), queued, written, handle: Some(handle) }
+        Writer { tx: Some(tx), queued, written, sheets: sheets_written, handle: Some(handle) }
     }
 
     /// Hand a frame over. False if the writer has stopped (it failed).
@@ -757,7 +1118,7 @@ impl Writer {
         self.queued.load(std::sync::atomic::Ordering::SeqCst) < MAX_QUEUED
     }
 
-    /// No more frames: the writer finishes with the extra files.
+    /// No more frames: the writer finishes with the sheets and data files.
     pub fn close(&mut self) {
         self.tx = None;
     }
@@ -772,8 +1133,18 @@ impl Writer {
     }
 }
 
-/// An export in progress: `lib.rs` renders a frame or two per app frame and hands them
-/// to the `Writer`.
+/// An empty sheet: transparent, or for JPG the background.
+fn blank((w, h): (u32, u32), enc: &Encoding) -> image::RgbaImage {
+    if enc.format == ImageFormat::Jpg {
+        let [r, g, b] = enc.background;
+        image::RgbaImage::from_pixel(w, h, image::Rgba([r, g, b, 255]))
+    } else {
+        image::RgbaImage::new(w, h)
+    }
+}
+
+/// An export in progress: `lib.rs` renders frames each app frame and hands them to the
+/// `Writer`.
 pub struct Job {
     /// the rest armature, animated frame by frame
     pub armature: Armature,
@@ -784,6 +1155,8 @@ pub struct Job {
     /// the animation being rendered (its physics restarts with each animation)
     pub anim: usize,
     pub camera: RenderCamera,
+    /// per planned frame: how far a followed bone moves the camera, in world units
+    pub follow: Vec<crate::shared::Vec2>,
     /// rendered at this size, then resized to `out` if they differ
     pub render: (u32, u32),
     pub out: (u32, u32),
@@ -792,8 +1165,8 @@ pub struct Job {
     /// where it's going, for messages
     pub dest: std::path::PathBuf,
     pub rig: String,
-    /// spritesheets: how many
-    pub sheets: Option<usize>,
+    /// a spritesheet export
+    pub sheets: bool,
 }
 
 /// How many of `paths` (relative) already exist in `dir`.

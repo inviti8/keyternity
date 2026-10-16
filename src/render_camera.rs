@@ -38,6 +38,11 @@ pub struct RenderCamera {
     pub background: Option<Color>,
     /// the resolution is a multiple of this (2: even, for video encoders)
     pub round_to: u32,
+    /// a bone the camera follows through animations (its id), so moving animations stay
+    /// in frame and export in place (§4.5)
+    pub follow: Option<i32>,
+    pub follow_x: bool,
+    pub follow_y: bool,
 }
 
 impl Default for RenderCamera {
@@ -52,6 +57,9 @@ impl Default for RenderCamera {
             lock: CameraLock::Scale,
             background: None,
             round_to: 2,
+            follow: None,
+            follow_x: true,
+            follow_y: true,
         }
     }
 }
@@ -246,9 +254,27 @@ pub fn pose_bounds(armature: &Armature, bones: &Vec<Bone>) -> Option<(Vec2, Vec2
     (min.x <= max.x).then_some((min, max))
 }
 
+/// A bone's world position in the pose `bones` (local transforms).
+pub fn bone_world_pos(bones: &Vec<Bone>, id: i32) -> Option<Vec2> {
+    let mut world = vec![];
+    renderer::construction(&mut world, bones);
+    world.iter().find(|b| b.id == id).map(|b| b.pos)
+}
+
+/// How far `cam` moves in the pose `posed` from the rest pose `rest`: by its followed
+/// bone's movement, on the axes it follows. Zero if it follows nothing.
+pub fn follow_offset(cam: &RenderCamera, rest: &Vec<Bone>, posed: &Vec<Bone>) -> Vec2 {
+    let Some(id) = cam.follow else { return Vec2::ZERO };
+    let (Some(a), Some(b)) = (bone_world_pos(rest, id), bone_world_pos(posed, id)) else { return Vec2::ZERO };
+    let d = b - a;
+    Vec2::new(if cam.follow_x { d.x } else { 0. }, if cam.follow_y { d.y } else { 0. })
+}
+
 /// The union of `pose_bounds` over every frame of the animations `anims` (indices).
-/// Falls back to the rest pose when no animation has anything visible.
-pub fn animation_bounds(armature: &Armature, anims: &[usize]) -> Option<(Vec2, Vec2)> {
+/// Falls back to the rest pose when no animation has anything visible. With `follow`,
+/// each frame is measured relative to where that camera follows to, so the bounds are
+/// what the camera must cover.
+pub fn animation_bounds(armature: &Armature, anims: &[usize], follow: Option<&RenderCamera>) -> Option<(Vec2, Vec2)> {
     let mut bounds: Option<(Vec2, Vec2)> = None;
     let add = |bounds: &mut Option<(Vec2, Vec2)>, b: Option<(Vec2, Vec2)>| {
         if let Some((lo, hi)) = b {
@@ -272,7 +298,8 @@ pub fn animation_bounds(armature: &Armature, anims: &[usize]) -> Option<(Vec2, V
         let last = anim.keyframes.iter().map(|k| k.frame).max().unwrap_or(0);
         for f in 0..=last {
             let posed = arm.animate(a, f, Some(&armature.bones));
-            add(&mut bounds, pose_bounds(armature, &posed));
+            let shift = follow.map_or(Vec2::ZERO, |cam| follow_offset(cam, &armature.bones, &posed));
+            add(&mut bounds, pose_bounds(armature, &posed).map(|(lo, hi)| (lo - shift, hi - shift)));
         }
     }
     if bounds.is_none() {

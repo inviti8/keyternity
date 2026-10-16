@@ -1173,6 +1173,7 @@ impl BackendRenderer {
         let Some(dest) = shared.ui.file_path.lock().unwrap().first().cloned() else { return };
         let sheets_mode = shared.ui.sequence_sheets;
         let mut saved = shared.ui.sequence_opts.clone();
+        // a fresh choice of where to export (Export Again sets this itself)
         saved.sync(&shared.armature);
         let opts = export_sequence::effective(&saved, sheets_mode);
         let fail = |shared: &mut Shared, msg: String| {
@@ -1203,7 +1204,8 @@ impl BackendRenderer {
             .as_ref()
             .and_then(|p| p.file_stem())
             .map_or("rig".to_string(), |s| es::sanitize(&s.to_string_lossy()));
-        let sheets = if sheets_mode {
+        // a grid is laid out now; trimmed frames are packed once the writer has them all
+        let grid = if sheets_mode && !opts.trim {
             match es::pack_sheets(&rig, &armature, &frames, out, &opts) {
                 Ok(plan) => Some(plan),
                 Err(e) => return fail(shared, e),
@@ -1211,7 +1213,15 @@ impl BackendRenderer {
         } else {
             None
         };
-        let extra = es::extra_files(&rig, &armature, &camera, &opts, &frames, sheets.as_ref());
+        if sheets_mode && opts.trim && (out.0 > opts.sheet_max || out.1 > opts.sheet_max) {
+            let msg = format!("Each frame is up to {}×{} px, larger than the {} px sheet limit. Use a smaller output size or a larger sheet size.", out.0, out.1, opts.sheet_max);
+            return fail(shared, msg);
+        }
+        // the data files' names (their contents come at the end)
+        let extra_names: Vec<String> = es::extra_files(&rig, &armature, &camera, &opts, &frames, &es::Layout { sheets: grid.as_ref(), ..Default::default() })
+            .into_iter()
+            .map(|(n, _)| n)
+            .collect();
 
         // frames leaving a chosen camera (an Auto camera fits them all)
         if opts.camera.is_some() && !shared.ui.sequence_framing_ok {
@@ -1234,11 +1244,14 @@ impl BackendRenderer {
                 Err(e) => return fail(shared, format!("Couldn't create {}: {e}", path.display())),
             }
         } else {
-            let mut paths: Vec<String> = match &sheets {
+            let ext = opts.format.ext();
+            let mut paths: Vec<String> = match &grid {
                 Some(plan) => plan.files.clone(),
+                // packed sheets' names aren't known yet: the likely ones
+                None if sheets_mode => vec![format!("{rig}.{ext}"), format!("{rig}_0.{ext}")],
                 None => frames.iter().map(|f| f.path.clone()).collect(),
             };
-            paths.extend(extra.iter().map(|(n, _)| n.clone()));
+            paths.extend(extra_names.iter().cloned());
             let existing = es::existing_files(&dest, &paths);
             if existing > 0 && !shared.ui.sequence_overwrite_ok {
                 let msg = shared.ui.loc("polar.overwrite_frames").replace("$n", &existing.to_string());
@@ -1251,7 +1264,26 @@ impl BackendRenderer {
         shared.ui.sequence_framing_ok = false;
 
         let background = camera.background.unwrap_or(Color::new(0, 0, 0, 0));
-        let sheet_count = sheets.as_ref().map(|s| s.files.len());
+        let follow = es::follow_offsets(&armature, &frames, &camera);
+        let motion = es::root_motion(&camera, &opts, &follow);
+
+        // the writer builds the data files once it knows the layout
+        let light = Armature { animations: armature.animations.clone(), ..Default::default() };
+        let (f_rig, f_cam, f_opts, f_frames) = (rig.clone(), camera.clone(), opts.clone(), frames.clone());
+        let finish: es::Finisher = Box::new(move |layout: &es::Layout| {
+            let layout = es::Layout { motion: motion.as_deref(), ..*layout };
+            es::extra_files(&f_rig, &light, &f_cam, &f_opts, &f_frames, &layout)
+        });
+        let mode = match grid {
+            Some(plan) => es::WriteMode::Grid(plan),
+            None if sheets_mode => {
+                let names = Armature { animations: armature.animations.clone(), ..Default::default() };
+                let (p_rig, p_frames, p_opts) = (rig.clone(), frames.clone(), opts.clone());
+                es::WriteMode::Packed(Box::new(move |sizes: &[(u32, u32)]| es::pack_trimmed(&p_rig, &names, &p_frames, sizes, &p_opts)))
+            }
+            None => es::WriteMode::Files,
+        };
+        let encoding = es::Encoding::new(&opts, camera.background);
         shared.sequence_job = Some(es::Job {
             rest_bones: armature.bones.clone(),
             armature,
@@ -1259,14 +1291,18 @@ impl BackendRenderer {
             next: 0,
             anim: usize::MAX,
             camera,
+            follow,
             render,
             out,
             clear: background,
-            writer: es::Writer::spawn(target, render, out, extra, sheets),
-            dest,
+            writer: es::Writer::spawn(target, render, out, encoding, mode, finish),
+            dest: dest.clone(),
             rig,
-            sheets: sheet_count,
+            sheets: sheets_mode,
         });
+        // remembered for Export Again
+        saved.last_dest = Some(dest.to_string_lossy().to_string());
+        saved.last_sheets = sheets_mode;
         shared.ui.sequence_opts = saved;
         editor::open_modal(&mut shared.ui, true, "Exporting frames...".to_string());
     }
@@ -1294,7 +1330,7 @@ impl BackendRenderer {
         // render while there's time this frame and the writer keeps up
         const BUDGET_MS: u128 = 60;
         let Some(job) = shared.sequence_job.as_mut() else { return };
-        let (view, aspect) = job.camera.view();
+        let (base_view, aspect) = job.camera.view();
         let size = Vec2::new(job.render.0 as f32, job.render.1 as f32);
         let mut mapped = Arc::new(Mutex::new(0));
         let started = Instant::now();
@@ -1321,6 +1357,8 @@ impl BackendRenderer {
                     arm.animated_bones[b].verts_edited = false;
                 }
             }
+            let mut view = base_view.clone();
+            view.pos += job.follow[job.next];
             let mut frames = vec![];
             #[rustfmt::skip]
             self.capture(size, arm, &view, aspect, &job.clear, &mut frames, &mut mapped, &shared.renderer);
@@ -1349,10 +1387,11 @@ impl BackendRenderer {
         let job = shared.sequence_job.take().unwrap();
         let msg = match result {
             Ok(()) if written == total => {
-                let on_sheets = match job.sheets {
-                    Some(1) => " on 1 spritesheet".to_string(),
-                    Some(n) => format!(" on {n} spritesheets"),
-                    None => String::new(),
+                let sheet_count = job.writer.sheets.load(std::sync::atomic::Ordering::SeqCst);
+                let on_sheets = match (job.sheets, sheet_count) {
+                    (false, _) => String::new(),
+                    (true, 1) => " on 1 spritesheet".to_string(),
+                    (true, n) => format!(" on {n} spritesheets"),
                 };
                 let mut msg = format!(
                     "Exported {total} frames ({}×{} px){on_sheets} to:\n\n`{}`",
@@ -1360,9 +1399,9 @@ impl BackendRenderer {
                     job.out.1,
                     job.dest.display()
                 );
-                let opts = export_sequence::effective(&shared.ui.sequence_opts, job.sheets.is_some());
+                let opts = export_sequence::effective(&shared.ui.sequence_opts, job.sheets);
                 msg += "\n\n";
-                msg += &export_sequence::engine_notes(&job.rig, &job.camera, &opts, job.sheets);
+                msg += &export_sequence::engine_notes(&job.rig, &job.camera, &opts, job.sheets.then_some(sheet_count));
                 msg
             }
             Ok(()) => format!("The export stopped after {written} of {total} frames."),
