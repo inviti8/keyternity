@@ -209,6 +209,12 @@ pub fn draw_hierarchy(
         }
 
         let bone_hidden = *hiddens.get(&bone_id).unwrap();
+        // its own visibility (posed), apart from being hidden by a parent
+        let own_hidden = armature
+            .animated_bones
+            .iter()
+            .find(|ab| ab.id == bone_id)
+            .map_or(armature.bones[b].hidden, |ab| ab.hidden);
 
         let mut dragged = false;
         let this_group_color = *group_colors.get(&bone_id).unwrap();
@@ -234,12 +240,16 @@ pub fn draw_hierarchy(
             ui.horizontal(|ui| {
                 let id = format!("bone_hidden{}", b.to_string());
                 let mut col = config.colors.text;
-                if bone_hidden {
+                let mut desc = shared_ui.loc("hidden_desc");
+                if own_hidden {
                     col -= Color::new(80, 80, 80, 0);
+                } else if bone_hidden {
+                    // shown, but hidden by a parent
+                    col -= Color::new(45, 45, 45, 0);
+                    desc = format!("{desc}\n\n{}", shared_ui.loc("hidden_by_parent"));
                 }
-                let desc = shared_ui.loc("hidden_desc");
                 if bone_label("👁", true, ui, id, Vec2::new(-2., 18.), &desc, col).clicked() {
-                    let hidden_f32 = if !bone_hidden { 1. } else { 0. };
+                    let hidden_f32 = if !own_hidden { 1. } else { 0. };
                     let sel = selections.anim;
                     let frame = selections.anim_frame;
                     events.save_edited_bone(b);

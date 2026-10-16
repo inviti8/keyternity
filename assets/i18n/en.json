@@ -32,6 +32,7 @@
   "error_vid_export": "Something went wrong with this export:\n\n$err\n\nTry changing compability settings, or click 'download ffmpeg' in export if you don't have it.\n\nIf nothing works, you may export sprite sequences and create a video using an online converter.",
   "error_skf": "Something went wrong:\n\n$err",
   "hidden_desc": "Toggle this bone's visibility",
+  "hidden_by_parent": "Hidden by a parent: this bone is visible itself, but a parent hides it.",
   "locked_desc": "Lock this bone to prevent edits from being recorded in animations",
   "feedback_sent": "Thank you for the feedback!\nA new GitHub issue with your text opened in your browser; submit it there.",
   "startup": {
@@ -300,6 +301,12 @@
     "delete": "Delete"
   },
   "bone_panel": {
+    "visible": "Visible ℹ:",
+    "visible_desc": "Show or hide this bone and its children. While animating, with a frame selected, this keys visibility at that frame: the bone switches on or off there.",
+    "visible_keyed": "Visibility is keyed at frame $frame.",
+    "visible_key": "Key the current visibility at frame $frame.",
+    "visible_locked": "This bone is locked, so visibility changes the setup pose (every frame), not a key.",
+    "visible_no_frame": "Select a frame to key visibility; without one, this changes the setup pose (every frame).",
     "bind_pose": {
       "label": "Bind Pose ℹ:",
       "desc": "Bind pose skinning: vertices blended across several bones follow each bone relative to where it was when bound, like in 3D software. Weights can be edited freely without vertices moving.\n\nThe bind pose always follows the setup pose.\n\nWorks by adding greyed-out helper bones (name__bind__mesh), so any SkelForm runtime plays it unchanged.",

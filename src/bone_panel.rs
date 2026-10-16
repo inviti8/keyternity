@@ -27,6 +27,73 @@ mod web {
 pub use web::*;
 type E = AnimElement;
 
+/// Visible: the bone's visibility, keyed at the playhead while animating. Says what a
+/// change will do: key this frame, or change the setup pose (no frame selected, or the
+/// bone is locked), so visibility keys are never made or missed silently.
+fn visible_row(
+    ui: &mut egui::Ui,
+    bone: &Bone,
+    selections: &SelectionState,
+    shared_ui: &mut crate::Ui,
+    armature: &Armature,
+    config: &Config,
+    events: &mut EventState,
+    edit_mode: &EditMode,
+) {
+    let animating = shared_ui.is_animating(edit_mode, selections);
+    let frame = selections.anim_frame;
+    let keys_frame = animating && frame >= 0 && !bone.locked;
+    let keyed_here = keys_frame
+        && armature.animations[selections.anim]
+            .keyframes
+            .iter()
+            .any(|kf| kf.bone_id == bone.id && kf.element == AnimElement::Hidden && kf.frame == frame);
+    let set = |events: &mut EventState, hidden: bool| {
+        events.save_edited_bone(selections.bone_idx);
+        let anim = if animating { selections.anim } else { usize::MAX };
+        events.edit_bone(bone.id, &AnimElement::Hidden, if hidden { 1. } else { 0. }, "", anim, frame);
+    };
+
+    ui.horizontal(|ui| {
+        ui.label(shared_ui.loc("bone_panel.visible")).on_hover_text(shared_ui.loc("bone_panel.visible_desc"));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // key diamond: filled when visibility is keyed on this frame
+            if keys_frame {
+                let (icon, tip) = if keyed_here {
+                    ("◆", shared_ui.loc("bone_panel.visible_keyed").replace("$frame", &frame.to_string()))
+                } else {
+                    ("◇", shared_ui.loc("bone_panel.visible_key").replace("$frame", &frame.to_string()))
+                };
+                let col: egui::Color32 = if keyed_here { config.colors.light_accent } else { config.colors.text }.into();
+                let key = ui.add(egui::Label::new(egui::RichText::new(icon).color(col)).sense(egui::Sense::click()));
+                if key.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip).clicked() && !keyed_here {
+                    set(events, bone.hidden);
+                }
+            }
+            let mut visible = !bone.hidden;
+            if ui.checkbox(&mut visible, "").changed() {
+                set(events, !visible);
+            }
+        });
+    });
+
+    // what a change does, when it isn't obvious
+    let note = if !animating {
+        None
+    } else if bone.locked {
+        Some(shared_ui.loc("bone_panel.visible_locked"))
+    } else if frame < 0 {
+        Some(shared_ui.loc("bone_panel.visible_no_frame"))
+    } else {
+        None
+    };
+    if let Some(note) = note {
+        let mut col = config.colors.text;
+        col -= Color::new(60, 60, 60, 0);
+        ui.label(egui::RichText::new(note).color(col).size(11.));
+    }
+}
+
 pub fn draw(
     mut bone: Bone,
     ui: &mut egui::Ui,
@@ -160,6 +227,8 @@ pub fn draw(
             armature.sel_bone_mut(&sel).unwrap().name = value;
         }
     });
+
+    visible_row(ui, &bone, selections, shared_ui, armature, config, events, edit_mode);
 
     let mut edited = false;
 
