@@ -127,6 +127,10 @@ pub fn draw(
                     ui.add_space(5.);
                     ui::empty_armature_starters(shared_ui, config, ui);
                 }
+                // render cameras (docs/FRAME_SEQUENCES.md §4)
+                if armature.bones.len() != 0 || !armature.cameras.is_empty() {
+                    crate::camera_ui::hierarchy(ui, shared_ui, config, armature, selections, events);
+                }
                 ui.add_space(4.);
             })
         });

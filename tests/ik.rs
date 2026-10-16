@@ -258,7 +258,7 @@ fn saved_constraints_point_at_saved_bone_indices() {
     let mut bones = chain(v(0., 0.), 2, v(10., 30.), IkConstraint { bend: IkBend::Clockwise, ..Default::default() });
     bones.rotate_left(1);
     let arm = armature(bones, vec![]);
-    let (json, _) = utils::prepare_files(&arm, Camera::default(), vec![], &EditMode::default());
+    let (json, _) = utils::prepare_files(&arm, Camera::default(), vec![], &EditMode::default(), None);
     let root: Root = serde_json::from_str(&json).unwrap();
     let tip = root.bones.iter().find(|b| b.ik.is_some()).expect("constraint not saved");
     let c = tip.ik.as_ref().unwrap();
@@ -275,7 +275,7 @@ fn baked_rotations_match_the_solved_pose_under_a_rotated_parent() {
     let arm = armature(bones, keys);
 
     let edit = EditMode { export_bake_ik: true, export_exclude_ik: true, ..Default::default() };
-    let (json, _) = utils::prepare_files(&arm, Camera::default(), vec![], &edit);
+    let (json, _) = utils::prepare_files(&arm, Camera::default(), vec![], &edit, None);
     let baked: Root = serde_json::from_str(&json).unwrap();
     assert!(baked.bones.iter().all(|b| b.ik.is_none()), "IK kept despite exclude");
     let mut baked_arm = Armature { bones: baked.bones.clone(), animations: baked.animations.clone(), ..Default::default() };

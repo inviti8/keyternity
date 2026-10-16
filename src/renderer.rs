@@ -881,6 +881,7 @@ pub fn render_screenshot(
     render_pass: &mut RenderPass,
     armature: &mut Armature,
     camera: &Camera,
+    aspect: f32,
     renderer: &Renderer,
     queue: &wgpu::Queue,
 ) {
@@ -907,7 +908,7 @@ pub fn render_screenshot(
         for v in 0..temp_arm.bones[b].vertices.len() {
             let tb = &temp_arm.bones[b];
             let final_pivot = utils::rotate(&(tex.unwrap().size * tb.pivot_pos), tb.rot);
-            let mut new_vert = world_vert(tb.vertices[v], camera, 1., final_pivot);
+            let mut new_vert = world_vert(tb.vertices[v], camera, aspect, final_pivot);
             new_vert.tint = temp_arm.bones[b].tint;
             temp_arm.bones[b].world_verts.push(new_vert);
         }

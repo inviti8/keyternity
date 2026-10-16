@@ -83,7 +83,10 @@
     "view": {
       "heading": "View",
       "zoom_in": "Zoom In",
-      "zoom_out": "Zoom Out"
+      "zoom_out": "Zoom Out",
+      "show_cameras": "Show Render Cameras",
+      "hide_cameras": "Hide Render Cameras",
+      "add_camera": "Add Render Camera"
     },
     "settings": "Settings",
     "help": {
@@ -139,6 +142,52 @@
     "height_desc": "Height"
   },
   "export_modal": {
+    "header_sequence": "Frame Sequence",
+    "header_spritesheet": "Spritesheet",
+    "sequence": {
+      "header_sheets": "Spritesheet",
+      "columns": "Columns ℹ:",
+      "columns_desc": "Auto makes each sheet as square as it can. Fixed sets how many frames go across.",
+      "columns_auto": "Auto",
+      "columns_fixed": "Fixed",
+      "sheet_max": "Max Sheet Size ℹ:",
+      "sheet_max_desc": "The largest a sheet can be, in pixels per side. Frames that don't fit go on more sheets. 4096 suits most engines and GPUs; check your target's limit before going higher.",
+      "sheet_padding": "Padding ℹ:",
+      "sheet_padding_desc": "Pixels between frames, so neighbouring frames don't bleed into each other when the engine filters or scales them.",
+      "sheet_per_anim": "Sheets per Animation ℹ:",
+      "sheet_per_anim_desc": "Start a new sheet for each animation, so each can be loaded on its own. Off packs every animation together.",
+      "frame_names": "Frame Names ℹ:",
+      "frame_names_desc": "Each frame's name in the atlas. {anim} is the animation's name, {index} the frame's number, and {frame} the animation frame it shows.",
+      "plan_note_sheets": "$n frames on $s sheet(s), the first $w × $h px",
+      "plan_note_sheets_auto": "$n frames; the sheets are sized from the fitted camera when exporting",
+      "header": "Frame Sequence",
+      "camera": "Camera ℹ:",
+      "camera_desc": "The render camera that frames the export: its rectangle, scale and pivot. Auto fits one around every frame of the chosen animations.",
+      "camera_auto": "Auto (fit animations)",
+      "size": "Output Size ℹ:",
+      "size_desc": "Resize the frames, keeping the camera's proportions: a percent of the camera, or a width or height in pixels. Smaller sizes are rendered at full size, then scaled down smoothly.",
+      "size_percent": "Percent",
+      "size_width": "Width (px)",
+      "size_height": "Height (px)",
+      "size_note": "Output: $w × $h px (camera $cw × $ch)",
+      "size_note_auto": "Output: sized from the fitted camera when exporting",
+      "step": "Every Nth Frame ℹ:",
+      "step_desc": "1 renders every frame. 2 renders every other frame (\"on twos\"); each image then lasts two frames, and the data files say so.",
+      "skip_last": "Skip Last Frame ℹ:",
+      "skip_last_desc": "Leave out each animation's last frame, for loops whose last frame repeats the first.",
+      "output": "Output:",
+      "output_folder": "Folder",
+      "output_zip": "Zip",
+      "anim_folders": "Folder per Animation ℹ:",
+      "anim_folders_desc": "Put each animation's frames in its own folder.",
+      "pattern": "File Name ℹ:",
+      "pattern_desc": "{anim} is the animation's name, {index} the image's number, and {frame} the animation frame it shows. Numbers are zero-padded.",
+      "digits": "Digits:",
+      "start": "Start At:",
+      "phaser": "Phaser Files ℹ:",
+      "phaser_desc": "Also write a Phaser 3 loader pack (<rig>_pack.json) and animations (<rig>_anims.json). Every export writes <rig>_frames.json, with the size, pivot and each frame's file and duration; spritesheets also write <rig>_atlas.json, which Phaser, PixiJS and other engines load.",
+      "plan_note": "$n images, the first: $first"
+    },
     "heading": "Export",
     "no_anims": "Export unavailable - no animations.\n\nTo export the rest pose, create an empty animation.",
     "header_image": "Image",
@@ -195,6 +244,7 @@
     }
   },
   "armature_panel": {
+    "cameras": "Render Cameras",
     "heading": "Armature",
     "new_bone_button": "New Bone",
     "new_bone_name": "New Bone",
@@ -209,6 +259,30 @@
       "ik_tip": "Inverse kinematics, turning $chain bone(s) above this one",
       "ik_target": "Inverse kinematics target of $bone"
     }
+  },
+  "camera_panel": {
+    "heading": "Render Camera",
+    "name": "Name:",
+    "position": "Position:",
+    "resolution": "Resolution:",
+    "scale": "Scale ℹ:",
+    "scale_desc": "Output pixels per world unit. Every animation exported through this camera renders at this scale, so they line up in-game. 1 renders the art at its own size.",
+    "pivot": "Pivot:",
+    "lock": "Resizing ℹ:",
+    "lock_desc": "What dragging a handle changes. Keep Scale: the frame grows in pixels, and the character keeps its size. Keep Resolution: the frame stays the same size in pixels, and the character is scaled to fit.",
+    "lock_scale": "Keep Scale",
+    "lock_resolution": "Keep Resolution",
+    "round_to": "Round Size To ℹ:",
+    "round_to_desc": "The resolution is a multiple of this. Video needs even sizes (2); some engines prefer multiples of 4 or more.",
+    "background": "Background:",
+    "transparent": "Transparent",
+    "info": "Covers $w × $h world units. The pivot is at pixel ($px, $py) from the top left.",
+    "fit_rest": "Fit to Rest Pose",
+    "fit_rest_desc": "Fit the camera around the rig's rest pose, with a little padding.",
+    "fit_anims": "Fit to Animations",
+    "fit_anims_desc": "Fit the camera around every frame of every animation, with a little padding.",
+    "duplicate": "Duplicate",
+    "delete": "Delete"
   },
   "bone_panel": {
     "bind_pose": {
@@ -613,6 +687,8 @@
     }
   },
   "polar": {
+    "frames_outside": "Some frames go outside the camera '$camera', so they'll be cut off:\n\n- $frames\n\nExport anyway? (To fix it, select the camera and use Fit to Animations.)",
+    "overwrite_frames": "$n files in that folder have the same names as this export's frames. Overwrite them?",
     "delete_bone": "Are you sure to delete this bone?",
     "delete_anim": "Are you sure to delete this animation?",
     "delete_file": "Are you sure to delete $?",
@@ -666,6 +742,8 @@
     "envelope_label_desc": "This bone's bind index in the selected mesh. Click to select the bind, then click vertices (while editing the mesh) to add them to it.",
     "envelope_show_all": "Show All",
     "paint_weights": "Paint Weights",
+    "cameras": "Render Cameras",
+    "cameras_desc": "Show or hide the render cameras: rectangles that set what Export renders for frame sequences, spritesheets and video, and at what size. Adds one if the rig has none.\\n\\nDrag a camera's edge or label to move it, its handles to resize it, and the crosshair to move its pivot.",
     "paint_weights_desc": "Paint how much a bone moves the selected mesh. Pick the bone in the tool options (the mesh's binds); the mesh shows its weight from blue (none) to red (full), and white rings mark vertices weighted by hand.\n\nEach vertex's weights always total 100%: adding to one bone takes from the others. Shift smooths, Ctrl swaps Add and Subtract, [ and ] resize the brush.",
     "paint": {
       "bone": "Bone ℹ:",

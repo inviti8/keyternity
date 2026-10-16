@@ -423,6 +423,8 @@ pub enum SettingsState {
     Colors,
     Misc,
     Agent,
+    /// the Export dialog's Frame Sequence tab
+    FrameSequence,
 }
 
 #[derive(Clone, Default, PartialEq, Debug, FromRepr)]
@@ -441,6 +443,8 @@ pub enum PolarId {
     Retriangulate,
     TraceWithBinds,
     ClearAllBinds,
+    OverwriteFrames,
+    FramesOutside,
 }
 enum_string!(PolarId);
 
@@ -533,6 +537,19 @@ impl Warning {
 #[derive(Clone, Default)]
 pub struct Ui {
     pub startup: Startup,
+
+    /// a render camera being dragged on the canvas
+    pub camera_drag: Option<crate::camera_ui::CameraDrag>,
+    /// a render camera's panel field is being drag-edited (one undo step per drag)
+    pub camera_field_dragging: bool,
+    /// the Frame Sequence export's options (docs/FRAME_SEQUENCES.md §5); saved per file
+    pub sequence_opts: crate::export_sequence::SequenceOptions,
+    /// the artist agreed to overwrite existing frames
+    pub sequence_overwrite_ok: bool,
+    /// the artist agreed to export frames that leave the camera
+    pub sequence_framing_ok: bool,
+    /// the export is spritesheets (the Spritesheet tab), not a frame sequence
+    pub sequence_sheets: bool,
 
     pub edit_bar: UiBar,
     pub anim_bar: UiBar,
@@ -1379,6 +1396,11 @@ pub struct EditorOptions {
     pub camera: Camera,
     pub bones: Vec<EditorBone>,
     pub styles: Vec<EditorStyle>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub cameras: Vec<crate::render_camera::RenderCamera>,
+    /// the last Frame Sequence export's options
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sequence_export: Option<crate::export_sequence::SequenceOptions>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Default)]
@@ -1484,6 +1506,9 @@ pub struct Armature {
     pub tex_data: Vec<TextureData>,
     #[serde(skip)]
     pub animated_bones: Vec<Bone>,
+    /// render cameras (docs/FRAME_SEQUENCES.md §4); editor-only, saved in editor.json
+    #[serde(skip)]
+    pub cameras: Vec<crate::render_camera::RenderCamera>,
 }
 
 impl Armature {
@@ -2240,6 +2265,7 @@ pub enum ActionType {
     Styles,
     Texture,
     Textures,
+    Cameras,
 }
 enum_string!(ActionType);
 
@@ -2249,6 +2275,7 @@ pub struct Action {
     pub bones: Vec<Bone>,
     pub animations: Vec<Animation>,
     pub styles: Vec<Style>,
+    pub cameras: Vec<crate::render_camera::RenderCamera>,
     pub continued: bool,
 }
 enum_string!(AnimElement);
@@ -2313,6 +2340,8 @@ pub struct EditMode {
     pub eraser_delete: bool,
     /// Envelope tool: show every deforming bone's envelope, not just the selected ones
     pub show_all_envelopes: bool,
+    /// draw render cameras on the canvas (docs/FRAME_SEQUENCES.md §4.2)
+    pub show_cameras: bool,
     /// Paint Weights: brush mode, radius (screen px) and strength (0..1)
     pub paint_mode: crate::weights::PaintMode,
     /// Paint Weights: draw an outline instead of brushing; on release the mode applies
@@ -2382,6 +2411,7 @@ pub enum Saving {
     Spritesheet,
     Video,
     DragonBones,
+    FrameSequence,
 }
 enum_string!(Saving);
 
@@ -2456,6 +2486,14 @@ impl UndoStates {
         self.undo_actions.push(Action {
             action: ActionType::Animations,
             animations: animations.clone(),
+            ..Default::default()
+        });
+    }
+
+    pub fn new_undo_cameras(&mut self, cameras: &Vec<crate::render_camera::RenderCamera>) {
+        self.undo_actions.push(Action {
+            action: ActionType::Cameras,
+            cameras: cameras.clone(),
             ..Default::default()
         });
     }
@@ -2681,6 +2719,13 @@ pub enum Events {
     EditEnvelope,
     ToggleEnvelopeOpen,
     ToggleShowAllEnvelopes,
+    ToggleShowCameras,
+    AddCamera,
+    SelectCamera,
+    SetCamera,
+    DeleteCamera,
+    DuplicateCamera,
+    FitCamera,
     SetIkTargetSpace,
     InsertKeyframe,
     InsertKeyframeAll,
@@ -2901,6 +2946,26 @@ impl EventState {
     #[rustfmt::skip]    event_with_value!(toggle_edit_alt, Events::ToggleEditAlt, toggle, i32);
     generic_event!(add_ik, Events::AddIk);
     generic_event!(toggle_show_all_envelopes, Events::ToggleShowAllEnvelopes);
+    generic_event!(toggle_show_cameras, Events::ToggleShowCameras);
+    generic_event!(add_camera, Events::AddCamera);
+    event_with_value!(select_camera, Events::SelectCamera, id, i32);
+    event_with_value!(delete_camera, Events::DeleteCamera, id, i32);
+    event_with_value!(duplicate_camera, Events::DuplicateCamera, id, i32);
+
+    /// Replace the camera with `camera.id`. `new_step`: start an undo step (a drag
+    /// pushes one at its start, then edits in place).
+    pub fn set_camera(&mut self, camera: &crate::render_camera::RenderCamera, new_step: bool) {
+        self.events.push(Events::SetCamera);
+        self.values.push(if new_step { 1. } else { 0. });
+        self.str_values.push(serde_json::to_string(camera).unwrap());
+    }
+
+    /// Fit the camera `id` to the rest pose (`to_anims` false) or every animation.
+    pub fn fit_camera(&mut self, id: i32, to_anims: bool) {
+        self.events.push(Events::FitCamera);
+        self.values.push(id as f32);
+        self.str_values.push(if to_anims { "anims" } else { "rest" }.to_string());
+    }
     generic_event!(insert_keyframe, Events::InsertKeyframe);
     generic_event!(insert_keyframe_all, Events::InsertKeyframeAll);
     event_with_value!(breakdown, Events::Breakdown, amount, f32);
@@ -3187,6 +3252,8 @@ pub struct SelectionState {
     pub hovering_tri_dur: i32,
     pub hovering_line_dur: i32,
     pub hovering_bone_id: i32,
+    /// the selected render camera's id
+    pub camera: Option<i32>,
 }
 
 impl SelectionState {
@@ -3221,6 +3288,9 @@ pub struct Shared {
 
     // buffered armature from imported PSD
     pub psd_armature: Armature,
+
+    /// a frame sequence export in progress (docs/FRAME_SEQUENCES.md §8.3)
+    pub sequence_job: Option<crate::export_sequence::Job>,
 
     /// the skinning agent's state between tool calls (docs/AI_SKINNING.md)
     pub agent: crate::agent::AgentState,

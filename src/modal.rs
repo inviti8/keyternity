@@ -160,6 +160,15 @@ pub fn polar_modal(
                 PolarId::ClearAllBinds => {
                     events.clear_all_binds();
                 }
+                PolarId::OverwriteFrames => {
+                    // start the export again, now allowed to overwrite
+                    shared_ui.sequence_overwrite_ok = true;
+                    *shared_ui.saving.lock().unwrap() = crate::Saving::FrameSequence;
+                }
+                PolarId::FramesOutside => {
+                    shared_ui.sequence_framing_ok = true;
+                    *shared_ui.saving.lock().unwrap() = crate::Saving::FrameSequence;
+                }
             }
         },
     );

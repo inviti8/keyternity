@@ -63,15 +63,23 @@ pub fn draw(
 
                     // tab selectors (Armature, Sprite, etc)
                     let str_armature = shared_ui.loc("export_modal.header_armature").clone();
+                    // on desktop, the Image tab is the Spritesheet export (docs/FRAME_SEQUENCES.md §6.2)
+                    #[cfg(target_arch = "wasm32")]
                     let str_image = shared_ui.loc("export_modal.header_image").clone();
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let str_image = shared_ui.loc("export_modal.header_spritesheet").clone();
                     let str_video = shared_ui.loc("export_modal.header_video").clone();
                     #[cfg(not(target_arch = "wasm32"))]
                     let str_dragonbones = shared_ui.loc("export_modal.header_dragonbones").clone();
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let str_sequence = shared_ui.loc("export_modal.header_sequence").clone();
 
                     let h = &mut is_hovered;
                     type SS = SettingsState;
                     settings_button(str_armature, SS::Ui, ui, shared_ui, &config, width, h);
                     settings_button(str_image, SS::Editing, ui, shared_ui, &config, width, h);
+                    #[cfg(not(target_arch = "wasm32"))]
+                    settings_button(str_sequence, SS::FrameSequence, ui, shared_ui, &config, width, h);
                     if settings_button(str_video, SS::Keyboard, ui, shared_ui, &config, width, h)
                         .clicked()
                     {
@@ -110,12 +118,20 @@ pub fn draw(
                             SettingsState::Ui => {
                                 armature_export(ui, shared_ui, edit_mode, events, config)
                             }
+                            #[cfg(target_arch = "wasm32")]
                             SettingsState::Editing => image_export(ui, shared_ui, config, armature),
+                            #[cfg(not(target_arch = "wasm32"))]
+                            SettingsState::Editing => {
+                                sequence_export(ui, shared_ui, config, armature, true)
+                            }
                             SettingsState::Keyboard => {
                                 video_export(ui, shared_ui, config, armature)
                             }
                             SettingsState::Rendering => {
                                 dragonbones_export(ui, shared_ui, edit_mode, events, config)
+                            }
+                            SettingsState::FrameSequence => {
+                                sequence_export(ui, shared_ui, config, armature, false)
                             }
                             _ => {}
                         });
@@ -126,7 +142,8 @@ pub fn draw(
 
             // hide export button on these conditions
             let image_or_vid = shared_ui.settings_state == SettingsState::Editing
-                || shared_ui.settings_state == SettingsState::Keyboard;
+                || shared_ui.settings_state == SettingsState::Keyboard
+                || shared_ui.settings_state == SettingsState::FrameSequence;
             if image_or_vid && armature.animations.len() == 0 {
                 return;
             }
@@ -187,7 +204,19 @@ pub fn draw(
             utils::open_save_dialog(&sui.file_path, &sui.saving, crate::Saving::Exporting);
             sui.export_modal = false;
         }
-        // Image Export
+        // Spritesheet (desktop): the frame sequence export, onto sheets
+        #[cfg(not(target_arch = "wasm32"))]
+        SettingsState::Editing => {
+            sui.sequence_sheets = true;
+            if sui.sequence_opts.zip {
+                utils::open_save_dialog(&sui.file_path, &sui.saving, crate::Saving::FrameSequence);
+            } else {
+                utils::open_folder_dialog(&sui.file_path, &sui.saving, crate::Saving::FrameSequence);
+            }
+            sui.export_modal = false;
+        }
+        // Image Export (web)
+        #[cfg(target_arch = "wasm32")]
         SettingsState::Editing => {
             sui.exporting_video_type = crate::ExportVideoType::None;
             #[cfg(target_arch = "wasm32")]
@@ -207,6 +236,17 @@ pub fn draw(
             }
             #[cfg(not(target_arch = "wasm32"))]
             utils::open_save_dialog(&sui.file_path, &sui.saving, crate::Saving::Video);
+        }
+        // Frame Sequence (native only): a folder, or a zip
+        SettingsState::FrameSequence => {
+            sui.sequence_sheets = false;
+            #[cfg(not(target_arch = "wasm32"))]
+            if sui.sequence_opts.zip {
+                utils::open_save_dialog(&sui.file_path, &sui.saving, crate::Saving::FrameSequence);
+            } else {
+                utils::open_folder_dialog(&sui.file_path, &sui.saving, crate::Saving::FrameSequence);
+            }
+            sui.export_modal = false;
         }
         // DragonBones Export (native only)
         SettingsState::Rendering => {
@@ -347,6 +387,283 @@ pub fn dragonbones_export(
             }
         });
     });
+}
+
+/// The Frame Sequence tab, or with `sheets` the Spritesheet tab (docs/FRAME_SEQUENCES.md
+/// §5, §6.1, §6.2): the same options, plus how the sheets are laid out.
+pub fn sequence_export(ui: &mut egui::Ui, shared_ui: &mut crate::Ui, config: &Config, armature: &Armature, sheets: bool) {
+    use crate::export_sequence::{self as es, SizeMode};
+    let loc = |shared_ui: &crate::Ui, key: &str| shared_ui.loc(&format!("export_modal.sequence.{key}"));
+    ui.heading(loc(shared_ui, if sheets { "header_sheets" } else { "header" }));
+    let width = ui.available_width() - 20.;
+    if armature.animations.is_empty() {
+        ui.label(shared_ui.loc("export_modal.no_anims"));
+        return;
+    }
+    let mut opts = shared_ui.sequence_opts.clone();
+    opts.sync(armature);
+    ui.add_space(10.);
+
+    // camera
+    alt_hor(ui, config, true, |ui| {
+        ui.label(loc(shared_ui, "camera")).on_hover_text(loc(shared_ui, "camera_desc"));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let auto = loc(shared_ui, "camera_auto");
+            let name = |id: Option<i32>| {
+                id.and_then(|id| armature.cameras.iter().find(|c| c.id == id)).map_or(auto.clone(), |c| c.name.clone())
+            };
+            egui::ComboBox::new("sequence_camera", "")
+                .selected_text(name(opts.camera))
+                .width(130.)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut opts.camera, None, auto.clone());
+                    for cam in &armature.cameras {
+                        ui.selectable_value(&mut opts.camera, Some(cam.id), cam.name.clone());
+                    }
+                });
+        });
+    });
+
+    // output size (§5.1)
+    alt_hor(ui, config, false, |ui| {
+        ui.label(loc(shared_ui, "size")).on_hover_text(loc(shared_ui, "size_desc"));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let (e, v, _) = ui.float_input("sequence_size".into(), shared_ui, opts.size_value, 1., None);
+            if e && v > 0. {
+                opts.size_value = v;
+            }
+            let mode_name = |m: SizeMode| match m {
+                SizeMode::Percent => loc(shared_ui, "size_percent"),
+                SizeMode::Width => loc(shared_ui, "size_width"),
+                SizeMode::Height => loc(shared_ui, "size_height"),
+            };
+            let before = opts.size_mode;
+            egui::ComboBox::new("sequence_size_mode", "")
+                .selected_text(mode_name(opts.size_mode))
+                .width(90.)
+                .show_ui(ui, |ui| {
+                    for m in [SizeMode::Percent, SizeMode::Width, SizeMode::Height] {
+                        ui.selectable_value(&mut opts.size_mode, m, mode_name(m));
+                    }
+                });
+            // a new mode starts from the current output size
+            if opts.size_mode != before {
+                if let Some(cam) = opts.camera.and_then(|id| armature.cameras.iter().find(|c| c.id == id)) {
+                    let (factor, (w, h)) = es::output_size(cam, &shared_ui.sequence_opts);
+                    opts.size_value = match opts.size_mode {
+                        SizeMode::Percent => (factor * 100.).round(),
+                        SizeMode::Width => w as f32,
+                        SizeMode::Height => h as f32,
+                    };
+                } else {
+                    opts.size_value = if opts.size_mode == SizeMode::Percent { 100. } else { 512. };
+                }
+            }
+        });
+    });
+    let mut muted = config.colors.text;
+    muted -= crate::Color::new(60, 60, 60, 0);
+    let size_note = match opts.camera.and_then(|id| armature.cameras.iter().find(|c| c.id == id)) {
+        Some(cam) => {
+            let (_, (w, h)) = es::output_size(cam, &opts);
+            let (cw, ch) = cam.px_size();
+            loc(shared_ui, "size_note")
+                .replace("$w", &w.to_string())
+                .replace("$h", &h.to_string())
+                .replace("$cw", &cw.to_string())
+                .replace("$ch", &ch.to_string())
+        }
+        None => loc(shared_ui, "size_note_auto"),
+    };
+    ui.label(egui::RichText::new(size_note).color(muted));
+    ui.add_space(8.);
+
+    // frames
+    alt_hor(ui, config, true, |ui| {
+        ui.label(loc(shared_ui, "step")).on_hover_text(loc(shared_ui, "step_desc"));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let (e, v, _) = ui.float_input("sequence_step".into(), shared_ui, opts.step as f32, 1., None);
+            if e {
+                opts.step = (v.round() as i64).clamp(1, 1000) as u32;
+            }
+        });
+    });
+    basic_checkbox(ui, &loc(shared_ui, "skip_last"), &loc(shared_ui, "skip_last_desc"), &mut opts.skip_last, config, false);
+    ui.add_space(8.);
+
+    // sheet layout
+    if sheets {
+        alt_hor(ui, config, true, |ui| {
+            ui.label(loc(shared_ui, "columns")).on_hover_text(loc(shared_ui, "columns_desc"));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let auto = loc(shared_ui, "columns_auto");
+                if opts.sheet_columns > 0 {
+                    let (e, v, _) = ui.float_input("sheet_columns".into(), shared_ui, opts.sheet_columns as f32, 1., None);
+                    if e {
+                        opts.sheet_columns = (v.round() as i64).clamp(1, 1000) as u32;
+                    }
+                }
+                let mut fixed = opts.sheet_columns > 0;
+                egui::ComboBox::new("sheet_columns_mode", "")
+                    .selected_text(if fixed { loc(shared_ui, "columns_fixed") } else { auto.clone() })
+                    .width(80.)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut fixed, false, auto.clone());
+                        ui.selectable_value(&mut fixed, true, loc(shared_ui, "columns_fixed"));
+                    });
+                if fixed && opts.sheet_columns == 0 {
+                    opts.sheet_columns = 4;
+                } else if !fixed {
+                    opts.sheet_columns = 0;
+                }
+            });
+        });
+        alt_hor(ui, config, false, |ui| {
+            ui.label(loc(shared_ui, "sheet_max")).on_hover_text(loc(shared_ui, "sheet_max_desc"));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                egui::ComboBox::new("sheet_max", "")
+                    .selected_text(opts.sheet_max.to_string())
+                    .width(70.)
+                    .show_ui(ui, |ui| {
+                        for m in [1024, 2048, 4096, 8192, 16384] {
+                            ui.selectable_value(&mut opts.sheet_max, m, m.to_string());
+                        }
+                    });
+            });
+        });
+        alt_hor(ui, config, true, |ui| {
+            ui.label(loc(shared_ui, "sheet_padding")).on_hover_text(loc(shared_ui, "sheet_padding_desc"));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let (e, v, _) = ui.float_input("sheet_padding".into(), shared_ui, opts.sheet_padding as f32, 1., None);
+                if e {
+                    opts.sheet_padding = (v.round() as i64).clamp(0, 64) as u32;
+                }
+            });
+        });
+        basic_checkbox(ui, &loc(shared_ui, "sheet_per_anim"), &loc(shared_ui, "sheet_per_anim_desc"), &mut opts.sheet_per_anim, config, false);
+        ui.add_space(8.);
+    }
+
+    // files
+    alt_hor(ui, config, true, |ui| {
+        ui.label(loc(shared_ui, "output"));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let (folder, zip) = (loc(shared_ui, "output_folder"), loc(shared_ui, "output_zip"));
+            egui::ComboBox::new("sequence_output", "")
+                .selected_text(if opts.zip { zip.clone() } else { folder.clone() })
+                .width(90.)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut opts.zip, false, folder);
+                    ui.selectable_value(&mut opts.zip, true, zip);
+                });
+        });
+    });
+    if !sheets {
+        basic_checkbox(ui, &loc(shared_ui, "anim_folders"), &loc(shared_ui, "anim_folders_desc"), &mut opts.anim_folders, config, false);
+    }
+    alt_hor(ui, config, true, |ui| {
+        let (name, desc) = if sheets { ("frame_names", "frame_names_desc") } else { ("pattern", "pattern_desc") };
+        ui.label(loc(shared_ui, name)).on_hover_text(loc(shared_ui, desc));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let options = Some(crate::ui::TextInputOptions {
+                size: crate::Vec2::new(130., 20.),
+                default: es::SequenceOptions::default().pattern,
+                ..Default::default()
+            });
+            let (e, v, _) = ui.text_input("sequence_pattern".into(), shared_ui, opts.pattern.clone(), options);
+            if e && !v.trim().is_empty() {
+                opts.pattern = v.trim().to_string();
+            }
+        });
+    });
+    alt_hor(ui, config, false, |ui| {
+        ui.label(loc(shared_ui, "digits"));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            egui::ComboBox::new("sequence_start", "")
+                .selected_text(opts.start.to_string())
+                .width(40.)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut opts.start, 0, "0");
+                    ui.selectable_value(&mut opts.start, 1, "1");
+                });
+            ui.label(loc(shared_ui, "start"));
+            egui::ComboBox::new("sequence_digits", "")
+                .selected_text(opts.digits.to_string())
+                .width(40.)
+                .show_ui(ui, |ui| {
+                    for d in 1..=6 {
+                        ui.selectable_value(&mut opts.digits, d, d.to_string());
+                    }
+                });
+        });
+    });
+    basic_checkbox(ui, &loc(shared_ui, "phaser"), &loc(shared_ui, "phaser_desc"), &mut opts.phaser, config, true);
+
+    // what it'll write, or why it can't
+    ui.add_space(4.);
+    let planned = es::effective(&opts, sheets);
+    let camera = opts.camera.and_then(|id| armature.cameras.iter().find(|c| c.id == id));
+    let note = es::plan(armature, &planned).and_then(|frames| {
+        if !sheets {
+            return Ok(loc(shared_ui, "plan_note").replace("$n", &frames.len().to_string()).replace("$first", &frames[0].path));
+        }
+        let Some(cam) = camera else {
+            return Ok(loc(shared_ui, "plan_note_sheets_auto").replace("$n", &frames.len().to_string()));
+        };
+        let (_, out) = es::output_size(cam, &planned);
+        let plan = es::pack_sheets("rig", armature, &frames, out, &planned)?;
+        let (w, h) = plan.sizes[0];
+        Ok(loc(shared_ui, "plan_note_sheets")
+            .replace("$n", &frames.len().to_string())
+            .replace("$s", &plan.files.len().to_string())
+            .replace("$w", &w.to_string())
+            .replace("$h", &h.to_string()))
+    });
+    match note {
+        Ok(note) => ui.label(egui::RichText::new(note).color(muted)),
+        Err(e) => ui.label(egui::RichText::new(e).color(config.colors.warning_text)),
+    };
+
+    // animations, with their ranges
+    ui.add_space(12.);
+    ui.heading(shared_ui.loc("export_modal.image.animations"));
+    ui.add_space(5.);
+    for a in 0..armature.animations.len() {
+        let anim = &armature.animations[a];
+        let last = es::last_frame(armature, a);
+        let col = if a % 2 == 0 { config.colors.dark_accent } else { config.colors.main };
+        let Some(choice) = opts.anims.iter_mut().find(|c| c.id == anim.id) else { continue };
+        egui::Frame::new().fill(col.into()).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.set_width(width + 20.);
+                ui.checkbox(&mut choice.export, "");
+                ui.label(anim.name.to_string());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add_enabled_ui(choice.export, |ui| {
+                        let end = if choice.end < 0 { last } else { choice.end.min(last) };
+                        let opt = Some(crate::ui::TextInputOptions {
+                            size: crate::Vec2::new(30., 20.),
+                            ..Default::default()
+                        });
+                        let (e, v, _) = ui.float_input(format!("sequence_end_{}", anim.id), shared_ui, end as f32, 1., opt.clone());
+                        if e {
+                            let v = (v.round() as i32).clamp(0, last);
+                            choice.end = if v >= last { -1 } else { v };
+                            choice.start = choice.start.min(v);
+                        }
+                        ui.label("–");
+                        let (e, v, _) = ui.float_input(format!("sequence_start_{}", anim.id), shared_ui, choice.start as f32, 1., opt);
+                        if e {
+                            choice.start = (v.round() as i32).clamp(0, end);
+                        }
+                        ui.label(egui::RichText::new(format!("{} FPS", anim.fps)).color(muted));
+                    });
+                });
+            });
+        });
+    }
+
+    shared_ui.sequence_opts = opts;
 }
 
 pub fn image_export(

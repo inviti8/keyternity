@@ -60,7 +60,7 @@ fn length_is_saved_and_zero_is_omitted() {
     a.length = 42.5;
     let b = bone(1, 0, "b", Vec2::new(42.5, 0.), 0.);
     let arm = Armature { bones: vec![a, b], ..Default::default() };
-    let (json, _) = utils::prepare_files(&arm, Camera::default(), vec![], &EditMode::default());
+    let (json, _) = utils::prepare_files(&arm, Camera::default(), vec![], &EditMode::default(), None);
     let raw: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(raw["bones"][0]["length"], 42.5);
     assert!(raw["bones"][1].get("length").is_none(), "zero length written");

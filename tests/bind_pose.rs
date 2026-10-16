@@ -345,7 +345,7 @@ fn save_load_keeps_helpers_and_deformation() {
     let mut save_arm = arm.clone();
     let (atlases, sizes) = utils::create_tex_sheet(&mut save_arm, &edit_mode);
     let (armature_json, editor_json) =
-        utils::prepare_files(&save_arm, Camera::default(), sizes, &edit_mode);
+        utils::prepare_files(&save_arm, Camera::default(), sizes, &edit_mode, None);
     let mut buf = std::io::Cursor::new(vec![]);
     {
         let mut zip = zip::ZipWriter::new(&mut buf);

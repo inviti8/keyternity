@@ -40,6 +40,8 @@ pub fn iterate_events(
             E::NewAnimation | E::DeleteAnim => undo_states.new_undo_anims(&armature.animations),
             E::DeleteSelectedTextures       => undo_states.new_undo_style(&armature.sel_style(&selections).unwrap()),
             E::DeleteStyle | E::NewStyle    => undo_states.new_undo_styles(&armature.styles),
+            E::AddCamera | E::DeleteCamera | E::DuplicateCamera | E::FitCamera => undo_states.new_undo_cameras(&armature.cameras),
+            E::SetCamera if events.values[0] == 1. => undo_states.new_undo_cameras(&armature.cameras),
             E::RenameStyle => if !ui.just_made_style { undo_states.new_undo_style(&armature.sel_style(&selections).unwrap()); ui.just_made_style = false }
             E::DeleteSelectedKeyframes | E::DeleteKeyframeLine | E::PasteKeyframesOnFrame | E::InsertKeyframe | E::InsertKeyframeAll | E::DeleteBoneKeyframes => {
                 undo_states.new_undo_anim(armature.sel_anim(&selections).unwrap())
@@ -467,6 +469,11 @@ pub fn simple_event(
             skin::paint(armature, mesh.id, bone, &dab, mode, edit_mode.paint_strength);
         }
         Events::ToggleShowAllEnvelopes => edit_mode.show_all_envelopes = !edit_mode.show_all_envelopes,
+        Events::ToggleShowCameras => edit_mode.show_cameras = !edit_mode.show_cameras,
+        Events::AddCamera | Events::SelectCamera | Events::SetCamera | Events::DeleteCamera
+        | Events::DuplicateCamera | Events::FitCamera => {
+            camera_ui::camera_event(event, value, &str_value, armature, selections, edit_mode, ui);
+        }
         Events::TogglePenAngleLock => edit_mode.pen_angle_lock = !edit_mode.pen_angle_lock,
         Events::TogglePenSnap => edit_mode.pen_no_snap = !edit_mode.pen_no_snap,
         Events::PenApply => {
@@ -871,7 +878,7 @@ pub fn simple_event(
                 return;
             }
 
-            let bone = armature.bones[value as usize].clone();
+            let Some(bone) = armature.bones.get(value as usize).cloned() else { return };
             if ui.is_animating(&edit_mode, &selections) && !bone.locked {
                 let anim = armature.animations[selections.anim as usize].clone();
                 undo_states.new_undo_anim(&anim);
@@ -1709,6 +1716,9 @@ fn select_bone(
     sel.vert_ids = vec![];
     ui.selected_bone_first_time = true;
     edit_mode.editing_pivot = false;
+    if sel.camera.take().is_some() && ui.last_selected == "camera" {
+        ui.last_selected = "".to_string();
+    }
 
     if idx == usize::MAX {
         sel.bone_idx = usize::MAX;
@@ -1816,6 +1826,7 @@ fn unselect_all(selections: &mut SelectionState, edit_mode: &mut EditMode, ui: &
     selections.anim = usize::MAX;
     selections.bind = -1;
     selections.style_id = -1;
+    selections.camera = None;
     edit_mode.showing_mesh = false;
     edit_mode.setting_ik_target = false;
     edit_mode.setting_bind_bone = false;
@@ -1889,6 +1900,13 @@ pub fn undo_redo(
             let style = armature.styles.iter_mut().find(|a| a.id == id).unwrap();
             new_action.styles = vec![style.clone()];
             *style = action.styles[0].clone();
+        }
+        ActionType::Cameras => {
+            new_action.cameras = armature.cameras.clone();
+            armature.cameras = action.cameras.clone();
+            if !armature.cameras.iter().any(|c| Some(c.id) == selections.camera) {
+                selections.camera = None;
+            }
         }
         ActionType::Styles => {
             new_action.styles = armature.styles.clone();

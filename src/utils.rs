@@ -101,6 +101,7 @@ pub fn open_save_dialog(
         Saving::Spritesheet => ("zip", "Sprites/Spritesheet"),
         Saving::Video => ("", "Video"),
         Saving::DragonBones => ("json", "DragonBones Skeleton"),
+        Saving::FrameSequence => ("zip", "Frame Sequence"),
         _ => ("skf", "SkelForm Armature"),
     };
     std::thread::spawn(move || {
@@ -109,6 +110,18 @@ pub fn open_save_dialog(
             return;
         }
         *filepath.lock().unwrap() = vec![task.unwrap()];
+        *csaving.lock().unwrap() = save_result
+    });
+}
+
+/// Pick a folder, then set `saving` to `save_result`.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn open_folder_dialog(file_path: &Arc<Mutex<Vec<PathBuf>>>, saving: &Arc<Mutex<Saving>>, save_result: Saving) {
+    let filepath = Arc::clone(&file_path);
+    let csaving = Arc::clone(&saving);
+    std::thread::spawn(move || {
+        let Some(dir) = rfd::FileDialog::new().pick_folder() else { return };
+        *filepath.lock().unwrap() = vec![dir];
         *csaving.lock().unwrap() = save_result
     });
 }
@@ -157,7 +170,7 @@ pub fn save_web(armature: &Armature, camera: &Camera, edit_mode: &EditMode, save
     }
 
     let (armatures_json, editor_json) =
-        prepare_files(&carmature, camera.clone(), sizes.clone(), edit_mode);
+        prepare_files(&carmature, camera.clone(), sizes.clone(), edit_mode, None);
 
     // create zip file
     let mut buf: Vec<u8> = Vec::new();
@@ -569,6 +582,7 @@ pub fn prepare_files(
     camera: Camera,
     sizes: Vec<i32>,
     edit_mode: &EditMode,
+    sequence_export: Option<crate::export_sequence::SequenceOptions>,
 ) -> (String, String) {
     // clone armature and make some edits, then serialize it
     let mut armature_copy = armature.clone();
@@ -823,6 +837,8 @@ pub fn prepare_files(
         camera,
         bones: vec![],
         styles: vec![],
+        cameras: armature.cameras.clone(),
+        sequence_export,
     };
     for (b, bone) in armature_copy.bones.iter().enumerate() {
         // vertex ids are re-indexed on save, so store locked vertices by index
@@ -957,6 +973,7 @@ pub fn import<R: Read + std::io::Seek>(
         styles: root.styles.clone(),
         tex_data: vec![],
         animated_bones: vec![],
+        cameras: vec![],
     };
 
     // populate visuals data
@@ -1018,6 +1035,8 @@ pub fn import<R: Read + std::io::Seek>(
             serde_json::from_reader::<ZipFile<'_, R>, crate::EditorOptions>(editor_file)
         {
             shared.camera = editor.camera;
+            temp_arm.cameras = editor.cameras;
+            shared.ui.sequence_opts = editor.sequence_export.unwrap_or_default();
             for b in 0..temp_arm.bones.len() {
                 let bone = &mut temp_arm.bones[b];
                 let ed_bone = &editor.bones[b];

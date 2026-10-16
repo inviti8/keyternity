@@ -1322,6 +1322,7 @@ pub fn import(ske_json: &str, atlases: &[DbAtlas]) -> Result<Imported, String> {
         }],
         tex_data,
         animated_bones: vec![],
+        cameras: vec![],
     };
     // bind-posed meshes get their helper bones
     crate::bind_pose::maintain(&mut armature);

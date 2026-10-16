@@ -288,6 +288,8 @@ pub fn draw(
                     );
                 } else if shared_ui.last_selected == "keyframe" {
                     keyframe_panel::draw(ui, &selections, &armature, events, shared_ui, config);
+                } else if shared_ui.last_selected == "camera" {
+                    camera_ui::panel(ui, shared_ui, config, &armature, &selections, events);
                 } else if armature.bones.len() > 1 {
                     ui.heading("Armature Shortcuts");
                     ui.add_space(10.);
@@ -312,6 +314,9 @@ pub fn draw(
         envelope_labels(context, shared_ui, config, events);
     }
     shared_ui.canvas_rect = Some(context.available_rect());
+    // render cameras, over the canvas (docs/FRAME_SEQUENCES.md §4.2)
+    let on_camera = !shared_ui.startup_window
+        && camera_ui::overlay(context, shared_ui, config, camera, armature, selections, edit_mode, events);
 
     // navigation tool cursors, over the canvas
     if !camera.on_ui {
@@ -404,8 +409,9 @@ pub fn draw(
     // check if mouse is on ui
     //
     // this check always returns false on mouse click, so it's only checked when the mouse isn't clicked
-    if !input.left_down && camera.on_ui != context.is_pointer_over_area() {
-        events.toggle_pointer_on_ui(context.is_pointer_over_area());
+    let over_ui = context.is_pointer_over_area() || on_camera;
+    if !input.left_down && camera.on_ui != over_ui {
+        events.toggle_pointer_on_ui(over_ui);
     }
 
     // show ID of vertex being hovered
@@ -648,9 +654,12 @@ pub fn process_inputs(
             // the frame after save_edited_bone() has been called
             shared_ui.edited_dragging = shared_ui.started_edit_dragging;
 
-            // save bone just before beginning the drag
+            // save bone just before beginning the drag (not for other fields, such as
+            // a render camera's, which make their own undo steps)
             if !shared_ui.started_edit_dragging {
-                events.save_edited_bone(selections.bone_idx);
+                if selections.bone_idx != usize::MAX {
+                    events.save_edited_bone(selections.bone_idx);
+                }
                 shared_ui.started_edit_dragging = true;
             }
         }
@@ -749,7 +758,9 @@ pub fn kb_inputs(
         let last = shared_ui.last_selected.as_str();
 
         // delete selected bone(s)
-        if last == "bone" {
+        if let (Some(id), "camera") = (selections.camera, last) {
+            events.delete_camera(id);
+        } else if last == "bone" {
             events.open_polar_modal(PolarId::DeleteBone, shared_ui.loc("polar.delete_bone"));
             shared_ui.context_menu.id = format!("bone_{}", selections.bone_idx);
         } else if last == "anim" {
@@ -1116,7 +1127,7 @@ fn top_panel(
                 &camera,
             );
             menu_edit_button(ui, &config, &shared_ui, events, copy_buffer);
-            menu_view_button(ui, &config, &shared_ui, events);
+            menu_view_button(ui, &config, &shared_ui, events, edit_mode);
 
             macro_rules! title {
                 ($title:expr) => {
@@ -1679,6 +1690,7 @@ fn menu_view_button(
     config: &Config,
     shared_ui: &crate::Ui,
     events: &mut EventState,
+    edit_mode: &EditMode,
 ) {
     let mut offset = 0.;
 
@@ -1699,6 +1711,15 @@ fn menu_view_button(
         let str_zoom_out = &shared_ui.loc("top_bar.view.zoom_out");
         if tpb!(str_zoom_out, Some(&config.keys.zoom_out_camera)).clicked() {
             events.cam_zoom_out();
+        }
+        let key = if edit_mode.show_cameras { "top_bar.view.hide_cameras" } else { "top_bar.view.show_cameras" };
+        if tpb!(&shared_ui.loc(key), None).clicked() {
+            events.toggle_show_cameras();
+            ui.close();
+        }
+        if tpb!(&shared_ui.loc("top_bar.view.add_camera"), None).clicked() {
+            events.add_camera();
+            ui.close();
         }
     });
 }
@@ -1785,6 +1806,9 @@ fn envelope_labels(context: &Context, shared_ui: &crate::Ui, config: &Config, ev
     }
 }
 
+/// `ToolIcon::Camera`'s index in `Ui::toolbar_icons`.
+pub const CAMERA_ICON: usize = ToolIcon::Camera as usize;
+
 /// Icons in `assets/toolbar_icons.png`, in strip order.
 #[derive(Clone, Copy)]
 enum ToolIcon {
@@ -1805,6 +1829,7 @@ enum ToolIcon {
     Snap,
     Envelope,
     PaintWeights,
+    Camera,
 }
 
 /// The canvas toolbar (docs/TOPOLOGY_TOOLS.md §2): tools on the left, the active
@@ -1849,7 +1874,9 @@ fn toolbar(
             // transform tools
             type E = EditModes;
             let transform = edit_mode.tool == Tool::Transform;
-            let can_transform = bone != None && !edit_mode.showing_mesh && !has_ik;
+            // a selected render camera is moved and resized with the Transform tool too
+            let can_transform = (bone != None && !edit_mode.showing_mesh && !has_ik)
+                || selections.camera.is_some();
             #[rustfmt::skip]
             let transforms = [
                 (ToolIcon::Move, E::Move, "edit_bar.move.heading", config.keys.transform_move),
@@ -1944,6 +1971,17 @@ fn toolbar(
             let selected = edit_mode.tool == Tool::PaintWeights;
             if tool_button(ui, shared_ui, config, ToolIcon::PaintWeights, selected, true, hover).clicked() {
                 events.set_tool(Tool::PaintWeights as usize);
+            }
+            sep!();
+
+            // render cameras (docs/FRAME_SEQUENCES.md §4.2): show them, or add the first
+            let hover = format!("{}\n\n{}", shared_ui.loc("toolbar.cameras"), shared_ui.loc("toolbar.cameras_desc"));
+            if tool_button(ui, shared_ui, config, ToolIcon::Camera, edit_mode.show_cameras, true, hover).clicked() {
+                if armature.cameras.is_empty() {
+                    events.add_camera();
+                } else {
+                    events.toggle_show_cameras();
+                }
             }
 
             // mesh actions, while editing the selected bone's mesh

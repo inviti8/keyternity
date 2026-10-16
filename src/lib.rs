@@ -60,10 +60,12 @@ pub mod atlas_modal;
 pub mod auto_mesh;
 pub mod bind_pose;
 pub mod bone_panel;
+pub mod camera_ui;
 pub mod dragonbones_export;
 pub mod dragonbones_import;
 pub mod editor;
 pub mod envelope;
+pub mod export_sequence;
 pub mod ik;
 pub mod export_modal;
 pub mod file_reader;
@@ -74,6 +76,7 @@ pub mod modal;
 pub mod navigation;
 pub mod pen;
 pub mod psd_import;
+pub mod render_camera;
 pub mod renderer;
 pub mod settings_modal;
 pub mod shared;
@@ -824,6 +827,8 @@ impl BackendRenderer {
     fn skf_render(&mut self, shared: &mut Shared, render_pass: &mut wgpu::RenderPass) {
         self.init_buffers_and_bindgroups(&mut shared.renderer);
         self.check_export(shared);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.step_sequence_export(shared);
 
         // import dropped files
         // this uses file_elapsed since winit does not buffer multiple dropped files
@@ -860,7 +865,11 @@ impl BackendRenderer {
 
         let saving = shared.ui.saving.lock().unwrap().clone();
         let recording = saving == Saving::Spritesheet || saving == Saving::Video;
-        if saving != Saving::None && !recording {
+        if saving == Saving::FrameSequence {
+            *shared.ui.saving.lock().unwrap() = Saving::None;
+            #[cfg(not(target_arch = "wasm32"))]
+            self.start_sequence_export(shared);
+        } else if saving != Saving::None && !recording {
             // saving .skf or .skfe (exporting)
 
             #[cfg(target_arch = "wasm32")]
@@ -1155,6 +1164,213 @@ impl BackendRenderer {
         }
     }
 
+    /// Start a frame sequence or spritesheet export (docs/FRAME_SEQUENCES.md) to the
+    /// chosen folder or zip. Asks first if frames leave the chosen camera, or if it
+    /// would overwrite files; each answer re-runs this with that question settled.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn start_sequence_export(&self, shared: &mut Shared) {
+        use export_sequence as es;
+        let Some(dest) = shared.ui.file_path.lock().unwrap().first().cloned() else { return };
+        let sheets_mode = shared.ui.sequence_sheets;
+        let mut saved = shared.ui.sequence_opts.clone();
+        saved.sync(&shared.armature);
+        let opts = export_sequence::effective(&saved, sheets_mode);
+        let fail = |shared: &mut Shared, msg: String| {
+            shared.ui.sequence_overwrite_ok = false;
+            shared.ui.sequence_framing_ok = false;
+            editor::open_modal(&mut shared.ui, false, msg);
+        };
+
+        let armature = rest_armature(shared);
+        let frames = match es::plan(&armature, &opts) {
+            Ok(frames) => frames,
+            Err(e) => return fail(shared, e),
+        };
+        let Some(camera) = es::export_camera(&armature, &opts) else {
+            return fail(shared, "Nothing to render: the chosen animations have no visible art.".into());
+        };
+        let (_, out) = es::output_size(&camera, &opts);
+        // render at up to twice the output size and shrink, or straight at a larger size (§5.1)
+        let render = es::render_size(camera.px_size(), out);
+        let max = self.gpu.device.limits().max_texture_dimension_2d;
+        if render.0 > max || render.1 > max {
+            let msg = format!("The frames would be {}×{} px, over this GPU's limit of {max} px. Use a smaller output size or camera scale.", render.0, render.1);
+            return fail(shared, msg);
+        }
+        let rig = shared
+            .ui
+            .save_path
+            .as_ref()
+            .and_then(|p| p.file_stem())
+            .map_or("rig".to_string(), |s| es::sanitize(&s.to_string_lossy()));
+        let sheets = if sheets_mode {
+            match es::pack_sheets(&rig, &armature, &frames, out, &opts) {
+                Ok(plan) => Some(plan),
+                Err(e) => return fail(shared, e),
+            }
+        } else {
+            None
+        };
+        let extra = es::extra_files(&rig, &armature, &camera, &opts, &frames, sheets.as_ref());
+
+        // frames leaving a chosen camera (an Auto camera fits them all)
+        if opts.camera.is_some() && !shared.ui.sequence_framing_ok {
+            let outside = es::outside_frames(&armature, &frames, &camera);
+            if !outside.is_empty() {
+                let msg = shared
+                    .ui
+                    .loc("polar.frames_outside")
+                    .replace("$camera", &camera.name)
+                    .replace("$frames", &outside.join("\n- "));
+                shared.events.open_polar_modal(PolarId::FramesOutside, msg);
+                return;
+            }
+        }
+
+        let target = if opts.zip {
+            let path = if dest.extension().is_none() { dest.with_extension("zip") } else { dest.clone() };
+            match std::fs::File::create(&path) {
+                Ok(file) => es::Target::Zip(zip::ZipWriter::new(file)),
+                Err(e) => return fail(shared, format!("Couldn't create {}: {e}", path.display())),
+            }
+        } else {
+            let mut paths: Vec<String> = match &sheets {
+                Some(plan) => plan.files.clone(),
+                None => frames.iter().map(|f| f.path.clone()).collect(),
+            };
+            paths.extend(extra.iter().map(|(n, _)| n.clone()));
+            let existing = es::existing_files(&dest, &paths);
+            if existing > 0 && !shared.ui.sequence_overwrite_ok {
+                let msg = shared.ui.loc("polar.overwrite_frames").replace("$n", &existing.to_string());
+                shared.events.open_polar_modal(PolarId::OverwriteFrames, msg);
+                return;
+            }
+            es::Target::Folder(dest.clone())
+        };
+        shared.ui.sequence_overwrite_ok = false;
+        shared.ui.sequence_framing_ok = false;
+
+        let background = camera.background.unwrap_or(Color::new(0, 0, 0, 0));
+        let sheet_count = sheets.as_ref().map(|s| s.files.len());
+        shared.sequence_job = Some(es::Job {
+            rest_bones: armature.bones.clone(),
+            armature,
+            frames,
+            next: 0,
+            anim: usize::MAX,
+            camera,
+            render,
+            out,
+            clear: background,
+            writer: es::Writer::spawn(target, render, out, extra, sheets),
+            dest,
+            rig,
+            sheets: sheet_count,
+        });
+        shared.ui.sequence_opts = saved;
+        editor::open_modal(&mut shared.ui, true, "Exporting frames...".to_string());
+    }
+
+    /// A captured frame's pixels, row by row without the row padding, in the capture's
+    /// own channel order (see `process_screenshot_raw`, which also swaps to RGBA).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn read_rows(&self, buffer: &wgpu::Buffer, (width, height): (u32, u32)) -> Vec<u8> {
+        let wait = wgpu::PollType::Wait { submission_index: None, timeout: None };
+        let _ = self.gpu.device.poll(wait);
+        let view = buffer.slice(..).get_mapped_range();
+        let row = width as usize * 4;
+        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
+        let padded = (row + align - 1) / align * align;
+        let mut pixels = Vec::with_capacity(row * height as usize);
+        for y in 0..height as usize {
+            pixels.extend_from_slice(&view[y * padded..y * padded + row]);
+        }
+        pixels
+    }
+
+    /// Render the next frames of an export and hand them to its writer.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn step_sequence_export(&self, shared: &mut Shared) {
+        // render while there's time this frame and the writer keeps up
+        const BUDGET_MS: u128 = 60;
+        let Some(job) = shared.sequence_job.as_mut() else { return };
+        let (view, aspect) = job.camera.view();
+        let size = Vec2::new(job.render.0 as f32, job.render.1 as f32);
+        let mut mapped = Arc::new(Mutex::new(0));
+        let started = Instant::now();
+        let mut failed = false;
+
+        while job.next < job.frames.len() && job.writer.has_room() && started.elapsed().as_millis() < BUDGET_MS {
+            let planned = job.frames[job.next].clone();
+            // each animation starts from the rest pose, so physics starts fresh
+            if planned.anim != job.anim {
+                job.armature.bones = job.rest_bones.clone();
+                job.anim = planned.anim;
+            }
+            let arm = &mut job.armature;
+            arm.bones = arm.animate(planned.anim, planned.frame, None);
+            arm.animated_bones = arm.bones.clone();
+            // non-mesh bones get their texture's rectangle
+            for b in 0..arm.bones.len() {
+                let tex = arm.anim_tex_of(arm.bones[b].id);
+                if let (Some(tex), false) = (tex, arm.bones[b].verts_edited) {
+                    let size = tex.size;
+                    let (v, i) = renderer::create_tex_rect(&size);
+                    (arm.bones[b].vertices, arm.bones[b].indices) = (v.clone(), i.clone());
+                    (arm.animated_bones[b].vertices, arm.animated_bones[b].indices) = (v, i);
+                    arm.animated_bones[b].verts_edited = false;
+                }
+            }
+            let mut frames = vec![];
+            #[rustfmt::skip]
+            self.capture(size, arm, &view, aspect, &job.clear, &mut frames, &mut mapped, &shared.renderer);
+            let frame = frames.pop().unwrap();
+            let pixels = self.read_rows(&frame.buffer, job.render);
+            drop(frame);
+            let bgra = matches!(self.gpu.surface_format, wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb);
+            job.next += 1;
+            if !job.writer.send(export_sequence::RawFrame { path: planned.path, pixels, bgra }) {
+                failed = true;
+                break;
+            }
+        }
+        if job.next >= job.frames.len() || failed {
+            job.writer.close();
+        }
+
+        let total = job.frames.len();
+        let written = job.writer.written.load(std::sync::atomic::Ordering::SeqCst);
+        let Some(result) = job.writer.result() else {
+            shared.ui.headline = format!("Exporting frames... {written} / {total}");
+            return;
+        };
+
+        // the writer has finished (or failed)
+        let job = shared.sequence_job.take().unwrap();
+        let msg = match result {
+            Ok(()) if written == total => {
+                let on_sheets = match job.sheets {
+                    Some(1) => " on 1 spritesheet".to_string(),
+                    Some(n) => format!(" on {n} spritesheets"),
+                    None => String::new(),
+                };
+                let mut msg = format!(
+                    "Exported {total} frames ({}×{} px){on_sheets} to:\n\n`{}`",
+                    job.out.0,
+                    job.out.1,
+                    job.dest.display()
+                );
+                let opts = export_sequence::effective(&shared.ui.sequence_opts, job.sheets.is_some());
+                msg += "\n\n";
+                msg += &export_sequence::engine_notes(&job.rig, &job.camera, &opts, job.sheets);
+                msg
+            }
+            Ok(()) => format!("The export stopped after {written} of {total} frames."),
+            Err(e) => format!("The export stopped after {written} of {total} frames: {e}"),
+        };
+        editor::open_modal(&mut shared.ui, false, msg);
+    }
+
     fn skf_export_videos(&self, armature: &Armature, shared_ui: &mut Ui) {
         let path;
         #[cfg(target_arch = "wasm32")]
@@ -1341,6 +1557,7 @@ impl BackendRenderer {
         let mut armature = rest_armature(shared);
         let camera = shared.camera.clone();
         let edit_mode = shared.edit_mode.clone();
+        let sequence_export = Some(shared.ui.sequence_opts.clone());
 
         // clear export options
         shared.edit_mode.export_bake_ik = false;
@@ -1365,7 +1582,7 @@ impl BackendRenderer {
             }
 
             let (armatures_json, editor_json) =
-                utils::prepare_files(&armature, camera, sizes.clone(), &edit_mode);
+                utils::prepare_files(&armature, camera, sizes.clone(), &edit_mode, sequence_export);
 
             // create zip file
             let mut zip = zip::ZipWriter::new(std::fs::File::create(save_path.clone()).unwrap());
@@ -1441,11 +1658,31 @@ impl BackendRenderer {
         }
     }
 
+    /// Render `armature` into a mapped buffer: square world units, cleared to
+    /// `clear_color` with no alpha.
     pub fn take_screenshot(
         &self,
         screenshot_res: Vec2,
         armature: &mut Armature,
         camera: &Camera,
+        clear_color: &Color,
+        rendered_frames: &mut Vec<RenderedFrame>,
+        mapped_frames: &mut Arc<Mutex<usize>>,
+        renderer: &Renderer,
+    ) {
+        let clear = Color::new(clear_color.r, clear_color.g, clear_color.b, 0);
+        #[rustfmt::skip]
+        self.capture(screenshot_res, armature, camera, 1., &clear, rendered_frames, mapped_frames, renderer);
+    }
+
+    /// `take_screenshot` with x scaled by `aspect` (height / width, as
+    /// `RenderCamera::view` gives it) and `clear_color`'s alpha kept.
+    pub fn capture(
+        &self,
+        screenshot_res: Vec2,
+        armature: &mut Armature,
+        camera: &Camera,
+        aspect: f32,
         clear_color: &Color,
         rendered_frames: &mut Vec<RenderedFrame>,
         mapped_frames: &mut Arc<Mutex<usize>>,
@@ -1493,7 +1730,7 @@ impl BackendRenderer {
                             r: clear_color.r as f64 / 255.,
                             g: clear_color.g as f64 / 255.,
                             b: clear_color.b as f64 / 255.,
-                            a: 0.0,
+                            a: clear_color.a as f64 / 255.,
                         }),
                         store: wgpu::StoreOp::Store,
                     },
@@ -1507,7 +1744,7 @@ impl BackendRenderer {
 
             // render armature with for screenshot purposes
             let queue = &self.gpu.queue;
-            renderer::render_screenshot(&mut capture_pass, armature, &camera, renderer, queue);
+            renderer::render_screenshot(&mut capture_pass, armature, &camera, aspect, renderer, queue);
         }
 
         // pad screenshot width to a multiple of 256
@@ -1516,7 +1753,7 @@ impl BackendRenderer {
         let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as u32;
         let padded_bytes_per_row = ((unpadded_bytes_per_row + align - 1) / align) * align;
 
-        let buffer_size = (padded_bytes_per_row * height * 4) as u64;
+        let buffer_size = (padded_bytes_per_row * height) as u64;
         let output_buffer = self.gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Readback Buffer"),
             size: buffer_size,

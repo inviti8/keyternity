@@ -239,7 +239,7 @@ fn envelopes_and_hand_weights_are_saved() {
     let mesh = a.bones.iter_mut().find(|b| b.id == MESH).unwrap();
     mesh.max_influences = 2;
     skin::lock_vertex(mesh, 5);
-    let (_, editor) = utils::prepare_files(&a, Camera::default(), vec![], &EditMode::default());
+    let (_, editor) = utils::prepare_files(&a, Camera::default(), vec![], &EditMode::default(), None);
     let editor: serde_json::Value = serde_json::from_str(&editor).unwrap();
     let bones = editor["bones"].as_array().unwrap();
     let upper = &bones[a.bones.iter().position(|b| b.id == UPPER).unwrap()];

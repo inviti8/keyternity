@@ -114,6 +114,7 @@ pub fn draw(
                         shared::SettingsState::Colors => colors(ui, shared_ui),
                         shared::SettingsState::Misc => misc(ui, shared_ui, config),
                         shared::SettingsState::Agent => agent(ui, shared_ui, config),
+                        shared::SettingsState::FrameSequence => {}
                     });
 
                     events.update_config();
