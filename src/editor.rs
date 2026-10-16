@@ -781,6 +781,9 @@ pub fn simple_event(
             undo_states.new_undo_anims(&armature.animations);
             undo_states.undo_actions.last_mut().unwrap().continued = true;
 
+            // the selected bone, by id: deleting bones above it shifts its index
+            let selected_id = armature.bones.get(selections.bone_idx).map(|b| b.id);
+
             for id in ids_to_delete {
                 let bone;
                 if let Some(result) = armature.bones.iter().find(|b| b.id == id) {
@@ -830,6 +833,25 @@ pub fn simple_event(
                 if selections.bone_idx == value as usize || selections.bone_ids.len() > 1 {
                     selections.bone_idx = usize::MAX;
                     selections.bone_ids = vec![];
+                }
+            }
+
+            // keep only selected bones that still exist (a deleted hierarchy can hold
+            // selected bones, e.g. a copy pasted under it), and re-find the selected one
+            let exists = |id: &i32| armature.bones.iter().any(|b| b.id == *id);
+            selections.bone_ids.retain(exists);
+            selections.bone_idx = match selected_id.filter(exists) {
+                Some(id) if selections.bone_idx != usize::MAX => {
+                    armature.bones.iter().position(|b| b.id == id).unwrap_or(usize::MAX)
+                }
+                _ => usize::MAX,
+            };
+            if selections.bone_idx == usize::MAX {
+                selections.bone_ids = vec![];
+                selections.vert_ids = vec![];
+                selections.bind = -1;
+                if ui.last_selected == "bone" {
+                    ui.last_selected = "".to_string();
                 }
             }
         }

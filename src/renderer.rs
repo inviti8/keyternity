@@ -108,7 +108,8 @@ pub fn render(
     let mut selected_bone_ids = vec![];
     if armature.sel_bone(&sel) != None {
         for id in &selections.bone_ids {
-            let bone = temp_arm.bones.iter().find(|bone| bone.id == *id).unwrap();
+            // a selection can briefly outlive its bone (deleted this frame)
+            let Some(bone) = temp_arm.bones.iter().find(|bone| bone.id == *id) else { continue };
             let mut children = vec![bone.clone()];
             armature_window::get_all_children(&temp_arm.bones, &mut children, &bone);
             for child in children {
@@ -335,8 +336,8 @@ pub fn render(
     let mut is_hovering_line = false;
     let sel_bone = temp_arm.sel_bone(&sel);
     if edit_mode.editing_mesh && sel_bone != None && !sel_bone.unwrap().hidden {
-        let id = armature.sel_bone(&sel).unwrap().id;
-        let bone = temp_arm.bones.iter().find(|bone| bone.id == id).unwrap();
+        let id = armature.sel_bone(&sel).map_or(-1, |b| b.id);
+        let Some(bone) = temp_arm.bones.iter().find(|bone| bone.id == id) else { return };
 
         // render texture, so it appears above everything else
         let tex = armature.tex_of(bone.id);
@@ -713,7 +714,7 @@ pub fn render(
             if *current_edit == EditModes::Rotate {
                 let mut mouse = utils::screen_to_world_space(input.mouse, camera.window);
                 mouse.x *= camera.aspect_ratio();
-                let bone = temp_arm.bones.iter().find(|b| b.id == *sel_id).unwrap();
+                let Some(bone) = temp_arm.bones.iter().find(|b| b.id == *sel_id) else { continue };
                 let center = vert(Some(bone.pos), None, None);
                 let cam = &world_camera(&camera, &config);
                 let aspect_ratio = camera.aspect_ratio();
@@ -726,7 +727,7 @@ pub fn render(
             if !mouse_moved {
                 continue;
             }
-            let bone = temp_arm.bones.iter().find(|b| b.id == *sel_id).unwrap();
+            let Some(bone) = temp_arm.bones.iter().find(|b| b.id == *sel_id) else { continue };
             #[rustfmt::skip]
             edit_bone(
                 events, edit_mode, current_edit.clone(), &selections, &camera,
@@ -3187,8 +3188,8 @@ fn transform_ring(
 
     render_pass.set_bind_group(0, &renderer.ring_bindgroup, &[]);
 
-    let id = armature.sel_bone(&sel).unwrap().id;
-    let sel_bone = temp_arm.bones.iter().find(|b| b.id == id).unwrap();
+    let Some(id) = armature.sel_bone(&sel).map(|b| b.id) else { return };
+    let Some(sel_bone) = temp_arm.bones.iter().find(|b| b.id == id) else { return };
     let adjusted = Vec2::new(sel_bone.pos.x - mouse_pos.x, sel_bone.pos.y - mouse_pos.y);
     let expand_time = 0.15;
     let size_elapsed = (edit_mode.sel_time / expand_time).min(1.);
