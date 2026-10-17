@@ -126,6 +126,9 @@ pub fn draw(
     }
 
     crate::face_ui::face_buttons(ui, bone, shared_ui, armature, events);
+    ui.add_space(4.);
+    crate::face_ui::landmarks_section(ui, bone, selections, shared_ui, config, edit_mode, events);
+    ui.add_space(4.);
     ui.horizontal(|ui| {
         if ui.skf_button(loc(shared_ui, "add")).on_hover_text(loc(shared_ui, "add_desc")).clicked() {
             events.add_shape(bone.id, &loc(shared_ui, "new_name"));

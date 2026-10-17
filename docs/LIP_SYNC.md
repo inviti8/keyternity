@@ -553,6 +553,37 @@ style, rebuilds the generated part and keeps the corrections on top. Sculpting a
 generated shape edits only its corrections. *Reset Corrections* returns to the pure
 template.
 
+#### As built (phase 1c)
+
+- **Data:** a mesh's `face_map` (view, and landmark points by vertex id: saved by
+  index, marked *derived* until confirmed).
+- **Face Landmarks section** (in Shapes):
+  - the view, then the landmarks in mapping order (midline, then the character's
+    left);
+  - **Pick** turns on vertex editing, maps the next vertex clicked, and moves on to
+    the next landmark;
+  - ✓ confirms a derived point, and ✕ clears one;
+  - the canvas shows mapped points (filled) and derived ones (hollow).
+- **Derive Other Side:**
+  - **Front:** reflect across the least-squares midline (tilt included).
+  - **Three-quarter:** the cylinder model, solved from the widest mapped pair.
+  - Either way, the point snaps to the nearest vertex, preferring the mesh's edge when
+    its source is on one.
+- **Generate Face:** templates (front view; `_R` mirrored from `_L`) in mouth widths
+  and nose-to-chin lengths, with a Subtle/Standard/Cartoon strength and optional
+  visemes.
+  - **Spreading:** an inverse-square blend of the region's landmark motions, faded
+    out beyond a reach set per region.
+  - **Lips and lids:** each vertex takes only its own half's landmarks, judged by its
+    triangles' centres, so closed seams split correctly.
+  - **Regenerating** keeps corrections, using `MeshShape::generated`.
+- **Checks:** enough landmarks for units, and a lip seam.
+- **Not yet:**
+  - projecting template motion through the three-quarter cylinder (templates move
+    landmarks in front-view terms);
+  - profile templates;
+  - an offer to cut the lip seam with the Pen tool.
+
 #### The result
 
 Map about 30 points (about 15 with mirroring), press *Generate Face*, and the
@@ -695,7 +726,7 @@ reviews and refines.
 | **0. Timeline pass and layers** | [TIMELINE.md](TIMELINE.md): navigation, compact rows and keys, then animation layers | Its own feature, done first |
 | **1. Shapes** ✓ | Data, evaluation before skinning, ShapeWeight keys and timeline rows, Shapes panel, sculpt mode, mirror, capture from pose, remapping on topology edits, `.skf` and DragonBones (FFD) export, tests | Useful immediately: blinks, brows, squash. |
 | **1b. Standard face and face rig** ✓ | The standard shape list and aliases, *Add Standard Face Shapes*, the mapping table, *Set Up Face*, control helper bones and the driver table, the default layout generated from `FaceBot.FBX`, the rig overlay panel, Eye Look, driven weights baked on export | The FaceBot structure in 2D (§6.4–6.6) |
-| **1c. Generated faces** | Landmark map on the rig mask, *Set Up Face* (midline, one side, derived side: mirror for front views, cylinder model for three-quarter, profile mode), view suggestion, snapping to feature lines, mesh checks (lip and lid seams, mouth interior, density) with fixes, templates (JSON) with style presets and per-shape strength, helper-bone propagation with regions, *Generate Face*, generated + corrections and regenerate | After 1 and 1b. Makes the whole face a few minutes' setup. |
+| **1c. Generated faces** ✓ (first pass) | Landmark map on the rig mask, *Set Up Face* (midline, one side, derived side: mirror for front views, cylinder model for three-quarter, profile mode), view suggestion, snapping to feature lines, mesh checks (lip and lid seams, mouth interior, density) with fixes, templates (JSON) with style presets and per-shape strength, helper-bone propagation with regions, *Generate Face*, generated + corrections and regenerate | After 1 and 1b. Makes the whole face a few minutes' setup. |
 | **2. Dialog audio** | Clips embedded in `.skf`, Symphonia decoding, rodio playback in sync, waveform, audio scrub, video export with audio | Desktop first |
 | **3. Mouth rigs + lip sync** | The 17 sounds and the viseme-set mappings, mouth rig panel and auto-fill, the English text rules (ported from TalkingHead), typed transcripts with words spread over speech, lip-sync tracks and keyer, regenerate and bake, loudness fallback, drawn and morph mouths | The Facebot loop, end to end. No downloads. |
 | **3b. Transcription** | whisper.cpp through `whisper-rs`, model download, word timings, editable transcript; TalkingHead's other language modules | Imported recordings |

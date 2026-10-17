@@ -766,6 +766,14 @@ pub struct Ui {
     pub layer_settings: Option<usize>,
     /// the bone panel's Shapes section is folded
     pub shapes_folded: bool,
+    /// the Face Landmarks section is open
+    pub landmarks_open: bool,
+    /// picking a landmark: its name, and the vertex selection when picking started
+    pub picking_landmark: Option<String>,
+    pub picking_from: Vec<usize>,
+    /// Generate Face's strength (0: Standard) and whether it adds visemes
+    pub face_strength: f32,
+    pub face_visemes: bool,
     /// the typed Scale Keys window, with its factor
     pub scale_dialog: Option<f32>,
     /// scaling the selected keys in time
@@ -1227,6 +1235,9 @@ pub struct Visuals {
     /// shapes (morph targets), offsets by vertex index
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shapes: Vec<MeshShape>,
+    /// the landmark map, points by vertex index
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub face_map: Option<FaceMap>,
 
     #[serde(skip_deserializing)]
     pub init_tex: String,
@@ -1363,6 +1374,9 @@ pub struct Bone {
     /// a face-rig control: this helper bone drives shapes (docs/LIP_SYNC.md §6.5)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub face_control: Option<FaceControl>,
+    /// the face's landmark map, for generating shapes (docs/LIP_SYNC.md §6.7)
+    #[serde(skip)]
+    pub face_map: Option<FaceMap>,
 
     #[serde(skip)]
     pub folded: bool,
@@ -2021,6 +2035,37 @@ pub struct MeshShape {
     /// optional: "mouth", "brows"… for the UI and exclusive groups
     #[serde(skip_serializing_if = "String::is_empty")]
     pub group: String,
+    /// the part of `deltas` that Generate Face made; the rest is the artist's
+    /// corrections, kept when regenerating (docs/LIP_SYNC.md §6.7)
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub generated: Vec<ShapeDelta>,
+}
+
+/// A face's landmark map (docs/LIP_SYNC.md §6.7): named points on the mesh.
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Default, Debug)]
+#[serde(default)]
+pub struct FaceMap {
+    pub view: FaceView,
+    pub points: Vec<LandmarkPoint>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Default, Debug)]
+#[serde(default)]
+pub struct LandmarkPoint {
+    pub name: String,
+    /// vertex id in the editor, index in saved files
+    pub vert: u32,
+    /// suggested from the other side, not yet confirmed by the artist
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub derived: bool,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq, Eq, Default, Debug)]
+pub enum FaceView {
+    #[default]
+    Front,
+    ThreeQuarter,
+    Profile,
 }
 
 /// A face-rig control (docs/LIP_SYNC.md §6.5): a helper bone whose offset from its
@@ -3028,6 +3073,7 @@ pub enum Events {
     SetUpFace,
     AddStandardShapes,
     SetFaceControl,
+    FaceLandmarks,
     SetSculptRadius,
     ResetVertices,
     SelectBind,
@@ -3224,6 +3270,14 @@ impl EventState {
         self.events.push(E::ToggleSculptShape);
         self.values.push(bone_id as f32);
         self.str_values.push(shape.to_string());
+    }
+
+    /// Landmark map edits (docs/LIP_SYNC.md §6.7), as `op|args`: `map|name|vert`,
+    /// `clear|name`, `clear_all`, `view|Front`, `derive`, `generate|visemes|strength`.
+    pub fn face_landmarks(&mut self, mesh_id: i32, op: &str) {
+        self.events.push(E::FaceLandmarks);
+        self.values.push(mesh_id as f32);
+        self.str_values.push(op.to_string());
     }
 
     /// Add a face rig for a mesh (docs/LIP_SYNC.md §6.5).

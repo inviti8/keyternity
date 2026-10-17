@@ -61,6 +61,10 @@ pub fn prune(bone: &mut Bone) {
     let ids: Vec<u32> = bone.vertices.iter().map(|v| v.id).collect();
     for shape in &mut bone.shapes {
         shape.deltas.retain(|d| ids.contains(&d.vert));
+        shape.generated.retain(|d| ids.contains(&d.vert));
+    }
+    if let Some(map) = &mut bone.face_map {
+        map.points.retain(|p| ids.contains(&p.vert));
     }
 }
 

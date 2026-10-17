@@ -725,11 +725,18 @@ pub fn prepare_files(
 
         // shape offsets by vertex index, as the vertices are about to be renumbered
         let vertices = armature_copy.bones[b].vertices.clone();
+        let by_index = |ds: &Vec<ShapeDelta>| -> Vec<ShapeDelta> {
+            ds.iter().filter_map(|d| vertices.iter().position(|v| v.id == d.vert).map(|i| ShapeDelta { vert: i as u32, delta: d.delta })).collect()
+        };
         for shape in &mut armature_copy.bones[b].shapes {
-            shape.deltas = shape
-                .deltas
+            shape.deltas = by_index(&shape.deltas);
+            shape.generated = by_index(&shape.generated);
+        }
+        if let Some(map) = &mut armature_copy.bones[b].face_map {
+            map.points = map
+                .points
                 .iter()
-                .filter_map(|d| vertices.iter().position(|v| v.id == d.vert).map(|i| ShapeDelta { vert: i as u32, delta: d.delta }))
+                .filter_map(|p| vertices.iter().position(|v| v.id == p.vert).map(|i| LandmarkPoint { vert: i as u32, ..p.clone() }))
                 .collect();
         }
 
@@ -918,6 +925,7 @@ pub fn prepare_files(
             indices: bone.indices.clone(),
             binds: bone.binds.clone(),
             shapes: bone.shapes.clone(),
+            face_map: bone.face_map.clone(),
             init_tex: bone.tex.clone(),
             init_tint: bone.tint,
             init_zindex: bone.zindex,
@@ -1018,6 +1026,7 @@ pub fn import<R: Read + std::io::Seek>(
         bone.indices = visuals.indices.clone();
         bone.binds = visuals.binds.clone();
         bone.shapes = visuals.shapes.clone();
+        bone.face_map = visuals.face_map.clone();
         bone.pivot_pos = visuals.pivot_pos;
         bone.pivot_rot = visuals.pivot_rot;
         bone.pivot_scale = visuals.pivot_scale;

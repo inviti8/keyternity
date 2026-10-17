@@ -44,6 +44,11 @@ pub fn iterate_events(
             E::SetCamera if events.values[0] == 1. => undo_states.new_undo_cameras(&armature.cameras),
             E::SetLayer if events.values[0] == 1. => undo_states.new_undo_anim(armature.sel_anim(&selections).unwrap()),
             E::SetUpFace => undo_states.new_undo_bones(&armature.bones),
+            E::FaceLandmarks => {
+                if let Some(b) = armature.bones.iter().find(|b| b.id == events.values[0] as i32) {
+                    undo_states.new_undo_bone(b);
+                }
+            }
             E::SetFaceControl => {
                 if let Some(b) = armature.bones.iter().find(|b| b.id == events.values[0] as i32) {
                     undo_states.new_undo_bone(b);
@@ -206,6 +211,7 @@ pub fn iterate_events(
         || event == Events::SetUpFace
         || event == Events::AddStandardShapes
         || event == Events::SetFaceControl
+        || event == Events::FaceLandmarks
     {
         let bone_id = events.values[0] as i32;
         let s = events.str_values[0].clone();
@@ -234,6 +240,37 @@ pub fn iterate_events(
             Events::AddStandardShapes => {
                 if let Some(bone) = armature.bones.iter_mut().find(|b| b.id == bone_id) {
                     face::add_standard_shapes(bone, s == "1");
+                }
+            }
+            Events::FaceLandmarks => {
+                if let Some(bone) = armature.bones.iter_mut().find(|b| b.id == bone_id) {
+                    let parts: Vec<&str> = s.split('|').collect();
+                    let mut map = bone.face_map.clone().unwrap_or_default();
+                    match parts.as_slice() {
+                        ["map", name, vert] => {
+                            if let Ok(v) = vert.parse::<u32>() {
+                                face_gen::map_point(&mut map, name, v);
+                            }
+                        }
+                        ["clear", name] => map.points.retain(|p| p.name != *name),
+                        ["clear_all"] => map.points.clear(),
+                        ["view", v] => {
+                            map.view = match *v {
+                                "ThreeQuarter" => FaceView::ThreeQuarter,
+                                "Profile" => FaceView::Profile,
+                                _ => FaceView::Front,
+                            }
+                        }
+                        ["derive"] => {
+                            face_gen::derive_into(bone, &mut map);
+                        }
+                        _ => {}
+                    }
+                    bone.face_map = Some(map);
+                    if let ["generate", visemes, strength] = parts.as_slice() {
+                        let strength = strength.parse::<f32>().unwrap_or(1.);
+                        face_gen::generate_face(bone, *visemes == "1", strength);
+                    }
                 }
             }
             Events::SetFaceControl => {
@@ -2441,9 +2478,13 @@ pub fn cleanup_vertices(bone: &mut Bone) {
             *idx -= if *idx >= v as u32 { 1 } else { 0 };
         }
 
-        // and from shapes
+        // and from shapes, and the landmark map
         for shape in &mut bone.shapes {
             shape.deltas.retain(|d| d.vert != vert.id);
+            shape.generated.retain(|d| d.vert != vert.id);
+        }
+        if let Some(map) = &mut bone.face_map {
+            map.points.retain(|p| p.vert != vert.id);
         }
 
         // remove this vertex from binds
