@@ -303,10 +303,10 @@
   },
   "face_panel": {
     "title": "Face Rig",
-    "hint": "Drag to pose. Eyes: drag down to close. Shift-drag twists (brows, jaw); Alt-drag pushes in and out (lips, jaw). Double-click resets; right-click to key or select.",
+    "hint": "Left-drag moves, right-drag twists, middle-drag closes eyes or pushes lips and jaw in and out (Shift and Alt for right and middle on a trackpad). Right-click for the menu; double-click resets.",
     "how_scale": "drag down to close",
-    "how_twist": "Shift: twist",
-    "how_depth": "Alt: in/out",
+    "how_twist": "right-drag: twist",
+    "how_depth": "middle-drag: in/out",
     "reset": "Reset",
     "key": "Key",
     "select": "Select Control Bone",

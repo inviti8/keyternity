@@ -158,9 +158,67 @@ pub fn placement(armature: &Armature, posed: &[Bone], bone_id: i32) -> ControlPo
     p
 }
 
+/// What a drag on a manipulator works, by mouse button: left moves, right twists,
+/// middle works the third channel (the eyes' scale, the lips' and jaw's depth).
+/// Shift and Alt stand in for right and middle on trackpads.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum DragMode {
+    #[default]
+    Move,
+    Twist,
+    Third,
+}
+
 /// Panel units per mesh unit for a control (its rig's scale).
 fn rig_scale(fc: &FaceControl) -> f32 {
     (fc.range / face::RANGE).max(1e-4)
+}
+
+/// The convex hull of points (monotone chain), counter-clockwise in screen space.
+pub fn hull(points: &[egui::Pos2]) -> Vec<egui::Pos2> {
+    let mut pts = points.to_vec();
+    pts.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
+    pts.dedup_by(|a, b| (a.x - b.x).abs() < 1e-4 && (a.y - b.y).abs() < 1e-4);
+    if pts.len() < 3 {
+        return pts;
+    }
+    let cross = |o: egui::Pos2, a: egui::Pos2, b: egui::Pos2| (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+    let mut lower: Vec<egui::Pos2> = vec![];
+    for p in &pts {
+        while lower.len() >= 2 && cross(lower[lower.len() - 2], lower[lower.len() - 1], *p) <= 0. {
+            lower.pop();
+        }
+        lower.push(*p);
+    }
+    let mut upper: Vec<egui::Pos2> = vec![];
+    for p in pts.iter().rev() {
+        while upper.len() >= 2 && cross(upper[upper.len() - 2], upper[upper.len() - 1], *p) <= 0. {
+            upper.pop();
+        }
+        upper.push(*p);
+    }
+    lower.pop();
+    upper.pop();
+    lower.extend(upper);
+    lower
+}
+
+/// Whether `p` is inside a convex polygon, or within `margin` of its edge.
+pub fn near_hull(p: egui::Pos2, poly: &[egui::Pos2], margin: f32) -> bool {
+    if poly.len() < 3 {
+        return poly.iter().any(|q| (*q - p).length() <= margin);
+    }
+    let cross = |a: egui::Pos2, b: egui::Pos2| (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+    let inside = (0..poly.len()).all(|i| cross(poly[i], poly[(i + 1) % poly.len()]) >= 0.);
+    if inside {
+        return true;
+    }
+    (0..poly.len()).any(|i| {
+        let (a, b) = (poly[i], poly[(i + 1) % poly.len()]);
+        let ab = b - a;
+        let t = ((p - a).dot(ab) / ab.length_sq().max(1e-6)).clamp(0., 1.);
+        (a + ab * t - p).length() <= margin
+    })
 }
 
 fn tri_contains(p: egui::Pos2, t: &[egui::Pos2; 3]) -> bool {
@@ -336,7 +394,14 @@ fn board(
         placed.push(Placed { art: a, bone: *bone, tris, rest: to_screen(a.rest[0], a.rest[1]) });
     }
     // the topmost control under the pointer
-    let hovered = pointer.and_then(|p| placed.iter().rev().find(|pl| pl.tris.iter().any(|t| tri_contains(p, t))).map(|pl| pl.bone));
+    // grabbable anywhere inside its outline (a few points' margin), topmost first: the
+    // lips and corners over the mouth ring, the ring (and its hollow middle) over the jaw
+    let hulls: Vec<Vec<egui::Pos2>> = placed.iter().map(|pl| hull(&pl.tris.iter().flatten().copied().collect::<Vec<_>>())).collect();
+    let pick = |p: egui::Pos2| {
+        placed.iter().zip(&hulls).rev().find(|(pl, h)| pl.tris.iter().any(|t| tri_contains(p, t)) || near_hull(p, h, 4.)).map(|(pl, _)| pl.bone)
+    };
+    let hovered = pointer.and_then(pick);
+    shared_ui.face_panel_hover = hovered;
     let active = shared_ui.face_panel_drag.or(hovered);
 
     for pl in &placed {
@@ -422,8 +487,20 @@ fn board(
     // (the app draws, renders, then applies events), so adding each frame's movement
     // to it would flip the control between two positions while held.
     if resp.drag_started() {
+        // the control under the press, not where the pointer has got to by the time the
+        // drag registers (past egui's drag threshold, maybe over a neighbour)
+        let origin = ui.input(|i| i.pointer.press_origin());
+        let hovered = origin.filter(|o| rect.contains(*o)).and_then(pick).or(hovered);
         shared_ui.face_panel_drag = hovered;
         shared_ui.face_panel_drag_start = None;
+        let (shift, alt) = ui.input(|i| (i.modifiers.shift, i.modifiers.alt));
+        shared_ui.face_panel_drag_mode = if resp.drag_started_by(egui::PointerButton::Secondary) || shift {
+            DragMode::Twist
+        } else if resp.drag_started_by(egui::PointerButton::Middle) || alt {
+            DragMode::Third
+        } else {
+            DragMode::Move
+        };
         if let Some(id) = hovered {
             if let (Some(idx), Some(pose)) = (armature.bones.iter().position(|b| b.id == id), posed.iter().find(|b| b.id == id)) {
                 events.save_edited_bone(idx);
@@ -441,11 +518,21 @@ fn board(
             // the pointer's movement since the press, in mask units (y up)
             let d = now - origin;
             let (dx, dy) = (d.x / scale, -d.y / scale);
-            let (twisting, depth) = ui.input(|i| (i.modifiers.shift, i.modifiers.alt));
             let has = |a: ControlAxis| fc.slots.iter().any(|sl| sl.axis == a);
             let scales = has(ControlAxis::ScaleDown) || has(ControlAxis::ScaleUp);
+            let deep = has(ControlAxis::Forward) || has(ControlAxis::Back);
+            // a control that can't move (the eyes) works its third channel with any drag
+            let moves = fc.limits.is_none_or(|l| l.x != (0., 0.) || l.y != (0., 0.));
+            let mode = match shared_ui.face_panel_drag_mode {
+                DragMode::Move if !moves => DragMode::Third,
+                m => m,
+            };
+            let twisting = mode == DragMode::Twist;
+            let depth = mode == DragMode::Third && deep && !scales;
+            let scaling = mode == DragMode::Third && scales;
             match fc.limits {
-                Some(l) if scales => {
+                Some(_) if mode == DragMode::Third && !scaling && !depth => {}
+                Some(l) if scaling => {
                     // eyes: dragging down closes (scale 1 → 0 over two mask units)
                     let sy = (start_scale.y + dy * 0.5).clamp(l.scale.0, l.scale.1);
                     events.edit_bone(id, &AnimElement::ScaleY, sy, "", anim_idx, frame);
@@ -484,7 +571,7 @@ fn board(
                 }
             }
         }
-        if resp.drag_stopped() || !ui.input(|i| i.pointer.primary_down()) {
+        if resp.drag_stopped() || !ui.input(|i| i.pointer.any_down()) {
             shared_ui.face_panel_drag = None;
             shared_ui.face_panel_drag_start = None;
         }

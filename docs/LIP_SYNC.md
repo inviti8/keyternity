@@ -371,7 +371,18 @@ limits in `FaceBot.FBX`). Full weight is at the limit:
 | Jaw | sideways ±1 (JawSide), down 1 (MouthOpen) | ±10° (JawTwist) | **depth ±1** (JawForward/Backward) |
 | Tongue | up 0–1 (TongueUp; FaceBot tilts it about X) | – | – |
 
-- **Dragging:** depth is Alt + vertical drag, and twist is Shift + horizontal drag.
+- **Dragging by mouse button,** with no tool changes:
+  - **left** moves;
+  - **right** twists (brows, jaw);
+  - **middle** works the third channel: the eyes' scale, the lips' and jaw's depth.
+  - Shift and Alt stand in for right and middle on trackpads.
+  - A control that can't move (the eyes) works its one channel with any drag.
+  - Right-click without dragging opens the menu.
+- **Grabbing:** each manipulator is grabbable anywhere inside its outline (convex
+  hull), plus a few points' margin, topmost first. The mouth ring's hollow middle
+  grabs the ring, while the lips and corners on top of it stay grabbable. A drag takes
+  the control under the press, not wherever the pointer has moved by the time the
+  drag registers.
 - **Where depth is stored:** bones are 2D, so a control's depth rides on its hidden
   bone's X scale and the eyes' closing on its Y scale. The panel shows depth as a
   slight change in size.

@@ -201,3 +201,77 @@ fn hold(animating: bool) {
         assert!(moved_counts[1..].iter().all(|m| *m == 0), "steady while held: {:?}", moved_counts);
     }
 }
+
+#[test]
+fn manipulators_are_grabbable_inside_their_outline() {
+    use egui::pos2;
+    // a ring (four thin bars around a hollow middle)
+    let ring = vec![pos2(0., 0.), pos2(10., 0.), pos2(10., 10.), pos2(0., 10.), pos2(1., 1.), pos2(9., 9.)];
+    let h = face_panel::hull(&ring);
+    assert_eq!(h.len(), 4);
+    assert!(face_panel::near_hull(pos2(5., 5.), &h, 0.), "the hollow middle grabs it");
+    assert!(face_panel::near_hull(pos2(12., 5.), &h, 4.), "so does a near miss");
+    assert!(!face_panel::near_hull(pos2(20., 5.), &h, 4.));
+}
+
+/// Drag the jaw with `button` (and `modifiers`), returning its bone after.
+fn drag_jaw(button: egui::PointerButton, modifiers: egui::Modifiers) -> Bone {
+    let mut s = rigged();
+    let ctx = egui::Context::default();
+    let raw = |events: Vec<egui::Event>, modifiers: egui::Modifiers| egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000., 800.))),
+        events,
+        modifiers,
+        ..Default::default()
+    };
+    let mut step = |s: &mut Shared, events: Vec<egui::Event>, m: egui::Modifiers| {
+        ctx.run(raw(events, m), |ctx| {
+            face_panel::draw(ctx, &mut s.ui, &s.config, &s.armature, &s.selections, &s.edit_mode, &mut s.events);
+        });
+        run_events(s);
+    };
+    for _ in 0..4 {
+        step(&mut s, vec![], Default::default());
+    }
+    let r = ctx.memory(|m| m.area_rect(egui::Id::new("face_rig_panel"))).unwrap();
+    // a point on the jaw: below the mouth ring, found by hovering down the middle
+    let jaw_id = s.armature.bones.iter().find(|b| b.face_control.as_ref().is_some_and(|c| c.name == "Jaw")).unwrap().id;
+    let mut p = egui::pos2(r.center().x, r.top() + r.height() * 0.70);
+    for i in 0..40 {
+        p = egui::pos2(r.center().x + 40., r.top() + r.height() * (0.70 + i as f32 * 0.006));
+        step(&mut s, vec![egui::Event::PointerMoved(p)], modifiers);
+        if s.ui.face_panel_hover == Some(jaw_id) {
+            break;
+        }
+    }
+    step(&mut s, vec![egui::Event::PointerMoved(p)], modifiers);
+    step(&mut s, vec![egui::Event::PointerButton { pos: p, button, pressed: true, modifiers }], modifiers);
+    let mut q = p;
+    for _ in 0..6 {
+        q += egui::vec2(6., -6.);
+        step(&mut s, vec![egui::Event::PointerMoved(q)], modifiers);
+    }
+    step(&mut s, vec![egui::Event::PointerMoved(q)], modifiers);
+    assert_eq!(s.ui.face_panel_drag, Some(jaw_id), "the control under the press");
+    s.armature.bones.iter().find(|b| b.face_control.as_ref().is_some_and(|c| c.name == "Jaw")).unwrap().clone()
+}
+
+#[test]
+fn mouse_buttons_pick_the_channel() {
+    let rest = |b: &Bone| b.face_control.as_ref().unwrap().rest;
+    // left: moves
+    let moved = drag_jaw(egui::PointerButton::Primary, Default::default());
+    assert!((moved.pos - rest(&moved)).mag() > 1., "{:?}", moved.pos);
+    assert_eq!((moved.rot, moved.scale.x), (0., 1.));
+    // right: twists, without moving
+    let twisted = drag_jaw(egui::PointerButton::Secondary, Default::default());
+    assert!(twisted.rot.abs() > 0.01, "twisted: {}", twisted.rot);
+    assert!((twisted.pos - rest(&twisted)).mag() < 1e-4);
+    // middle: depth (forward/back), carried in X scale
+    let pushed = drag_jaw(egui::PointerButton::Middle, Default::default());
+    assert!((pushed.scale.x - 1.).abs() > 0.01, "depth: {}", pushed.scale.x);
+    assert!((pushed.pos - rest(&pushed)).mag() < 1e-4 && pushed.rot == 0.);
+    // Shift stands in for the right button
+    let shifted = drag_jaw(egui::PointerButton::Primary, egui::Modifiers::SHIFT);
+    assert!(shifted.rot.abs() > 0.01);
+}
