@@ -15,7 +15,8 @@ top of it by hand. It works the way Facebot did in MotionBuilder:
 For Keyternity this breaks down into building blocks, each useful on its own:
 
 0. **Animation layers:** keys in stacked layers (override or additive) that combine,
-   so generated lip sync and hand animation never fight over the same keys (§3).
+   so generated lip sync and hand animation never fight over the same keys. They're
+   designed with the timeline pass in [TIMELINE.md](TIMELINE.md).
 1. **Shapes:** morph targets for 2D meshes, with keyable weights. They're useful for
    any facial or squash-and-stretch animation, not just speech.
 2. **Dialog audio** in animations: import a clip, see its waveform, hear it in sync.
@@ -48,107 +49,12 @@ existing Texture keys.
 
 ## 3. Animation layers
 
-Lip sync only works if the generated keys and the artist's keys live in separate places
-that combine. Then regenerating lip sync never disturbs the hand animation, and a
-smile, blink or head tilt animates over the talking mouth. MotionBuilder's animation
-layers did this for Facebot. Keyternity has no layers yet:
-- An `Animation` is one flat list of keys per (bone, property). Absolute values are
-  interpolated over the setup pose (`Armature::interpolate_keyframes`).
-- One animation plays at a time.
-
-So layers come first, before shapes.
-
-### 3.1 Model
-
-Layers live **inside an animation** (like MotionBuilder's layers within a take, and
-Blender's NLA tracks on one action):
-
-```rust
-pub struct AnimLayer {
-    pub id: i32,
-    pub name: String,          // "Base", "Lip Sync", "Face", "Breathing"
-    pub mode: LayerMode,       // Override | Additive
-    pub weight: f32,           // 0..1; keyable later (§3.6)
-    pub muted: bool,
-    pub solo: bool,
-    pub locked: bool,          // no editing (e.g. a generated layer)
-    pub generated: Option<i32>,// owned by a lip-sync track (§7.1): regenerate replaces its keys
-}
-// Animation gains `layers: Vec<AnimLayer>` (bottom to top); Keyframe gains `layer: i32`.
-```
-
-- **Compatibility:** layer 0 is **Base**. Every existing key belongs to it
-  (`Keyframe.layer` defaults to 0), so current files and code paths are unchanged.
-- **Channels:** a layer only affects the channels (bone, property, shape) it has keys
-  for. Everything else passes through from below, so layers need no bone masks to
-  start with.
-
-### 3.2 Evaluation
-
-For each channel, bottom to top:
-
-```
-v = setup value, then the Base layer's keys as today
-for each upper layer L with keys on this channel (not muted; only soloed ones if any solo):
-    k = L's interpolated value
-    Override:  v = lerp(v, k, L.weight)
-    Additive:  v = v + L.weight * (k - rest)          // rest = the channel's setup value
-```
-
-What "additive" means depends on the property:
-
-| property | additive | override |
-|---|---|---|
-| position, rotation | adds the offset from the setup pose | blends to the layer's value |
-| scale | multiplies by (layer ÷ setup), weighted | blends |
-| shape weights (§4) | **adds the weight** (0 = no change), clamped per exclusive group (§6.3) | blends |
-| tint | blends toward the layer's colour | blends |
-| texture, hidden, z-index, IK flags (discrete) | treated as override | the top layer with a key wins, if its weight ≥ 0.5 |
-
-This runs in `Armature::animate`, before IK and physics, which see the combined pose
-just as they see today's. Evaluating several layers costs only a little more than
-today, because channels without keys on a layer are skipped quickly.
-
-### 3.3 Editing
-
-The timeline gets a **layer stack** beside the rows:
-- Each layer has its name, mode, a weight slider, and mute, solo and lock toggles.
-- One layer is **active**. New keys (from transforms, the bone panel, key buttons,
-  paste) go there.
-- The rows show the active layer's keys. Other layers' keys show as faint ticks, so
-  you can see what's happening above and below.
-- Actions: *Add Layer*, *Duplicate*, *Merge Down* (bake a layer into the one below),
-  *Bake All* (flatten), *Delete*. All are undoable.
-- **Generated layers** (lip sync) are locked. Unlocking one, or editing its keys,
-  first asks whether to detach it from regeneration.
-
-### 3.4 Lip sync on layers
-
-- The lip-sync track writes into its own **Lip Sync** layer:
-  - additive for morph mouths (so expression shapes on other layers add to it);
-  - override for drawn mouths (textures).
-- *Regenerate* replaces only that layer's keys. *Bake* detaches it into an ordinary
-  layer.
-- The artist animates the face and body on other layers. Lowering the Lip Sync
-  layer's weight mumbles; raising it over 1 isn't allowed.
-
-### 3.5 Saving and export
-
-| target | layers |
-|---|---|
-| `.skf` (editor file) | Kept as they are: `layers` on animations and `layer` on keys, documented in `skf_readme.md`. Runtimes that predate layers would mix all keys, so `.skfe` exports default to **Flatten layers**. |
-| DragonBones | Flattened. Each channel is sampled at the union of its key frames across layers (plus a set rate where curves combine), so the result matches the editor. |
-| Frame sequence, spritesheet, video | Rendered from the combined pose as they are. |
-
-Flattening is a pure function (`layers::flatten(animation, armature) -> Animation`),
-tested against the evaluator frame by frame.
-
-### 3.6 Later
-
-- **Keyable layer weight:** fade a layer in and out, e.g. a sneer layer at 0 → 1.
-- **Bone masks:** limit an override layer to an arm, for "wave while walking".
-- **Blending whole animations:** play idle + talk at runtime. That's a runtime
-  feature, separate from editor layers.
+Layers are designed with the timeline pass in [TIMELINE.md](TIMELINE.md) §5, and built
+before Shapes. What lip sync needs from them:
+- A generated **Lip Sync** layer that *Regenerate* replaces without touching any other
+  layer (TIMELINE.md §5.4).
+- **Additive** shape weights, so expressions on other layers add to the visemes.
+- **Override** for drawn mouths.
 
 ## 4. Shapes (morph targets)
 
@@ -303,7 +209,7 @@ pub struct MouthPose {
 ### 6.3 Combining with expressions
 
 - **Morph mouths:** viseme shapes and expression shapes (smile, frown, sneer) add up.
-  The lip sync keys stay untouched on their own layer (§3.4) while the artist keys
+  The lip sync keys stay untouched on their own layer (TIMELINE.md §5.4) while the artist keys
   the expression on another.
 - **Exclusive groups:** shapes in the same group as the mouth rig's visemes are
   normalised, so a viseme crossfade never stacks two visemes past full. Expression
@@ -330,7 +236,7 @@ the main way an artist corrects lip sync.
 
 **Lip-sync tracks** (`LipSyncTrack { clip, mouth rig, words: Vec<(word, start, end)>, language, settings }`) are
 stored with the animation:
-- The keys they produce go in the track's own generated **Lip Sync layer** (§3.4).
+- The keys they produce go in the track's own generated **Lip Sync layer** (TIMELINE.md §5.4).
   *Regenerate* (after changing the audio, text or settings) replaces only that
   layer's keys.
 - *Bake* turns it into an ordinary layer the artist owns.
@@ -441,7 +347,7 @@ reviews and refines.
 
 | phase | contents | notes |
 |---|---|---|
-| **0. Animation layers** | Layer data (Base = layer 0, so old files load unchanged), evaluation (override and additive per property), the timeline layer stack (active layer, mute, solo, lock, weight), Merge Down, Bake, flattening for `.skfe` and DragonBones, tests against the evaluator | Useful on its own: breathing or a blink cycle over any animation |
+| **0. Timeline pass and layers** | [TIMELINE.md](TIMELINE.md): navigation, compact rows and keys, then animation layers | Its own feature, done first |
 | **1. Shapes** | Data, evaluation before skinning, ShapeWeight keys and timeline rows, Shapes panel, sculpt mode, mirror, capture from pose, remapping on topology edits, `.skf` and DragonBones (FFD) export, tests | Useful immediately: blinks, brows, squash. |
 | **2. Dialog audio** | Clips embedded in `.skf`, Symphonia decoding, rodio playback in sync, waveform, audio scrub, video export with audio | Desktop first |
 | **3. Mouth rigs + lip sync** | The 17 sounds and the viseme-set mappings, mouth rig panel and auto-fill, the English text rules (ported from TalkingHead), typed transcripts with words spread over speech, lip-sync tracks and keyer, regenerate and bake, loudness fallback, drawn and morph mouths | The Facebot loop, end to end. No downloads. |
@@ -453,7 +359,7 @@ reviews and refines.
 
 | # | question | recommendation |
 |---|---|---|
-| Q0 | Layers inside an animation (MotionBuilder-style), with Override and Additive modes, before Shapes? | Yes. Bone masks and keyable weight come later (§3.6). |
+| Q0 | Layers inside an animation, with Override and Additive modes, before Shapes? | Moved to [TIMELINE.md](TIMELINE.md) §7 |
 | Q1 | Shapes after layers, with drawn-mouth (texture) lip sync also supported in phase 3? | Yes |
 | Q2 | Viseme sets? | **Decided:** internally Oculus 15 + L + W (TalkingHead's output). Mouth rigs draw Preston Blair 10 (default), Oculus 15 or Simple 5 through mapping tables (§6.1). |
 | Q3 | Audio embedded in the `.skf`, or linked by path? | Embedded (portable); a "linked" option later if files get large |
