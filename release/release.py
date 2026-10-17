@@ -27,7 +27,7 @@ parser.add_argument("-v", "--verbose", action="store_true", help="Print output o
 parser.add_argument("-dmg", "--dmg", action="store_true", help="Attempt to create Mac dmg (requires create-dmg)")
 parser.add_argument("-d", "--debug", action="store_true", help="Create debug build")
 parser.add_argument("-nd", "--nodocs", action="store_true", help="Skip user docs & dev docs")
-parser.add_argument("-up", "--ubuntudeps", action="store_true", help="Install glib2 and gtk3 for Ubuntu (used for CI/CD)")
+parser.add_argument("-up", "--ubuntudeps", action="store_true", help="Install glib2, gtk3 and ALSA (audio) for Ubuntu (used for CI/CD)")
 parser.add_argument("--version", help="Version stamped into the installer and Mac bundle (default: Cargo.toml's)")
 args = parser.parse_args()
 
@@ -99,7 +99,7 @@ if args.debug:
 # download dependencies for Ubuntu
 if args.ubuntudeps:
     run("sudo apt-get -y update")
-    run("sudo apt-get -y install libglib2.0-dev libgtk-3-dev")
+    run("sudo apt-get -y install libglib2.0-dev libgtk-3-dev libasound2-dev")
 
 # yapf: disable
 run            (f"cargo build {mode}")

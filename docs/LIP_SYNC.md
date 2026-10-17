@@ -1,6 +1,6 @@
 # Shapes, dialog and auto lip sync
 
-Status: all phases are built (§10); the rest of this document is the design they follow. The rest is research and scope. Decisions to confirm are in §11.
+Status: **built**: all phases in §10, in v0.8.0. Each phase's "As built" section records what was built and measured, and the rest of the document is the design it follows. Decisions are in §11.
 
 ## 1. Goal
 

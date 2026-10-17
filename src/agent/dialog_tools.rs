@@ -3,7 +3,9 @@
 //! Like the skinning tools, they run on the main thread between frames, and each edit
 //! is one undo step.
 
+#[cfg_attr(target_arch = "wasm32", allow(unused_imports))]
 use super::{int, num, opt_num, Tool, ToolResult, Undo};
+#[cfg_attr(target_arch = "wasm32", allow(unused_imports))]
 use crate::dialog::{DialogLine, Provider, Take, Voice};
 use crate::lipsync::{self, KeyerSettings, Language, LipSyncTrack, Smoothing, TrackSource, VisemeSet};
 use crate::*;

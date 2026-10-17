@@ -18,10 +18,12 @@ pub use web::*;
 use image::{GenericImage, ImageEncoder};
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::Mutex;
+#[cfg_attr(target_arch = "wasm32", allow(unused_imports))]
 use std::{collections::HashMap, path::PathBuf};
 use zip::read::ZipFile;
 
 use std::io::{Read, Write};
+#[cfg_attr(target_arch = "wasm32", allow(unused_imports))]
 use std::path::Path;
 
 /// Convert a point from screen to world space.
@@ -1599,6 +1601,8 @@ pub fn animate_bones(armature: &mut Armature, selection: &SelectionState, edit_m
 /// The crash log lives with the config and autosave (e.g.
 /// %APPDATA%\keyternity\keyternity\data on Windows), not next to the exe:
 /// an installed exe's folder isn't writable, so logs written there were lost.
+/// Desktop only (the web build has no data folder).
+#[cfg(not(target_arch = "wasm32"))]
 pub fn crashlog_file() -> PathBuf {
     directories_next::ProjectDirs::from("com", "keyternity", "keyternity")
         .map(|dirs| dirs.data_dir().to_path_buf())

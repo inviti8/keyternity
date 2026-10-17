@@ -1,6 +1,6 @@
 # Bind Pose Skinning — design
 
-**Status:** design draft, not implemented. Design decisions are recorded in §10.
+**Status:** implemented (Bind Pose, Pose mode, the classic multi-bind warning; tests in `tests/all/bind_pose.rs`). Design decisions are recorded in §10.
 **Goal:** give SkelForm standard, 3D-style *bind pose* skinning as an opt-in
 **Set Bind Pose** operation, with **no change to the `.skf` runtime format** and
 **no change to any runtime**.

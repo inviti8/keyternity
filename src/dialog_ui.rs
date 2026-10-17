@@ -2,6 +2,7 @@
 //! generation is kept as a take to audition and swap; the take in use is the line's
 //! clip, lip-synced on its words.
 
+#[cfg_attr(target_arch = "wasm32", allow(unused_imports))]
 use crate::dialog::{DialogLine, Provider, Voice};
 use crate::*;
 

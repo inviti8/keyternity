@@ -89,11 +89,59 @@ DragonBones for game engines. Older files lose their IK.
   bone's share lowers the others, so a vertex's weights always total 100%.
   Its **Lasso** assigns everything inside an outline in one go
   ([design](docs/ENVELOPES.md))
-- **AI skinning** — Keyternity runs a local MCP server, so an agent such as
-  Claude Code can skin the open rig: it reads the rig, looks at rendered
-  pictures of the art and bones, assigns drawn parts to bones, and test-poses
-  the rig to find folds and stretching. Connect it once from *Settings → Agent*
-  ([design](docs/AI_SKINNING.md))
+- **Timeline** — navigate by the visible range, with a range bar under the rows
+  and an *End* frame that can follow the last key or be set. Rows are grouped per
+  bone, with small key marks and summaries, and bone headers stay pinned while
+  scrolling. Selected keys scale in time by dragging or by a typed factor or
+  length ([design](docs/TIMELINE.md))
+- **Animation layers** — Override and Additive layers in a stack above the rows,
+  each with weight, mute, solo and lock. Layers can loop on their own (looped play
+  mode), play another animation (linked layers), or add procedural motion
+  (generators such as sine waves, bakeable to keys). Exports flatten the layers
+  into one ([design](docs/TIMELINE.md))
+- **Shapes** (morph targets) — named vertex offsets on a mesh, blended by weight
+  and applied before skinning, so they ride the bones. Sculpt them with a soft
+  brush, mirror them, or capture one from a pose; key their weights through
+  layers. DragonBones export bakes them into FFD keys
+  ([design](docs/LIP_SYNC.md#4-shapes-morph-targets))
+- **Face rig** — the standard face shapes (FaceBot's Mixamo set: blinks, brows,
+  smiles, lips, jaw…) and *Set Up Face*, which adds a 13-control rig that drives
+  them. Pose it in the **Face Rig panel**: FaceBot's mask, lit and deforming with
+  its manipulators. Left-drag moves, right-drag twists, middle-drag works the eyes'
+  scale and the lips' and jaw's depth, and Key and Reset sit above the mask
+  ([design](docs/LIP_SYNC.md#65-the-face-rig-2d-after-facebot))
+- **Generated faces** — mark ~30 landmarks on a face mesh and *Generate Face*
+  builds the standard shapes from them, deriving the other side by mirroring
+  (front views) or a cylinder model (three-quarter views), with a profile mode
+  ([design](docs/LIP_SYNC.md#67-generating-the-face-landmarks-and-automatic-shapes))
+- **Dialog audio** — *+ Audio* (or drop a file) places wav, mp3, ogg, flac or m4a
+  clips on an animation's timeline, embedded in the `.skf`. Each clip has a lane
+  with its waveform, drag to move, volume and mute. It plays in sync, is heard
+  while scrubbing, and is mixed into MP4 exports
+  ([design](docs/LIP_SYNC.md#5-dialog-audio-in-animations))
+- **Lip sync** — the *Lip* button on an audio lane keys the mouth from the line's
+  words, spread over the speech in the clip, or from its loudness alone. It works
+  on a face rig, on viseme shapes, or on a drawn mouth that swaps textures, in
+  Preston Blair's 10 visemes, Oculus's 15 or a simple 5, with lead, hold, smoothing
+  and intensity. The keys go in the clip's own locked Lip Sync layer, which
+  regenerates when the words change, or can be baked. Text rules for English,
+  German, French, Brazilian Portuguese, Finnish and Lithuanian are ported from
+  [TalkingHead](https://github.com/met4citizen/TalkingHead). **Transcribe**
+  listens to a recording with [whisper.cpp](https://github.com/ggml-org/whisper.cpp),
+  downloaded on first use like FFmpeg ([design](docs/LIP_SYNC.md#7-auto-lip-sync))
+- **Voice generation** — the **Dialog** window: type a line, pick a voice,
+  Generate. Each generation is kept as a take to listen to and swap. The take in use
+  is placed on the timeline and lip-synced. Voices: Kokoro on this computer (through
+  sherpa-onnx, downloaded on first use), the computer's own voices, ElevenLabs with
+  your API key, and Chatterbox voice cloning (with the voice owner's consent)
+  ([design](docs/LIP_SYNC.md#8-voice-generation-dialog-from-text))
+- **AI agent** — Keyternity runs a local MCP server, so an agent such as Claude
+  Code can work on the open rig. For skinning, it reads the rig, looks at rendered
+  pictures of the art and bones, assigns drawn parts to bones, and test-poses the
+  rig to find folds and stretching. For dialog, it speaks or places lines,
+  lip-syncs them and keys expressions. Each piece of work ends with a review page
+  in the browser. Connect it once from *Settings → Agent*
+  ([skinning](docs/AI_SKINNING.md), [dialog](docs/LIP_SYNC.md#9-agent-mcp-tools))
 - **Canvas toolbar** — a toolbar above the canvas with Move, Rotate and Scale,
   the navigation tools, the mesh tools, and the mesh actions (Trace, Center,
   Reset, Re-triangulate). The active tool's options sit on its right
@@ -192,15 +240,19 @@ DragonBones for game engines. Older files lose their IK.
 
 ## Status
 
-Keyternity is under active development, and there's no release yet. The first
-release is planned as `v0.1.0`; Keyternity versions start fresh rather than
-continuing SkelForm's.
+Keyternity is under active development. Releases for Windows, macOS and Linux are
+on the [releases page](https://github.com/inviti8/keyternity/releases);
+Keyternity's versions started fresh rather than continuing SkelForm's.
 
 Keyternity keeps its settings in its own folder (`keyternity`), separate from an
 installed SkelForm, and installs alongside it rather than over it. Rig files stay
-SkelForm's `.skf` format, so they open in both.
+SkelForm's `.skf` format, but rigs using Keyternity's additions (IK constraints,
+layers, shapes, audio) only play fully in Keyternity and its exports.
 
-Build from source as described below.
+Optional tools are downloaded on first use rather than bundled, each pinned and
+checked against its publisher's SHA-256: FFmpeg for video, whisper.cpp for
+transcription, and sherpa-onnx with Kokoro for voices. They live in Keyternity's
+data folder.
 
 ## Building
 
@@ -212,6 +264,7 @@ Dependencies:
 
 - glib2-dev - required for the `rfd` crate (file dialogs)
 - gtk3-dev - ditto above
+- libasound2-dev (ALSA) - required for audio playback
 
 Library names may differ across distributions. Video export uses the system's
 `ffmpeg`.
@@ -267,6 +320,13 @@ so a full run links the app once.
   a DragonBonesCPP checkout, see [DRAGONBONES_VERIFY.md](docs/DRAGONBONES_VERIFY.md))
 - `cargo test --test all -- ffmpeg_download:: --ignored` (opt-in, Windows;
   downloads the pinned FFmpeg build)
+- `cargo test --test all -- transcribe:: --ignored` (opt-in; downloads whisper.cpp
+  and its tiny model, and transcribes)
+- `cargo test --test all -- dialog:: agent_dialog:: --ignored` (opt-in; speaks with
+  the system's voices and with Kokoro, which it downloads, about 350 MB)
+- `LIPSYNC_PREVIEW_DIR=… cargo test --test all -- lipsync_preview --ignored`
+  renders a lip-synced line on FaceBot's mask as frames, to check by eye (see
+  `tests/all/lipsync_preview.rs`)
 
 Builds run three jobs at a time (`.cargo/config.toml`) to stay within memory.
 
@@ -292,7 +352,11 @@ Keyternity's changes are © their authors and released under the same license.
 As GPLv3 requires, [`NOTICE`](NOTICE) records the lineage and the modifications.
 
 FFmpeg is not included; it's downloaded from its publishers under its own license
-(see [docs/FFMPEG.md](docs/FFMPEG.md)).
+(see [docs/FFMPEG.md](docs/FFMPEG.md)). Neither are whisper.cpp, sherpa-onnx,
+Kokoro and its espeak-ng data, or Chatterbox: they're downloaded on first use,
+under their own licenses (MIT, Apache-2.0, Apache-2.0 with GPL-3.0 data, and MIT).
+The lip-sync text rules are ported from TalkingHead (MIT). `NOTICE` has the
+details.
 
 ## Acknowledgements & Attributions
 

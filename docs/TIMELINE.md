@@ -1,6 +1,6 @@
 # Timeline pass
 
-Status: **design, not built.** Decisions to confirm are in §7.
+Status: **built**: all four phases in §6 (navigation, rows and keys, layers, play modes and generators), in v0.8.0. Decisions are in §7.
 
 ## 1. Why
 
