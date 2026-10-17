@@ -768,6 +768,7 @@ pub fn prepare_files(
     // index face-control target meshes
     for bone in &mut armature_copy.bones {
         if let Some(fc) = &mut bone.face_control {
+            fc.mesh = fc.mesh.and_then(|m| bones.iter().position(|b| b.id == m).map(|i| i as i32));
             for slot in &mut fc.slots {
                 for t in &mut slot.targets {
                     t.mesh = bones.iter().position(|b| b.id == t.mesh).map_or(-1, |i| i as i32);

@@ -336,6 +336,10 @@ pub fn iterate_events(
                 }
             }
         }
+        // new or renamed shapes fill the face rig's empty slots
+        if matches!(event, Events::AddShape | Events::DuplicateShape | Events::CaptureShape | Events::AddStandardShapes | Events::SetShape | Events::FaceLandmarks) {
+            face::automap(armature, bone_id);
+        }
         events.events.remove(0);
         events.values.remove(0);
         events.str_values.remove(0);

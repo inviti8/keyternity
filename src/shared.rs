@@ -2087,6 +2087,9 @@ pub struct FaceControl {
     /// the travel for full weight
     pub range: f32,
     pub slots: Vec<ControlSlot>,
+    /// the face mesh this rig was set up for: its shapes fill empty slots
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mesh: Option<i32>,
 }
 
 /// A direction a control can move, each driving its own shapes.

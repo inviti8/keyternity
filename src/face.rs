@@ -254,7 +254,7 @@ pub fn set_up(armature: &mut Armature, mesh_id: i32, root_name: &str) -> Vec<i32
             .collect();
         let id = next();
         let mut b = base(id, parent, format!("{root_name}_{}", lc.name), pos);
-        b.face_control = Some(FaceControl { name: lc.name.to_string(), rest: pos, rest_rot: 0., range: RANGE * s, slots });
+        b.face_control = Some(FaceControl { name: lc.name.to_string(), rest: pos, rest_rot: 0., range: RANGE * s, slots, mesh: Some(mesh_id) });
         new_bones.push(b);
         placed.push((lc.name, id));
     }
@@ -331,4 +331,38 @@ pub fn bake_for_export(armature: &mut Armature) {
         anim.sort_keyframes();
     }
     armature.bones.retain(|b| !rig.contains(&b.id));
+}
+
+/// Fill the empty slots of `mesh_id`'s face rig with its matching standard shapes
+/// (after shapes are added, renamed or generated). Rigs set up before controls knew
+/// their mesh are matched by their root sitting under the mesh's parent. Returns how
+/// many slots were filled.
+pub fn automap(armature: &mut Armature, mesh_id: i32) -> usize {
+    let Some(mesh) = armature.bones.iter().find(|b| b.id == mesh_id).cloned() else { return 0 };
+    let mut filled = 0;
+    // which controls belong to this mesh's rig
+    let rig_ids: Vec<i32> = crate::face_panel::rigs(armature)
+        .into_iter()
+        .filter(|(root, controls)| {
+            controls.iter().any(|(_, id)| armature.bones.iter().find(|b| b.id == *id).and_then(|b| b.face_control.as_ref()).and_then(|f| f.mesh) == Some(mesh_id))
+                || (controls.iter().all(|(_, id)| armature.bones.iter().find(|b| b.id == *id).and_then(|b| b.face_control.as_ref()).is_some_and(|f| f.mesh.is_none()))
+                    && armature.bones.iter().find(|b| b.id == *root).is_some_and(|r| r.parent_id == mesh.parent_id))
+        })
+        .flat_map(|(_, controls)| controls.into_iter().map(|(_, id)| id))
+        .collect();
+    for b in armature.bones.iter_mut().filter(|b| rig_ids.contains(&b.id)) {
+        let fc = b.face_control.as_mut().unwrap();
+        fc.mesh = Some(mesh_id);
+        let Some(lc) = LAYOUT.iter().find(|l| l.name == fc.name) else { continue };
+        for slot in fc.slots.iter_mut().filter(|s| s.targets.is_empty()) {
+            let Some((_, defaults)) = lc.slots.iter().find(|(a, _)| *a == slot.axis) else { continue };
+            for (name, w) in defaults.iter() {
+                if let Some(shape) = find_shape(&mesh, name) {
+                    slot.targets.push(SlotTarget { mesh: mesh_id, shape, weight: *w });
+                    filled += 1;
+                }
+            }
+        }
+    }
+    filled
 }

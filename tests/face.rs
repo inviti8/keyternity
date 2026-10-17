@@ -228,3 +228,36 @@ fn the_panel_places_controls_with_their_parents() {
     assert_eq!(twist, 0.);
     assert!(keyternity_lib::face_panel::rigs(&arm).iter().any(|(r, cs)| *r == ids[0] && cs.len() == 13));
 }
+
+#[test]
+fn a_rig_set_up_before_its_shapes_maps_them_when_they_arrive() {
+    let mut s = Shared::default();
+    s.armature = head();
+    s.events.set_up_face(1, "Face");
+    run(&mut s);
+    let unmapped = |s: &Shared| {
+        s.armature.bones.iter().filter_map(|b| b.face_control.as_ref()).all(|fc| fc.slots.iter().all(|sl| sl.targets.is_empty()))
+    };
+    assert!(unmapped(&s), "no shapes yet: nothing to drive");
+
+    s.events.add_standard_shapes(1, false);
+    run(&mut s);
+    assert!(!unmapped(&s), "adding the shapes fills the slots");
+    let smile = |s: &Shared| {
+        let c = s.armature.bones.iter().find(|b| b.face_control.as_ref().is_some_and(|c| c.name == "Corner_L")).unwrap();
+        c.face_control.as_ref().unwrap().slots.iter().find(|sl| sl.axis == ControlAxis::Up).unwrap().targets.len()
+    };
+    assert_eq!(smile(&s), 1);
+
+    // a rig from before controls knew their mesh: found by sitting under the mesh's parent
+    for b in &mut s.armature.bones {
+        if let Some(fc) = &mut b.face_control {
+            fc.mesh = None;
+            for sl in &mut fc.slots {
+                sl.targets.clear();
+            }
+        }
+    }
+    assert_eq!(face::automap(&mut s.armature, 1) > 0, true);
+    assert_eq!(smile(&s), 1);
+}

@@ -132,21 +132,38 @@ def main(src, out):
     base_pts, _, _ = mesh(by_name['facebot_ctrlBase'])
     cx = (min(p[0] for p in base_pts) + max(p[0] for p in base_pts)) / 2
 
+    # a key light from the upper left, toward the viewer (+z faces the viewer)
+    lx, ly, lz = -0.35, 0.55, 0.76
+    ln = (lx * lx + ly * ly + lz * lz) ** 0.5
+    light = (lx / ln, ly / ln, lz / ln)
+
     def flat(pts, tris, dx, dy):
+        """2D triangles, farthest first, each with a shade from its 3D normal."""
         r = lambda v: round(v, 2)
         out = []
         for t in tris:
-            tri = [[r(pts[i][0] - dx), r(pts[i][1] - dy)] for i in t]
+            a, b, c = (pts[i] for i in t)
+            tri = [[r(p[0] - dx), r(p[1] - dy)] for p in (a, b, c)]
             # drop slivers seen edge-on
             (ax, ay), (bx, by), (qx, qy) = tri
-            if abs((bx - ax) * (qy - ay) - (by - ay) * (qx - ax)) > 1e-3:
-                out.append(tri)
-        return out
+            if abs((bx - ax) * (qy - ay) - (by - ay) * (qx - ax)) <= 1e-3:
+                continue
+            u = (b[0] - a[0], b[1] - a[1], b[2] - a[2])
+            v = (c[0] - a[0], c[1] - a[1], c[2] - a[2])
+            n = (u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0])
+            nl = (n[0] ** 2 + n[1] ** 2 + n[2] ** 2) ** 0.5 or 1.
+            lambert = abs(n[0] * light[0] + n[1] * light[1] + n[2] * light[2]) / nl
+            shade = round(0.32 + 0.68 * lambert, 3)
+            depth = (a[2] + b[2] + c[2]) / 3
+            out.append((depth, tri, shade))
+        out.sort(key=lambda x: x[0])
+        return [o[1] for o in out], [o[2] for o in out]
 
     mask = []
     for name, default in zip(MASK, ([20, 20, 22], [90, 90, 95])):
         pts, tris, depth = mesh(by_name[name])
-        mask.append({'name': name, 'color': colour(by_name[name], default), 'depth': depth, 'tris': flat(pts, tris, cx, 0.)})
+        tris2, shades = flat(pts, tris, cx, 0.)
+        mask.append({'name': name, 'color': colour(by_name[name], default), 'depth': depth, 'tris': tris2, 'shade': shades})
     mask.sort(key=lambda m: m['depth'])
 
     controls = []
@@ -170,10 +187,11 @@ def main(src, out):
             'color': colour(by_name[fb], [200, 200, 200]),
             'depth': depth,
             'rest': [round(rest[0], 2), round(rest[1], 2)],
-            'tris': flat(pts, tris, dx, dy),
         })
-    # draw far first (the jaw behind the lips)
-    controls.sort(key=lambda c: c['depth'])
+        controls[-1]['tris'], controls[-1]['shade'] = flat(pts, tris, dx, dy)
+    # draw far first (the jaw behind the lips); the tongue, modelled at the origin,
+    # sits on the jaw, so it's drawn last
+    controls.sort(key=lambda c: (c['name'] == 'Tongue', c['depth']))
     for c in controls + mask:
         c.pop('depth')
 

@@ -20,6 +20,9 @@ pub struct RigArt {
 pub struct ArtPart {
     pub color: [u8; 3],
     pub tris: Vec<[[f32; 2]; 3]>,
+    /// per triangle: its lighting (from the model's normals), 0..1
+    #[serde(default)]
+    pub shade: Vec<f32>,
 }
 
 #[derive(serde::Deserialize)]
@@ -28,6 +31,14 @@ pub struct ArtControl {
     pub color: [u8; 3],
     pub rest: [f32; 2],
     pub tris: Vec<[[f32; 2]; 3]>,
+    #[serde(default)]
+    pub shade: Vec<f32>,
+}
+
+/// A colour lit by `shade`.
+fn lit(c: egui::Color32, shade: f32) -> egui::Color32 {
+    let f = |v: u8| (v as f32 * shade).round().clamp(0., 255.) as u8;
+    egui::Color32::from_rgb(f(c.r()), f(c.g()), f(c.b()))
 }
 
 /// The built-in FaceBot panel.
@@ -179,20 +190,18 @@ fn board(
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, egui::CornerRadius::same(4), egui::Color32::from_rgb(28, 28, 32));
 
-    let mesh_of = |tris: &[[[f32; 2]; 3]], color: egui::Color32, map: &dyn Fn(f32, f32) -> egui::Pos2| {
+    for part in &art.mask {
+        let c = egui::Color32::from_rgb(part.color[0], part.color[1], part.color[2]);
         let mut m = egui::Mesh::default();
-        for t in tris {
+        for (i, t) in part.tris.iter().enumerate() {
+            let col = lit(c, part.shade.get(i).copied().unwrap_or(1.));
             let base = m.vertices.len() as u32;
             for p in t {
-                m.colored_vertex(map(p[0], p[1]), color);
+                m.colored_vertex(to_screen(p[0], p[1]), col);
             }
             m.add_triangle(base, base + 1, base + 2);
         }
-        m
-    };
-    for part in &art.mask {
-        let c = egui::Color32::from_rgb(part.color[0], part.color[1], part.color[2]);
-        painter.add(egui::Shape::mesh(mesh_of(&part.tris, c, &|x, y| to_screen(x, y))));
+        painter.add(egui::Shape::mesh(m));
     }
 
     let posed: &[Bone] = if armature.animated_bones.len() == armature.bones.len() { &armature.animated_bones } else { &armature.bones };
@@ -225,14 +234,26 @@ fn board(
     let active = shared_ui.face_panel_drag.or(hovered);
 
     for pl in &placed {
-        let base = egui::Color32::from_rgb(pl.art.color[0], pl.art.color[1], pl.art.color[2]);
-        let lit = active == Some(pl.bone);
-        let color = if lit { base.lerp_to_gamma(egui::Color32::WHITE, 0.35) } else { base };
+        let mut base = egui::Color32::from_rgb(pl.art.color[0], pl.art.color[1], pl.art.color[2]);
+        // a control that drives nothing yet shows dimmed
+        let mapped = armature
+            .bones
+            .iter()
+            .find(|b| b.id == pl.bone)
+            .and_then(|b| b.face_control.as_ref())
+            .is_some_and(|fc| fc.slots.iter().any(|s| !s.targets.is_empty()));
+        if !mapped {
+            base = base.lerp_to_gamma(egui::Color32::from_gray(90), 0.7);
+        }
+        if active == Some(pl.bone) {
+            base = base.lerp_to_gamma(egui::Color32::WHITE, 0.35);
+        }
         let mut m = egui::Mesh::default();
-        for t in &pl.tris {
+        for (ti, t) in pl.tris.iter().enumerate() {
+            let col = lit(base, pl.art.shade.get(ti).copied().unwrap_or(1.));
             let i = m.vertices.len() as u32;
             for p in t {
-                m.colored_vertex(*p, color);
+                m.colored_vertex(*p, col);
             }
             m.add_triangle(i, i + 1, i + 2);
         }
@@ -250,7 +271,7 @@ fn board(
     // the active control's travel box, and its name
     if let Some(pl) = placed.iter().find(|pl| Some(pl.bone) == active) {
         if let Some(fc) = armature.bones.iter().find(|b| b.id == pl.bone).and_then(|b| b.face_control.as_ref()) {
-            let has = |a: ControlAxis| fc.slots.iter().any(|s| s.axis == a && !s.targets.is_empty());
+            let has = |a: ControlAxis| fc.slots.iter().any(|s| s.axis == a);
             let r = face::RANGE * scale;
             let x0 = if has(ControlAxis::Left) { -r } else { 0. };
             let x1 = if has(ControlAxis::Right) { r } else { 0. };
@@ -284,7 +305,7 @@ fn board(
             let s = fc.range / face::RANGE;
             let d = resp.drag_delta();
             let twisting = ui.input(|i| i.modifiers.shift);
-            let has = |a: ControlAxis| fc.slots.iter().any(|sl| sl.axis == a && !sl.targets.is_empty());
+            let has = |a: ControlAxis| fc.slots.iter().any(|sl| sl.axis == a);
             if twisting {
                 let lo = if has(ControlAxis::TwistCw) { -1.5 } else { 0. } * std::f32::consts::FRAC_PI_4;
                 let hi = if has(ControlAxis::TwistCcw) { 1.5 } else { 0. } * std::f32::consts::FRAC_PI_4;
