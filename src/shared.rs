@@ -748,6 +748,25 @@ pub struct Ui {
     pub timeline_seconds: bool,
     /// only the vertical offset is used: rows scroll, time is `timeline_view`
     pub timeline_offset: Vec2,
+    /// the rows' scroll offset last frame; `timeline_offset` differing from it asks
+    /// the rows to scroll there
+    pub timeline_offset_seen: f32,
+    /// the rows' visible height
+    pub timeline_rows_h: f32,
+    /// the label column's width (0 until first drawn)
+    pub timeline_label_w: f32,
+    /// property groups opened into their channels
+    pub timeline_opened: Vec<(i32, crate::timeline_rows::Group)>,
+    /// a box selection being dragged: its start (frame, y in the rows)
+    pub timeline_box: Option<(f32, f32)>,
+    /// the frame of the hovered key, whose column is highlighted
+    pub timeline_hover_column: Option<i32>,
+    /// scaling the selected keys in time
+    pub timeline_scale: Option<crate::timeline_rows::ScaleDrag>,
+    /// `S` was pressed over the timeline: start scaling
+    pub timeline_scale_start: bool,
+    /// a group whose keys are about to be deleted (with `deleting_line_bone_id`)
+    pub deleting_group: Option<crate::timeline_rows::Group>,
     pub dragged_keyframe: Keyframe,
     pub icon_images: Vec<egui::TextureHandle>,
     pub toolbar_icons: Vec<egui::TextureHandle>,
@@ -2782,6 +2801,8 @@ pub enum Events {
     CancelPendingTexture,
     AdjustKeyframesByFPS,
     SetAnimEnd,
+    DeleteKeyframeGroup,
+    ScaleSelectedKeyframes,
     ResetVertices,
     SelectBind,
     DeleteIkTarget,
@@ -2931,6 +2952,20 @@ impl EventState {
     event_with_value!(delete_triangle, Events::DeleteTriangle, idx, usize);
     event_with_value!(adjust_keyframes_by_fps, E::AdjustKeyframesByFPS, fps, usize);
     event_with_value!(set_anim_end, E::SetAnimEnd, end_frame, i32);
+
+    /// Scale the selected keys in time by `factor` around `pivot` (a frame).
+    pub fn scale_selected_keyframes(&mut self, pivot: i32, factor: f32) {
+        self.events.push(E::ScaleSelectedKeyframes);
+        self.values.push(pivot as f32);
+        self.values.push(factor);
+    }
+
+    /// Delete a bone's keys of one property group (a timeline row).
+    pub fn delete_keyframe_group(&mut self, bone_id: i32, group: crate::timeline_rows::Group) {
+        self.events.push(E::DeleteKeyframeGroup);
+        self.values.push(bone_id as f32);
+        self.values.push(group as usize as f32);
+    }
     event_with_value!(toggle_showing_mesh, E::ToggleShowingMesh, visible, usize);
     event_with_value!(select_bind, Events::SelectBind, idx, i32);
     event_with_value!(toggle_setting_ik_target, E::ToggleSettingIkTarget, idx, i32);

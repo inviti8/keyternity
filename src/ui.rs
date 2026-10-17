@@ -694,8 +694,16 @@ pub fn kb_inputs(
     #[rustfmt::skip]
     let modal_open = ui.styles_modal || ui.polar_modal || ui.settings_modal
         || ui.export_modal || ui.lang_import_modal || ui.feedback_modal;
+    let scale_key = egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::S);
+    if shared_ui.pointer_on_timeline && edit_mode.anim_open && !shared_ui.selected_keyframes.is_empty()
+        && input.consume_shortcut(&scale_key)
+    {
+        shared_ui.timeline_scale_start = true;
+    }
     if input.consume_shortcut(&config.keys.cancel) {
-        if shared_ui.context_menu.id != "" && !shared_ui.context_menu.hide {
+        if shared_ui.timeline_scale.is_some() {
+            shared_ui.timeline_scale = None;
+        } else if shared_ui.context_menu.id != "" && !shared_ui.context_menu.hide {
             shared_ui.context_menu.close();
         } else if edit_mode.setting_ik_target {
             events.toggle_setting_ik_target(0);
@@ -1070,6 +1078,39 @@ fn context_menu_content(
         }
         if ui.context_button("Delete Keyframe(s)", &config).clicked() {
             events.delete_selected_keyframes();
+            shared_ui.context_menu.close();
+        }
+        if ui.context_button(&shared_ui.loc("keyframe_editor.scale_keys"), &config).clicked() {
+            shared_ui.timeline_scale_start = true;
+            shared_ui.context_menu.close();
+        }
+    } else if id == "kfrow" {
+        // a timeline row: kfrow_{bone}_g_{group} or kfrow_{bone}_e_{element}
+        let bone_id: i32 = split[1].parse().unwrap_or(-1);
+        let n: usize = split.get(3).and_then(|s| s.parse().ok()).unwrap_or(0);
+        let group = if split.get(2).map(|s| s.as_str()) == Some("g") { timeline_rows::Group::from_index(n) } else { None };
+        let element = AnimElement::from_repr(n);
+        let anim = armature.sel_anim(&selections).unwrap();
+        let in_row = |kf: &&Keyframe| {
+            kf.bone_id == bone_id
+                && match group {
+                    Some(g) => timeline_rows::Group::of(&kf.element) == g,
+                    None => Some(&kf.element) == element.as_ref(),
+                }
+        };
+        if ui.context_button(&shared_ui.loc("keyframe_editor.select_row"), &config).clicked() {
+            shared_ui.selected_keyframes = anim.keyframes.iter().filter(in_row).cloned().collect();
+            shared_ui.last_selected = "keyframe".to_string();
+            shared_ui.context_menu.close();
+        }
+        if ui.context_button(&shared_ui.loc("keyframe_editor.delete_row"), &config).clicked() {
+            shared_ui.deleting_line_bone_id = bone_id;
+            shared_ui.deleting_group = group;
+            if let Some(el) = element.filter(|_| group.is_none()) {
+                shared_ui.deleting_line_element = el;
+            }
+            let line = shared_ui.loc("polar.delete_keyframe_line");
+            events.open_polar_modal(PolarId::DeleteKeyframeLine, line);
             shared_ui.context_menu.close();
         }
     } else if id == "kfline" {

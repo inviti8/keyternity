@@ -1,15 +1,21 @@
 //! Animation keyframe editor. Very early and only proof-of-concept.
 
-use egui::{HoveredFile, Stroke};
+
 
 use ui::{EguiUi, TextInputOptions};
 
 use crate::*;
 
+use crate::timeline_rows::{self, Row};
 use crate::timeline_view::{self, BarHandle, TimelineView};
 
-/// the ruler's height (labels and summary keys)
-const RULER_H: f32 = 30.;
+/// the ruler's height
+const RULER_H: f32 = 20.;
+/// a row's height (docs/TIMELINE.md §3.1)
+const ROW_H: f32 = 18.;
+/// the label column's width, by default and at least
+const LABEL_W: f32 = 190.;
+const LABEL_MIN: f32 = 110.;
 /// the range bar's height (docs/TIMELINE.md §2.2)
 const BAR_H: f32 = 14.;
 /// the bottom bar's height
@@ -303,27 +309,11 @@ fn timeline_editor(
         ui.set_width(ui.available_width());
         ui.set_height(ui.available_height());
 
-        // track the Y of bone change labels for their diamonds
+        // the bone rows' positions, for scrolling to a bone selected elsewhere
         shared_ui.bone_tops = BoneTops::default();
 
-        let sel = selections.clone();
-
-        if armature.sel_anim(&sel).unwrap().keyframes.len() > 0 {
-            // line the rows up with the graph, between the ruler and the range bar
-            let frame = egui::Frame::new().inner_margin(egui::Margin {
-                top: RULER_H as i8 + 7,
-                bottom: (BAR_H + BOTTOM_H) as i8 + 7,
-                left: 0,
-                right: 0,
-            });
-            frame.show(ui, |ui| {
-                ui.vertical(|ui| {
-                    draw_bones_list(ui, selections, armature, config, shared_ui, events);
-                });
-            });
-        }
-
         // a fresh view for each animation opened, fitted to its keys
+        let sel = selections.clone();
         let anim = armature.sel_anim(&sel).unwrap();
         let last_key = end_of(anim);
         let total = timeline_view::content_frames(last_key, anim.fps);
@@ -333,22 +323,29 @@ fn timeline_editor(
         }
 
         let column = ui.vertical(|ui| {
+            // labels on the left, the graph on the right: rows share one scroll area,
+            // so a label and its keys always line up
             let area = ui.available_rect_before_wrap();
-            shared_ui.timeline_graph = (area.left(), area.width());
-            let zoom_mode = navigate(ui, shared_ui, config, selections, armature, total, area);
+            if shared_ui.timeline_label_w <= 0. {
+                shared_ui.timeline_label_w = LABEL_W;
+            }
+            let label_w = shared_ui.timeline_label_w.clamp(LABEL_MIN, (area.width() - 160.).max(LABEL_MIN));
+            shared_ui.timeline_graph = (area.left() + label_w, area.width() - label_w);
+            let graph = egui::Rect::from_x_y_ranges(area.left() + label_w..=area.right(), area.y_range());
+            let zoom_mode = navigate(ui, shared_ui, config, selections, armature, total, graph);
 
-            draw_ruler(ui, shared_ui, selections, armature, config, events);
+            draw_ruler(ui, shared_ui, selections, armature, config, events, area.left());
 
             // The options bar has to be at the bottom, but it needs to be created first
-            // so that the remaining height can be taken up by timeline graph.
+            // so that the remaining height can be taken up by the rows.
             ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
                 draw_bottom_bar(
                     ui, selections, &config, &armature, shared_ui, events, edit_mode,
                 );
                 draw_range_bar(ui, shared_ui, config, selections, armature, total);
-                draw_timeline_graph(
-                    ui, shared_ui, config, selections, armature, events, input, zoom_mode,
-                );
+                ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                    draw_rows(ui, shared_ui, armature, config, input, selections, events, zoom_mode);
+                });
             });
         });
 
@@ -419,131 +416,8 @@ fn navigate(
     zoom_mode
 }
 
-pub fn draw_bones_list(
-    ui: &mut egui::Ui,
-    selections: &SelectionState,
-    armature: &Armature,
-    config: &Config,
-    shared_ui: &mut crate::Ui,
-    events: &mut EventState,
-) {
-    ui.set_width(150.);
-    let sel = &selections;
-    let scroll_area = egui::ScrollArea::vertical()
-        .id_salt("bones_list")
-        .vertical_scroll_offset(shared_ui.timeline_offset.y)
-        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden);
-    let response = scroll_area.show(ui, |ui| {
-        // sort keyframes by element & bone
-        let mut keyframes = armature.sel_anim(sel).unwrap().keyframes.clone();
-        keyframes.sort_by(|a, b| (a.element.clone() as i32).cmp(&(b.element.clone() as i32)));
-        keyframes.sort_by(|a, b| a.bone_id.cmp(&b.bone_id));
-
-        let mut last_bone_id = -1;
-        let mut first = true;
-
-        // keep track of elements, to prevent showing multiple of the same
-        let mut added_elements: Vec<AnimElement> = vec![];
-
-        for i in 0..keyframes.len() {
-            let kf = &keyframes[i];
-            let bones = &armature.bones;
-            let bone = bones.iter().find(|b| b.id == kf.bone_id).unwrap();
-            let highlighted =
-                selections.bone_ids.len() != 0 && selections.bone_ids[0] == kf.bone_id;
-
-            // bone header (name label & fold button)
-            if last_bone_id != kf.bone_id {
-                if !first {
-                    ui.separator();
-                }
-                first = false;
-
-                // highlight bone name if it's selected
-                let mut bone_str = egui::RichText::new(bone.name.clone());
-                if highlighted {
-                    bone_str = bone_str.strong();
-                }
-
-                ui.horizontal(|ui| {
-                    let label = ui
-                        .label(bone_str)
-                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .interact(egui::Sense::click());
-                    if label.clicked() {
-                        // go to bone if clicked
-                        let kf_id = kf.bone_id;
-                        let sel = armature.bones.iter().position(|b| b.id == kf_id);
-                        events.select_bone(sel.unwrap(), false);
-                        events.toggle_bone_anim_folded(sel.unwrap(), false);
-
-                        // unfold this bone's parent(s) so it appears in the hierarchy
-                        let parents = armature.get_all_parents(false, kf.bone_id);
-                        for parent in &parents {
-                            let bones = &armature.bones;
-                            let idx = bones.iter().position(|b| b.id == parent.id).unwrap();
-                            events.toggle_bone_folded(idx, false);
-                        }
-                    }
-                    last_bone_id = kf.bone_id;
-
-                    // fold button
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let fold_icon = if bone.anim_folded { "⏴" } else { "⏷" };
-                        let hand = egui::CursorIcon::PointingHand;
-                        if ui.label(fold_icon).on_hover_cursor(hand).clicked() {
-                            let idx = bones.iter().position(|bone| bone.id == kf.bone_id).unwrap();
-                            events.toggle_bone_anim_folded(idx, !bone.anim_folded);
-                        }
-                    });
-                });
-
-                // reset element tracker, since this is a new bone
-                added_elements = vec![];
-            }
-            if added_elements.contains(&kf.element) || bone.anim_folded {
-                continue;
-            }
-            added_elements.push(kf.element.clone());
-            ui.horizontal(|ui| {
-                ui.add_space(30.);
-                let str = format!("keyframe_editor.elements.{}", kf.element.to_string());
-                let mut element_str = egui::RichText::new(shared_ui.loc(&str));
-                if highlighted {
-                    element_str = element_str.strong();
-                }
-                let label = ui.label(element_str);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let mut col = config.colors.text;
-                    col -= Color::new(60, 60, 60, 0);
-                    let text = egui::RichText::new("🗑").size(15.).color(col);
-                    let pointing_hand = egui::CursorIcon::PointingHand;
-                    let label = ui.label(text).on_hover_cursor(pointing_hand);
-                    if label.clicked() {
-                        shared_ui.deleting_line_bone_id = kf.bone_id;
-                        shared_ui.deleting_line_element = kf.element.clone();
-                        let line = shared_ui.loc("polar.delete_keyframe_line");
-                        events.open_polar_modal(PolarId::DeleteKeyframeLine, line);
-                    }
-                });
-                shared_ui.bone_tops.tops.push(BoneTop {
-                    id: kf.bone_id,
-                    element: kf.element.clone(),
-                    height: label.rect.top(),
-                });
-            });
-        }
-
-        ui.add_space(20.);
-    });
-
-    if ui.ui_contains_pointer() {
-        shared_ui.timeline_offset.y = response.state.offset.y;
-    }
-}
-
-/// The ruler: labels spaced to the zoom (docs/TIMELINE.md §2.4), the summary keys
-/// for each frame, and scrubbing.
+/// The ruler: labels spaced to the zoom (docs/TIMELINE.md §2.4). Press or drag to
+/// scrub; Alt-click selects every key on a frame.
 pub fn draw_ruler(
     ui: &mut egui::Ui,
     shared_ui: &mut crate::Ui,
@@ -551,19 +425,20 @@ pub fn draw_ruler(
     armature: &Armature,
     config: &Config,
     events: &mut EventState,
+    labels_left: f32,
 ) {
     let (left, width) = shared_ui.timeline_graph;
-    let rect = egui::Rect::from_min_size(egui::pos2(left, ui.cursor().top()), egui::vec2(width, RULER_H));
-    let ruler = ui.allocate_rect(rect, egui::Sense::click_and_drag());
+    let top = ui.cursor().top();
+    let rect = egui::Rect::from_min_size(egui::pos2(left, top), egui::vec2(width, RULER_H));
+    let header = egui::Rect::from_x_y_ranges(labels_left..=left, rect.y_range());
+    let ruler = ui.allocate_rect(rect.union(header), egui::Sense::click_and_drag());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, egui::CornerRadius::ZERO, config.colors.light_accent);
 
-    let sel = selections.clone();
-    let anim = armature.sel_anim(&sel).unwrap();
+    let anim = armature.sel_anim(selections).unwrap();
     let fps = anim.fps;
     let view = shared_ui.timeline_view;
     let x_of = |frame: i32| view.frame_to_x(frame as f32, left, width);
-    let visible = |frame: i32| frame as f32 >= view.start - 1. && frame as f32 <= view.end + 1.;
 
     // labels, with ticks between them
     let ppf = view.px_per_frame(width);
@@ -576,193 +451,40 @@ pub fn draw_ruler(
     while f <= *frames.end() {
         let x = x_of(f);
         if f % step == 0 {
-            painter.vline(x, egui::Rangef::new(rect.bottom() - 7., rect.bottom()), egui::Stroke::new(1., text_col));
+            painter.vline(x, egui::Rangef::new(rect.bottom() - 6., rect.bottom()), egui::Stroke::new(1., text_col));
             let label = timeline_view::ruler_label(f, fps, shared_ui.timeline_seconds);
             let font = egui::FontId::proportional(11.);
-            painter.text(egui::pos2(x, rect.top() + 2.), egui::Align2::CENTER_TOP, label, font, text_col);
+            painter.text(egui::pos2(x, rect.top() + 1.), egui::Align2::CENTER_TOP, label, font, text_col);
         } else {
             painter.vline(x, egui::Rangef::new(rect.bottom() - 3., rect.bottom()), egui::Stroke::new(1., tick_col));
         }
         f += minor;
     }
 
-    // scrub: press or drag on the ruler to move the current frame
-    if ruler.is_pointer_button_down_on() && !shared_ui.hovering_diamond {
-        if let Some(p) = ui.ctx().pointer_interact_pos() {
-            let frame = view.nearest_frame(p.x, left, width);
-            if frame != selections.anim_frame {
-                events.select_anim_frame(frame as usize, false, false);
-            }
-            shared_ui.last_selected = "keyframe".to_string();
-        }
+    // the current frame
+    if selections.anim_frame >= 0 {
+        let x = x_of(selections.anim_frame);
+        let col: egui::Color32 = (config.colors.frameline + Color::new(100, 100, 100, 0)).into();
+        let tri = vec![egui::pos2(x - 4., rect.bottom() - 6.), egui::pos2(x + 4., rect.bottom() - 6.), egui::pos2(x, rect.bottom())];
+        painter.add(egui::Shape::convex_polygon(tri, col, egui::Stroke::NONE));
     }
 
-    let mut last_unique_frame = -1;
-    let mut alt = false;
-    for i in 0..anim.keyframes.len() {
-        let frame = anim.keyframes[i].frame;
-        if frame == last_unique_frame {
-            continue;
-        }
-        last_unique_frame = frame;
-
-        // alternate diamond color
-        let mut diamond_color;
-        if alt {
-            diamond_color = Color::new(255, 255, 255, 0);
-            diamond_color -= Color::new(40, 40, 40, 0);
-        } else {
-            diamond_color = Color::new(255, 255, 255, 0);
-        }
-        alt = !alt;
-
-        // only the frames in view
-        if !visible(frame) {
-            continue;
-        }
-        let pos = Vec2::new(x_of(frame), rect.top() + 21.);
-
-        // create dragging area for diamond
-        let rect = egui::Rect::from_center_size(pos.into(), egui::Vec2::splat(9.));
-        let response: egui::Response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
-        let mut diamond_size = 4.;
-
-        // enlarge diamond if all of its keyframes are selected
-        let keyframes = &anim.keyframes;
-        // used to determine if 'cmd' should be held when selecting
-        // this diamond
-        let mut is_selected = false;
-        if shared_ui.selected_keyframes.len() > 0 {
-            let this_keyframes: Vec<&Keyframe> = keyframes
-                .iter()
-                .filter(|kf| kf.frame == last_unique_frame)
-                .collect();
-            let this_sel_kf: Vec<&Keyframe> = shared_ui
-                .selected_keyframes
-                .iter()
-                .filter(|kf| kf.frame == last_unique_frame)
-                .collect();
-            is_selected = this_keyframes.len() == this_sel_kf.len();
-            if is_selected {
-                diamond_color = Color::new(100, 255, 100, 0);
-                diamond_size += 1.;
-            }
-        }
-
-        if response.drag_started() {
-            events.select_anim_frame(frame as usize, true, is_selected);
-        }
-
-        if response.hovered() {
-            shared_ui.hovering_diamond = true;
-            shared_ui.cursor_icon = egui::CursorIcon::PointingHand;
-            diamond_size += 1.;
-        }
-
-        if response.clicked() {
-            shared_ui.last_selected = "keyframe".to_string();
-            events.select_anim_frame(frame as usize, true, is_selected);
-        }
-
-        if response.secondary_clicked() {
-            events.select_anim_frame(frame as usize, true, is_selected);
-            shared_ui.last_selected = "keyframe".to_string();
-            let kf = &anim.keyframes[i];
-            let el = &(kf.element.clone() as usize);
-            let context_id =
-                &format!("keyframe_{}_{}_{}_{}", el, &kf.bone_id, &kf.frame, &i);
-            shared_ui.context_menu.show(context_id);
-        }
-
-        let pointer = ui.ctx().pointer_latest_pos().unwrap_or_default();
-        // dragged above the ruler: being removed
-        let removing = pointer.y < ruler.rect.top();
-        if response.dragged() {
-            shared_ui.cursor_icon = egui::CursorIcon::Grabbing;
-            shared_ui.dragged_keyframe = Keyframe {
-                frame,
-                bone_id: -1,
-                ..Default::default()
-            };
-
-            // draw diamond following mouse
-            let color = if removing { egui::Color32::RED } else { diamond_color.into() };
-            draw_diamond(&ui.ctx().debug_painter(), pointer.into(), color, 4.);
-        }
-
-        let kf = &shared_ui.dragged_keyframe;
-        let not_dragging = kf.frame != frame || kf.bone_id != -1;
-        if not_dragging {
-            // draw regular stationary diamond
-            draw_diamond(ui.painter(), pos, diamond_color.into(), diamond_size);
-        } else {
-            // draw stationary diamond with lower opacity when dragging
-            let dc = diamond_color;
-            let white = egui::Color32::from_rgba_unmultiplied(dc.r, dc.g, dc.b, 30);
-            draw_diamond(ui.painter(), pos, white, 4.);
-        }
-
-        if !response.drag_stopped() {
-            continue;
-        }
-
-        shared_ui.cursor_icon = egui::CursorIcon::Grabbing;
-
-        // remove keyframe if dragged out
-        if removing {
-            events.delete_keyframes_by_frame(anim.keyframes[i].frame);
-            // break loop to prevent OOB errors
-            break;
-        }
-
-        // move all keyframes under this one over
-        events.move_selected_keyframes(view.nearest_frame(pointer.x, left, width));
+    let Some(p) = ui.ctx().pointer_interact_pos() else { return };
+    if p.x < left {
         return;
     }
-}
-
-pub fn draw_timeline_graph(
-    ui: &mut egui::Ui,
-    shared_ui: &mut crate::Ui,
-    config: &Config,
-    selections: &SelectionState,
-    armature: &Armature,
-    events: &mut EventState,
-    input: &InputStates,
-    zoom_mode: bool,
-) {
-    let layout = egui::Layout::left_to_right(egui::Align::Center);
-    ui.with_layout(layout, |ui| {
-        let frame = egui::Frame::new()
-            .fill(config.colors.light_accent.into())
-            .inner_margin(egui::Margin::symmetric(0, 3));
-        frame.show(ui, |ui| {
-            // rows scroll vertically; time is the view range (the range bar)
-            let source = egui::scroll_area::ScrollSource { mouse_wheel: !zoom_mode, ..egui::scroll_area::ScrollSource::ALL };
-            let area = egui::ScrollArea::vertical()
-                .vertical_scroll_offset(shared_ui.timeline_offset.y)
-                .scroll_source(source)
-                .auto_shrink(false)
-                .id_salt("timeline_rows");
-            let response = area.show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.set_height(ui.available_height());
-
-                let mut cursor = get_cursor(ui);
-                // keep cursor on the frame
-                cursor.y -= shared_ui.timeline_offset.y;
-
-                draw_frame_lines(ui, shared_ui, armature, config, input, selections, events, cursor);
-            });
-            if !input.left_clicked
-                && !input.left_down
-                && !input.left_pressed
-                && ui.ui_contains_pointer()
-            {
-                shared_ui.timeline_offset.y = response.state.offset.y;
-            }
-        });
-    });
+    let frame = view.nearest_frame(p.x, left, width);
+    let alt = ui.input(|i| i.modifiers.alt);
+    if alt && ruler.clicked() {
+        // select the column: every key on this frame
+        events.select_anim_frame(frame as usize, true, false);
+    } else if ruler.is_pointer_button_down_on() && !alt {
+        // scrub
+        if frame != selections.anim_frame {
+            events.select_anim_frame(frame as usize, false, false);
+        }
+        shared_ui.last_selected = "keyframe".to_string();
+    }
 }
 
 /// The range bar (docs/TIMELINE.md §2.2): the whole animation, with a thumb for the
@@ -1037,8 +759,28 @@ pub fn draw_bottom_bar(
     });
 }
 
-/// Draw the frame lines in view, and the keys on them.
-fn draw_frame_lines(
+/// selected keys
+const SELECTED: egui::Color32 = egui::Color32::from_rgb(110, 240, 120);
+
+fn shade(c: egui::Color32, d: i16) -> egui::Color32 {
+    let f = |v: u8| (v as i16 + d).clamp(0, 255) as u8;
+    egui::Color32::from_rgb(f(c.r()), f(c.g()), f(c.b()))
+}
+
+/// A key mark: a diamond, or a square for a stepped key (docs/TIMELINE.md §3.2).
+fn draw_mark(painter: &egui::Painter, c: egui::Pos2, stepped: bool, r: f32, fill: egui::Color32, stroke: egui::Stroke) {
+    if stepped {
+        let rect = egui::Rect::from_center_size(c, egui::Vec2::splat(r * 1.5));
+        painter.rect(rect, egui::CornerRadius::same(1), fill, stroke, egui::StrokeKind::Middle);
+    } else {
+        let pts = vec![c + egui::vec2(0., -r), c + egui::vec2(r, 0.), c + egui::vec2(0., r), c + egui::vec2(-r, 0.)];
+        painter.add(egui::Shape::convex_polygon(pts, fill, stroke));
+    }
+}
+
+/// The rows (docs/TIMELINE.md §3): labels on the left, keys on the right, in one
+/// scroll area. Draws only the rows and frames in view.
+fn draw_rows(
     ui: &mut egui::Ui,
     shared_ui: &mut crate::Ui,
     armature: &Armature,
@@ -1046,290 +788,524 @@ fn draw_frame_lines(
     input: &InputStates,
     selections: &SelectionState,
     events: &mut EventState,
-    cursor: Vec2,
+    zoom_mode: bool,
 ) {
-    let panel = shared_ui.keyframe_panel_rect;
-    let (left, width) = shared_ui.timeline_graph;
-    let view = shared_ui.timeline_view;
-    let x_of = |frame: i32| view.frame_to_x(frame as f32, left, width);
-    let visible = |frame: i32| frame as f32 >= view.start - 1. && frame as f32 <= view.end + 1.;
-    let ppf = view.px_per_frame(width);
-
-    let clip = ui.clip_rect();
-    let range = clip.y_range();
-    let painter = ui.painter().clone();
     let anim = &armature.animations[selections.anim];
-    let last_keyframe = end_of(anim);
-
-    // every frame while there's room, else every 2nd, 5th, 10th…
-    let step = timeline_view::line_step(ppf);
-    let line_width = if ppf >= 8. { 2. } else { 1. };
-    let frames = view.visible_frames();
-    let mut i = *frames.start() - *frames.start() % step;
-    while i <= *frames.end() {
-        let mut color: egui::Color32 = config.colors.frameline.into();
-
-        // use different color for frameline if it exceeds last keyframe
-        if last_keyframe.is_some_and(|last| i > last) {
-            color = config.colors.dark_accent.into();
-        }
-
-        // brighten frameline if current animation is playing, and on this frame
-        if i == anim.get_frame() && anim.elapsed != None {
-            color = color + egui::Color32::from_rgb(60, 60, 60);
-        } else if i != 0 && i % anim.fps.max(1) == 0 {
-            color = color + egui::Color32::from_rgb(20, 20, 20);
-        }
-
-        painter.vline(x_of(i), range, Stroke { width: line_width, color });
-        i += step;
-    }
-
-    // a set End: mark it, so it reads apart from the last key
-    if anim.end_frame > 0 && visible(anim.end_frame) {
-        let col: egui::Color32 = config.colors.text.into();
-        painter.vline(x_of(anim.end_frame), range, Stroke { width: 2., color: col.gamma_multiply(0.6) });
-    }
-
-    // the frame under the pointer
+    let rows = timeline_rows::build_rows(anim, &armature.bones, &shared_ui.timeline_opened);
+    let (gl, gw) = shared_ui.timeline_graph;
+    let view = shared_ui.timeline_view;
+    let ppf = view.px_per_frame(gw);
+    let x_of = |frame: i32| view.frame_to_x(frame as f32, gl, gw);
+    let visible = |frame: i32| frame as f32 >= view.start - 1. && frame as f32 <= view.end + 1.;
     let blocked = shared_ui.modal || shared_ui.settings_modal || shared_ui.export_modal;
-    let pointer = ui.ctx().pointer_hover_pos().filter(|p| !blocked && clip.contains(*p));
-    let hovered = pointer.filter(|_| ui.rect_contains_pointer(clip)).map(|p| view.nearest_frame(p.x, left, width));
-    shared_ui.hovering_frame = -1;
-    if let Some(frame) = hovered.filter(|_| !shared_ui.hovering_diamond) {
-        shared_ui.hovering_frame = frame;
-        let color = egui::Color32::from_rgb(175, 175, 175);
-        painter.vline(x_of(frame), range, Stroke { width: 2., color });
-
-        // select frame if clicked/held down on.
-        // holding LMB lets frames be previewed via dragging.
-        if input.left_down && shared_ui.context_menu.id == "" {
-            events.select_anim_frame(frame as usize, false, false);
-            shared_ui.last_selected = "keyframe".to_string();
-        }
-        if input.right_clicked {
-            let context_id = format!("kfline_{}", frame.to_string());
-            shared_ui.context_menu.show(&context_id);
-        }
-    }
-
-    let mut last_bone = -1;
-    for top in &shared_ui.bone_tops.tops {
-        if last_bone != top.id {
-            let color = egui::Stroke::new(1.5, config.colors.dark_accent);
-            painter.hline(clip.x_range(), top.height - 25.5, color);
-        }
-        last_bone = top.id;
-    }
-
-    // draw selected line
-    if visible(selections.anim_frame) {
-        let color = (config.colors.frameline + egui::Color32::from_rgb(100, 100, 100).into()).into();
-        painter.vline(x_of(selections.anim_frame), range, Stroke { width: 2., color });
-    }
-
-    shared_ui.hovering_diamond = false;
-
     let is_multi = input.holding_mod || input.holding_shift;
 
-    // draw per-change icons
-    let sel_anim = &armature.animations[selections.anim];
-    let mut last_unique_frame = -1;
-    let mut base_color = Color::new(255, 255, 255, 0);
-    base_color -= Color::new(40, 40, 40, 0);
-    for i in 0..sel_anim.keyframes.len() {
-        let kf = sel_anim.keyframes[i].clone();
-        if kf.frame == -1 {
-            continue;
-        }
+    let text: egui::Color32 = config.colors.text.into();
+    let light: egui::Color32 = config.colors.light_accent.into();
+    let dark: egui::Color32 = config.colors.dark_accent.into();
 
-        let size = Vec2::new(17., 17.);
-
-        // alternate colors between unique frames
-        if last_unique_frame != kf.frame {
-            last_unique_frame = kf.frame;
-            if base_color == Color::new(255, 255, 255, base_color.a) {
-                base_color = Color::new(255, 255, 255, 0);
-                base_color -= Color::new(40, 40, 40, 0)
-            } else {
-                base_color = Color::new(255, 255, 255, 0);
-            }
-        }
-
-        // only the keys in view (a dragged one is kept so its drag can finish)
-        if !visible(kf.frame) && shared_ui.dragged_keyframe != kf {
-            continue;
-        }
-
-        // the Y position is based on this diamond's respective label
-        let top: f32;
-
-        let el = kf.element.clone();
-        let b_id = kf.bone_id;
-        let tops = &shared_ui.bone_tops.tops;
-        if let Some(b_top) = tops.iter().find(|bt| bt.id == b_id && bt.element == el) {
-            top = b_top.height;
-        } else {
-            continue;
-        }
-        let pos = Vec2::new(x_of(kf.frame), top + size.y / 2.);
-        if panel != None && pos.y > panel.unwrap().bottom() {
-            continue;
-        }
-
-        let mut idx = kf.element.clone().clone() as usize;
-        if idx > shared::ANIM_ICON_ID.len() - 1 {
-            idx = shared::ANIM_ICON_ID.len() - 1;
-        }
-
-        let dkf = &shared_ui.dragged_keyframe;
-
-        // make icon translucent if being dragged
-        if *dkf == kf {
-            base_color.a = 30;
-        }
-
-        let rect = egui::Rect::from_center_size(pos.into(), (size * 0.5).into());
-        let response: egui::Response = ui
-            .allocate_rect(rect, egui::Sense::click_and_drag())
-            .on_hover_text(shared_ui.loc("keyframe_editor.double_click_tip"));
-
-        let mut icon_size: egui::Vec2 = [20., 20.].into();
-        let mut final_color = base_color;
-        // expand icon if hovered on
-        if response.hovered() || shared_ui.selected_keyframes.contains(&kf) {
-            icon_size += [6., 6.].into();
-            if shared_ui.selected_keyframes.contains(&kf) {
-                final_color = Color::new(100, 255, 100, 0);
-            }
-            if response.hovered() {
-                shared_ui.hovering_diamond = true;
-                shared_ui.cursor_icon = egui::CursorIcon::PointingHand;
-            }
-        }
-
-        // draw icon
-        let offset: Vec2 = (icon_size / 2.).into();
-        let img_rect = egui::Rect::from_min_size((pos - offset).into(), icon_size.into());
-        egui::Image::new(&shared_ui.icon_images[shared::ANIM_ICON_ID[idx]])
-            .tint(final_color)
-            .paint_at(ui, img_rect);
-
-        // select this frame if icon is clicked
-        if response.clicked() {
-            shared_ui.last_selected = "keyframe".to_string();
-            events.select_anim_frame(kf.frame as usize, false, false);
-            let mut kfs = vec![kf.clone()];
-
-            // select related keyframes if clicking this while it's selected
-            if shared_ui.selected_keyframes.contains(&kf) {
-                kfs = sel_anim.keyframes.clone();
-
-                type AE = AnimElement;
-                match kf.element {
-                    AE::PositionX | AE::PositionY => {
-                        is_relevant_keyframe(&mut kfs, &kf, &vec![AE::PositionX, AE::PositionY]);
-                    }
-                    AE::ScaleX | AE::ScaleY => {
-                        is_relevant_keyframe(&mut kfs, &kf, &vec![AE::ScaleX, AE::ScaleY]);
-                    }
-                    AE::TintR | AE::TintG | AE::TintB | AE::TintA => {
-                        let els = &vec![AE::TintR, AE::TintG, AE::TintB, AE::TintA];
-                        is_relevant_keyframe(&mut kfs, &kf, els);
-                    }
-                    _ => kfs = shared_ui.selected_keyframes.clone(),
-                }
-            }
-
-            if is_multi {
-                // add these keyframes to the selection if holding mod/shift
-                for kf in kfs {
-                    add_selected_keyframes(&mut shared_ui.selected_keyframes, &kf);
-                }
-            } else {
-                shared_ui.selected_keyframes = kfs;
-            }
-        }
-
-        // put this keyframe in selected if it's going to be dragged
-        if response.drag_started() {
-            if is_multi || shared_ui.selected_keyframes.contains(&kf) {
-                add_selected_keyframes(&mut shared_ui.selected_keyframes, &kf);
-            } else {
-                shared_ui.selected_keyframes = vec![kf.clone()];
-            }
-        }
-
-        if response.dragged() {
-            shared_ui.dragged_keyframe = kf.clone();
-            shared_ui.cursor_icon = egui::CursorIcon::Grabbing;
-            if let Some(cursor) = ui.ctx().pointer_latest_pos() {
-                let pos = egui::Pos2::new(cursor.x - offset.x, cursor.y - offset.y);
-                let drag_rect = egui::Rect::from_min_size(pos, size.into());
-                egui::Image::new(&shared_ui.icon_images[shared::ANIM_ICON_ID[idx]])
-                    .paint_at(ui, drag_rect);
-            }
-        }
-
-        if response.secondary_clicked() {
-            let el = &(kf.element.clone() as usize);
-            let context_id = &format!("keyframe_{}_{}_{}_{}", el, &kf.bone_id, &kf.frame, &i);
-            if is_multi || shared_ui.selected_keyframes.contains(&kf) {
-                add_selected_keyframes(&mut shared_ui.selected_keyframes, &kf);
-            } else {
-                shared_ui.selected_keyframes = vec![kf.clone()];
-            }
-            shared_ui.context_menu.show(context_id);
-        }
-
-        if response.drag_stopped() {
-            // delete keyframes if cursor is above keyframe editor
-            if cursor.y < 0. {
-                events.delete_selected_keyframes();
-                // break the loop to prevent OOB errors
-                break;
-            }
-
-            // the frame that the pointer is on
-            let x = ui.ctx().pointer_latest_pos().map_or(pos.x, |p| p.x);
-            events.move_selected_keyframes(view.nearest_frame(x, left, width));
-            break;
-        }
+    // rows scroll vertically; time is the view range (the range bar)
+    let source = egui::scroll_area::ScrollSource { mouse_wheel: !zoom_mode, ..egui::scroll_area::ScrollSource::ALL };
+    let mut area = egui::ScrollArea::vertical().id_salt("timeline_rows").auto_shrink(false).scroll_source(source);
+    // a scroll asked for elsewhere (selecting a bone on the canvas)
+    if (shared_ui.timeline_offset.y - shared_ui.timeline_offset_seen).abs() > 0.5 {
+        area = area.vertical_scroll_offset(shared_ui.timeline_offset.y);
     }
 
-    // create extra space at the bottom
-    if shared_ui.bone_tops.tops.len() > 0 {
-        let height = shared_ui.bone_tops.tops.last().unwrap().height;
-        let rect = egui::Rect::from_min_size(egui::pos2(0., height), egui::Vec2::new(1., 40.));
-        ui.add_space(40.);
-        ui.allocate_rect(rect, egui::Sense::empty());
-    }
-}
+    let out = area.show(ui, |ui| {
+        let width = ui.available_width();
+        let height = (rows.len() as f32 * ROW_H + 40.).max(ui.clip_rect().height());
+        let (content, bg) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click_and_drag());
+        let clip = ui.clip_rect();
+        let painter = ui.painter().clone();
+        let graph = egui::Rect::from_x_y_ranges(gl..=gl + gw, clip.y_range());
+        let labels = egui::Rect::from_x_y_ranges(content.left()..=gl - 1., clip.y_range());
+        let gp = painter.with_clip_rect(graph.intersect(clip));
+        let lp = painter.with_clip_rect(labels.intersect(clip));
+        let row_rect = |i: usize| {
+            egui::Rect::from_min_size(egui::pos2(content.left(), content.top() + i as f32 * ROW_H), egui::vec2(width, ROW_H))
+        };
+        let first = (((clip.top() - content.top()) / ROW_H).floor().max(0.)) as usize;
+        let last = ((((clip.bottom() - content.top()) / ROW_H).ceil()).max(0.) as usize).min(rows.len());
+        let shown = first.min(last)..last;
 
-pub fn draw_diamond(painter: &egui::Painter, pos: Vec2, color: egui::Color32, size: f32) {
-    let points = vec![
-        egui::Pos2::new(pos.x, pos.y - size), // Top
-        egui::Pos2::new(pos.x + size, pos.y), // Right
-        egui::Pos2::new(pos.x, pos.y + size), // Bottom
-        egui::Pos2::new(pos.x - size, pos.y), // Left
-    ];
+        // backgrounds: the graph, then header rows a shade darker
+        gp.rect_filled(graph, egui::CornerRadius::ZERO, light);
+        for i in shown.clone() {
+            let r = row_rect(i);
+            match rows[i] {
+                Row::Summary => {
+                    gp.rect_filled(r, egui::CornerRadius::ZERO, shade(light, -22));
+                    lp.rect_filled(r, egui::CornerRadius::ZERO, shade(dark, -8));
+                }
+                Row::Bone(_) => {
+                    gp.rect_filled(r, egui::CornerRadius::ZERO, shade(light, -11));
+                    lp.rect_filled(r, egui::CornerRadius::ZERO, shade(dark, 6));
+                }
+                _ => {}
+            }
+        }
 
-    painter.add(egui::Shape::convex_polygon(
-        points,
-        color,
-        egui::Stroke::new(2.0, color),
-    ));
-}
+        // the hovered key's column, lightly (docs/TIMELINE.md §3.3)
+        let column = shared_ui.timeline_hover_column;
+        if let Some(column) = column.filter(|c| visible(*c)) {
+            let w = ppf.clamp(4., 14.);
+            let r = egui::Rect::from_x_y_ranges(x_of(column) - w / 2.0..=x_of(column) + w / 2.0, graph.y_range());
+            gp.rect_filled(r, egui::CornerRadius::ZERO, text.gamma_multiply(0.07));
+        }
 
-pub fn get_cursor(ui: &egui::Ui) -> Vec2 {
-    let cursor_pos = ui.ctx().input(|i| {
-        if let Some(result) = i.pointer.hover_pos() {
-            result
-        } else {
-            egui::Pos2::new(0., 0.)
+        // frame lines: every frame while there's room, else every 2nd, 5th, 10th…
+        let end = end_of(anim);
+        let step = timeline_view::line_step(ppf);
+        let line_width = if ppf >= 8. { 1.5 } else { 1. };
+        let frames = view.visible_frames();
+        let mut f = *frames.start() - *frames.start() % step;
+        while f <= *frames.end() {
+            let mut color: egui::Color32 = config.colors.frameline.into();
+            if end.is_some_and(|end| f > end) {
+                color = dark;
+            }
+            if f == anim.get_frame() && anim.elapsed != None {
+                color = color + egui::Color32::from_rgb(60, 60, 60);
+            } else if f != 0 && f % anim.fps.max(1) == 0 {
+                color = color + egui::Color32::from_rgb(20, 20, 20);
+            }
+            gp.vline(x_of(f), graph.y_range(), egui::Stroke::new(line_width, color));
+            f += step;
+        }
+        if anim.end_frame > 0 && visible(anim.end_frame) {
+            gp.vline(x_of(anim.end_frame), graph.y_range(), egui::Stroke::new(2., text.gamma_multiply(0.6)));
+        }
+        // between bones
+        for i in shown.clone() {
+            if matches!(rows[i], Row::Bone(_)) {
+                painter.hline(content.x_range(), row_rect(i).top(), egui::Stroke::new(1., dark));
+            }
+        }
+
+        // the current frame
+        if visible(selections.anim_frame) {
+            let color: egui::Color32 = (config.colors.frameline + Color::new(100, 100, 100, 0)).into();
+            gp.vline(x_of(selections.anim_frame), graph.y_range(), egui::Stroke::new(2., color));
+        }
+
+        // empty graph space: hover a frame, click to go to it, right-click for its
+        // menu, drag to box-select (docs/TIMELINE.md §3.4)
+        let pointer = ui.ctx().pointer_hover_pos().filter(|p| !blocked && graph.contains(*p));
+        let over_mark = shared_ui.hovering_diamond;
+        shared_ui.hovering_frame = -1;
+        if let Some(p) = pointer.filter(|_| !over_mark && bg.hovered() && shared_ui.timeline_box.is_none()) {
+            let frame = view.nearest_frame(p.x, gl, gw);
+            shared_ui.hovering_frame = frame;
+            gp.vline(x_of(frame), graph.y_range(), egui::Stroke::new(2., egui::Color32::from_rgb(175, 175, 175)));
+        }
+        let origin = ui.input(|i| i.pointer.press_origin());
+        let scaling = shared_ui.timeline_scale.is_some();
+        if bg.clicked() && !scaling {
+            if let Some(p) = bg.interact_pointer_pos().filter(|p| p.x > gl) {
+                let frame = view.nearest_frame(p.x, gl, gw);
+                events.select_anim_frame(frame as usize, false, false);
+                shared_ui.last_selected = "keyframe".to_string();
+                if !is_multi {
+                    shared_ui.selected_keyframes = vec![];
+                }
+            }
+        }
+        if bg.secondary_clicked() && !scaling {
+            if let Some(p) = bg.interact_pointer_pos().filter(|p| p.x > gl) {
+                let frame = view.nearest_frame(p.x, gl, gw);
+                shared_ui.context_menu.show(&format!("kfline_{}", frame));
+            }
+        }
+        if bg.drag_started() && !scaling {
+            if let Some(o) = origin.filter(|o| o.x > gl) {
+                shared_ui.timeline_box = Some((view.x_to_frame(o.x, gl, gw), o.y - content.top()));
+            }
+        }
+        if let (Some((f0, y0)), Some(p)) = (shared_ui.timeline_box, ui.ctx().pointer_latest_pos()) {
+            let f1 = view.x_to_frame(p.x, gl, gw);
+            let y1 = p.y - content.top();
+            let r = egui::Rect::from_two_pos(
+                egui::pos2(view.frame_to_x(f0, gl, gw), content.top() + y0),
+                egui::pos2(view.frame_to_x(f1, gl, gw), content.top() + y1),
+            );
+            gp.rect(r, egui::CornerRadius::ZERO, SELECTED.gamma_multiply(0.08), egui::Stroke::new(1., SELECTED.gamma_multiply(0.7)), egui::StrokeKind::Inside);
+            if !bg.dragged() {
+                // select every key of the rows and frames inside
+                let (fa, fb) = (f0.min(f1).ceil() as i32, f0.max(f1).floor() as i32);
+                let ra = (y0.min(y1) / ROW_H).floor().max(0.) as usize;
+                let rb = ((y0.max(y1) / ROW_H).floor().max(0.) as usize).min(rows.len().saturating_sub(1));
+                let mut picked: Vec<Keyframe> = if is_multi { shared_ui.selected_keyframes.clone() } else { vec![] };
+                if !rows.is_empty() && ra < rows.len() {
+                    for kf in &anim.keyframes {
+                        let inside = kf.frame >= fa && kf.frame <= fb && rows[ra..=rb].iter().any(|r| r.matches(kf));
+                        if inside && !picked.iter().any(|s| timeline_rows::same_key(s, kf)) {
+                            picked.push(kf.clone());
+                        }
+                    }
+                }
+                shared_ui.selected_keyframes = picked;
+                shared_ui.last_selected = "keyframe".to_string();
+                shared_ui.timeline_box = None;
+            }
+        }
+
+        // keys
+        let mut hovered_column = None;
+        shared_ui.hovering_diamond = false;
+        let selected = shared_ui.selected_keyframes.clone();
+        let is_selected = |k: &Keyframe| selected.iter().any(|s| timeline_rows::same_key(s, k));
+        let mut tops = vec![];
+        for i in shown.clone() {
+            let row = &rows[i];
+            let r = row_rect(i);
+            if let Row::Bone(id) = row {
+                tops.push(BoneTop { id: *id, element: AnimElement::default(), height: i as f32 * ROW_H });
+            }
+            let hue = row.group().map(|g| {
+                let (r, g, b) = g.hue();
+                egui::Color32::from_rgb(r, g, b)
+            });
+            let base = hue.unwrap_or(if matches!(row, Row::Summary) { text.gamma_multiply(0.8) } else { text });
+
+            for frame in timeline_rows::row_frames(anim, row).into_iter().filter(|f| visible(*f)) {
+                let keys = timeline_rows::keys_at(anim, row, frame);
+                let all = keys.iter().all(|k| is_selected(k));
+                let any = keys.iter().any(|k| is_selected(k));
+                let stepped = keys.iter().all(|k| timeline_rows::is_stepped_key(k));
+                let c = egui::pos2(x_of(frame), r.center().y);
+                let hit = egui::Rect::from_center_size(c, egui::vec2(12., ROW_H));
+                let id = ui.id().with(("timeline_key", i, frame));
+                let sense = if scaling { egui::Sense::hover() } else { egui::Sense::click_and_drag() };
+                let resp = ui.interact(hit.intersect(graph), id, sense);
+
+                let lit = resp.hovered() || column == Some(frame);
+                let radius = if lit { 5. } else { 4. };
+                let (fill, stroke) = if all {
+                    (SELECTED, egui::Stroke::new(1., shade(SELECTED, -90)))
+                } else if any {
+                    (base, egui::Stroke::new(1.5, SELECTED))
+                } else if resp.hovered() {
+                    (base, egui::Stroke::new(1., egui::Color32::WHITE))
+                } else {
+                    (base, egui::Stroke::new(1., shade(base, -110)))
+                };
+                draw_mark(&gp, c, stepped, radius, fill, stroke);
+
+                if resp.hovered() {
+                    shared_ui.hovering_diamond = true;
+                    shared_ui.cursor_icon = egui::CursorIcon::PointingHand;
+                    hovered_column = Some(frame);
+                }
+
+                let keys: Vec<Keyframe> = keys.into_iter().cloned().collect();
+                if resp.clicked() || resp.double_clicked() {
+                    shared_ui.last_selected = "keyframe".to_string();
+                    events.select_anim_frame(frame as usize, false, false);
+                    // double-click: every key of this bone (or all bones) on the frame
+                    let picked: Vec<Keyframe> = if resp.double_clicked() {
+                        let column = row.bone_id().map_or(Row::Summary, Row::Bone);
+                        timeline_rows::keys_at(anim, &column, frame).into_iter().cloned().collect()
+                    } else {
+                        keys.clone()
+                    };
+                    if input.holding_mod && all && !resp.double_clicked() {
+                        // Ctrl-click a selected mark: deselect it
+                        shared_ui.selected_keyframes.retain(|s| !keys.iter().any(|k| timeline_rows::same_key(s, k)));
+                    } else if is_multi {
+                        for k in picked {
+                            add_selected_keyframes(&mut shared_ui.selected_keyframes, &k);
+                        }
+                    } else {
+                        shared_ui.selected_keyframes = picked;
+                    }
+                }
+                if resp.drag_started() {
+                    if !all {
+                        if !is_multi {
+                            shared_ui.selected_keyframes = vec![];
+                        }
+                        for k in &keys {
+                            add_selected_keyframes(&mut shared_ui.selected_keyframes, k);
+                        }
+                    }
+                    shared_ui.last_selected = "keyframe".to_string();
+                    if input.holding_alt {
+                        // Alt-drag: scale around the current frame instead of moving
+                        let pivot = pivot_frame(selections, &shared_ui.selected_keyframes);
+                        let start_x = origin.map_or(c.x, |o| o.x);
+                        shared_ui.timeline_scale = Some(timeline_rows::ScaleDrag { pivot, start_x, from_drag: true });
+                    } else {
+                        shared_ui.dragged_keyframe = Keyframe { frame, bone_id: -2, ..Default::default() };
+                    }
+                }
+                if resp.dragged() {
+                    shared_ui.cursor_icon = egui::CursorIcon::Grabbing;
+                }
+                if resp.drag_stopped() {
+                    let p = ui.ctx().pointer_latest_pos().unwrap_or(c);
+                    if p.y < clip.top() {
+                        // dropped above the rows: delete
+                        events.delete_selected_keyframes();
+                        shared_ui.dragged_keyframe.frame = -1;
+                    } else {
+                        events.move_selected_keyframes(view.nearest_frame(p.x, gl, gw));
+                    }
+                }
+                if resp.secondary_clicked() {
+                    if !all {
+                        if !is_multi {
+                            shared_ui.selected_keyframes = vec![];
+                        }
+                        for k in &keys {
+                            add_selected_keyframes(&mut shared_ui.selected_keyframes, k);
+                        }
+                    }
+                    shared_ui.last_selected = "keyframe".to_string();
+                    let k = &keys[0];
+                    let idx = anim.keyframes.iter().position(|a| timeline_rows::same_key(a, k)).unwrap_or(0);
+                    let el = k.element.clone() as usize;
+                    shared_ui.context_menu.show(&format!("keyframe_{}_{}_{}_{}", el, k.bone_id, k.frame, idx));
+                }
+                if matches!(row, Row::Summary | Row::Bone(_)) && resp.hovered() {
+                    resp.on_hover_text(column_summary(shared_ui, armature, anim, row, frame));
+                }
+            }
+        }
+        shared_ui.timeline_hover_column = hovered_column;
+
+        // dragging keys: where they'll land, red when dropping above the rows deletes
+        let dragging = shared_ui.dragged_keyframe.bone_id == -2 && shared_ui.dragged_keyframe.frame >= 0;
+        if let Some(p) = ui.ctx().pointer_latest_pos().filter(|_| dragging && ui.input(|i| i.pointer.primary_down())) {
+            let offset = view.nearest_frame(p.x, gl, gw) - shared_ui.dragged_keyframe.frame;
+            let col = if p.y < clip.top() { egui::Color32::RED } else { SELECTED };
+            for i in shown.clone() {
+                let r = row_rect(i);
+                let row = &rows[i];
+                let mut frames: Vec<i32> = selected.iter().filter(|k| row.matches(k)).map(|k| (k.frame + offset).max(0)).collect();
+                frames.sort();
+                frames.dedup();
+                for f in frames.into_iter().filter(|f| visible(*f)) {
+                    draw_mark(&gp, egui::pos2(x_of(f), r.center().y), false, 4., col.gamma_multiply(0.55), egui::Stroke::NONE);
+                }
+            }
+        }
+
+        // scaling keys: preview, then apply or cancel
+        if std::mem::take(&mut shared_ui.timeline_scale_start) && !shared_ui.selected_keyframes.is_empty() {
+            let pivot = pivot_frame(selections, &shared_ui.selected_keyframes);
+            let start_x = ui.ctx().pointer_latest_pos().map_or(x_of(pivot) + 60., |p| p.x);
+            shared_ui.timeline_scale = Some(timeline_rows::ScaleDrag { pivot, start_x, from_drag: false });
+        }
+        if let Some(drag) = shared_ui.timeline_scale {
+            let selected = shared_ui.selected_keyframes.clone();
+            let frames: Vec<i32> = selected.iter().map(|k| k.frame).collect();
+            let px = x_of(drag.pivot);
+            let p = ui.ctx().pointer_latest_pos().unwrap_or(egui::pos2(drag.start_x, clip.center().y));
+            let mut factor = timeline_rows::scale_factor(&drag, px, p.x, 24.);
+            if input.holding_mod {
+                factor = (factor * 4.).round() / 4.;
+            }
+            let factor = timeline_rows::clamp_scale(&frames, drag.pivot, factor);
+            let to = |f: i32| timeline_rows::scale_frame(f, drag.pivot, factor);
+            let (_, moved, merged) = timeline_rows::retime(&anim.keyframes, &selected, to);
+
+            // the pivot, and where the keys will land
+            let amber = egui::Color32::from_rgb(240, 190, 80);
+            gp.vline(px, graph.y_range(), egui::Stroke::new(1.5, amber));
+            for i in shown.clone() {
+                let r = row_rect(i);
+                let mut fs: Vec<i32> = moved.iter().filter(|k| rows[i].matches(k)).map(|k| k.frame).collect();
+                fs.sort();
+                fs.dedup();
+                for f in fs.into_iter().filter(|f| visible(*f)) {
+                    draw_mark(&gp, egui::pos2(x_of(f), r.center().y), false, 4., amber.gamma_multiply(0.75), egui::Stroke::NONE);
+                }
+            }
+            let span = |fs: &[i32]| fs.iter().max().unwrap_or(&0) - fs.iter().min().unwrap_or(&0);
+            let new_frames: Vec<i32> = moved.iter().map(|k| k.frame).collect();
+            let mut label = shared_ui
+                .loc("keyframe_editor.scale_readout")
+                .replace("$factor", &format!("{:.2}", factor))
+                .replace("$from", &span(&frames).to_string())
+                .replace("$to", &span(&new_frames).to_string());
+            if merged > 0 {
+                label += &shared_ui.loc("keyframe_editor.scale_merge").replace("$n", &merged.to_string());
+            }
+            let font = egui::FontId::proportional(12.);
+            let at = egui::pos2(p.x + 14., (p.y - 18.).max(clip.top() + 2.));
+            let galley = painter.layout_no_wrap(label, font, text);
+            let bg_rect = egui::Rect::from_min_size(at, galley.size()).expand(3.);
+            painter.rect_filled(bg_rect, egui::CornerRadius::same(3), shade(dark, -10));
+            painter.galley(at, galley, text);
+            shared_ui.cursor_icon = egui::CursorIcon::ResizeHorizontal;
+
+            let (released, cancel, enter) =
+                ui.input(|i| (i.pointer.primary_released(), i.pointer.secondary_pressed(), i.key_pressed(egui::Key::Enter)));
+            if cancel {
+                shared_ui.timeline_scale = None;
+            } else if released || (enter && !drag.from_drag) {
+                events.scale_selected_keyframes(drag.pivot, factor);
+                shared_ui.last_selected = "keyframe".to_string();
+                shared_ui.timeline_scale = None;
+            }
+        }
+
+        // labels
+        for i in shown.clone() {
+            draw_row_label(ui, &lp, shared_ui, armature, anim, config, selections, events, &rows[i], row_rect(i).intersect(labels), i);
+        }
+        shared_ui.bone_tops.tops = tops;
+
+        // the label column's right edge: drag to resize
+        let edge = egui::Rect::from_x_y_ranges(gl - 3.0..=gl + 2.0, clip.y_range());
+        let resize = ui.interact(edge, ui.id().with("timeline_label_resize"), egui::Sense::drag());
+        painter.vline(gl - 0.5, clip.y_range(), egui::Stroke::new(1., if resize.hovered() || resize.dragged() { text.gamma_multiply(0.6) } else { dark }));
+        if resize.hovered() || resize.dragged() {
+            shared_ui.cursor_icon = egui::CursorIcon::ResizeHorizontal;
+        }
+        if resize.dragged() {
+            shared_ui.timeline_label_w = (shared_ui.timeline_label_w + resize.drag_delta().x).max(LABEL_MIN);
         }
     });
-    (cursor_pos - ui.min_rect().left_top()).into()
+    shared_ui.timeline_offset_seen = out.state.offset.y;
+    shared_ui.timeline_offset.y = out.state.offset.y;
+    shared_ui.timeline_rows_h = out.inner_rect.height();
+}
+
+/// A row's label: fold arrows, the property icon in its group's hue, the name, and its
+/// menu (docs/TIMELINE.md §3.1).
+fn draw_row_label(
+    ui: &mut egui::Ui,
+    painter: &egui::Painter,
+    shared_ui: &mut crate::Ui,
+    armature: &Armature,
+    anim: &Animation,
+    config: &Config,
+    selections: &SelectionState,
+    events: &mut EventState,
+    row: &Row,
+    rect: egui::Rect,
+    i: usize,
+) {
+    if rect.width() <= 0. {
+        return;
+    }
+    let text: egui::Color32 = config.colors.text.into();
+    let dim = text.gamma_multiply(0.6);
+    let font = egui::FontId::proportional(12.5);
+    let y = rect.center().y;
+    let id = ui.id().with(("timeline_label", i));
+    let hand = egui::CursorIcon::PointingHand;
+    let bone_idx = |id: i32| armature.bones.iter().position(|b| b.id == id);
+
+    // a fold arrow at `x`; true when clicked
+    let arrow = |ui: &mut egui::Ui, x: f32, open: bool, salt: &str| -> bool {
+        let r = egui::Rect::from_center_size(egui::pos2(x, y), egui::vec2(14., ROW_H));
+        let resp = ui.interact(r, id.with(salt), egui::Sense::click()).on_hover_cursor(hand);
+        let col = if resp.hovered() { text } else { dim };
+        let s = 3.5;
+        let pts = if open {
+            vec![egui::pos2(x - s, y - s * 0.6), egui::pos2(x + s, y - s * 0.6), egui::pos2(x, y + s * 0.8)]
+        } else {
+            vec![egui::pos2(x - s * 0.6, y - s), egui::pos2(x + s * 0.8, y), egui::pos2(x - s * 0.6, y + s)]
+        };
+        painter.add(egui::Shape::convex_polygon(pts, col, egui::Stroke::NONE));
+        resp.clicked()
+    };
+
+    match row {
+        Row::Summary => {
+            // fold or open every bone at once
+            let all_folded = armature.bones.iter().all(|b| b.anim_folded);
+            if arrow(ui, rect.left() + 10., !all_folded, "fold_all") {
+                for (idx, _) in armature.bones.iter().enumerate() {
+                    events.toggle_bone_anim_folded(idx, !all_folded);
+                }
+            }
+            painter.text(egui::pos2(rect.left() + 20., y), egui::Align2::LEFT_CENTER, shared_ui.loc("keyframe_editor.summary"), font, dim);
+        }
+        Row::Bone(bone_id) => {
+            let Some(idx) = bone_idx(*bone_id) else { return };
+            let bone = &armature.bones[idx];
+            if arrow(ui, rect.left() + 10., !bone.anim_folded, "fold") {
+                events.toggle_bone_anim_folded(idx, !bone.anim_folded);
+            }
+            let selected = selections.bone_ids.contains(bone_id);
+            let name_rect = egui::Rect::from_x_y_ranges(rect.left() + 18.0..=rect.right(), rect.y_range());
+            let resp = ui.interact(name_rect, id.with("name"), egui::Sense::click()).on_hover_cursor(hand);
+            let col = if selected || resp.hovered() { text } else { text.gamma_multiply(0.85) };
+            let font = egui::FontId::proportional(if selected { 13.5 } else { 13. });
+            painter.text(egui::pos2(rect.left() + 20., y), egui::Align2::LEFT_CENTER, &bone.name, font, col);
+            if resp.clicked() {
+                // go to the bone, unfolding its parents so it shows in the hierarchy
+                events.select_bone(idx, false);
+                for parent in &armature.get_all_parents(false, *bone_id) {
+                    if let Some(p) = bone_idx(parent.id) {
+                        events.toggle_bone_folded(p, false);
+                    }
+                }
+            }
+        }
+        Row::Group(bone_id, group) => {
+            let x = rect.left() + 22.;
+            let (r, g, b) = group.hue();
+            let hue = egui::Color32::from_rgb(r, g, b);
+            let first = timeline_rows::channels(anim, *bone_id, *group);
+            if let Some(el) = first.first() {
+                let icon = shared::ANIM_ICON_ID[(el.clone() as usize).min(shared::ANIM_ICON_ID.len() - 1)];
+                let icon_rect = egui::Rect::from_center_size(egui::pos2(x + 6., y), egui::Vec2::splat(13.));
+                egui::Image::new(&shared_ui.icon_images[icon]).tint(hue).paint_at(ui, icon_rect);
+            }
+            let name = shared_ui.loc(&format!("keyframe_editor.groups.{}", group.key()));
+            painter.text(egui::pos2(x + 16., y), egui::Align2::LEFT_CENTER, name, font, text.gamma_multiply(0.9));
+            if first.len() > 1 {
+                let open = shared_ui.timeline_opened.contains(&(*bone_id, *group));
+                if arrow(ui, rect.right() - 10., open, "open") {
+                    if open {
+                        shared_ui.timeline_opened.retain(|o| *o != (*bone_id, *group));
+                    } else {
+                        shared_ui.timeline_opened.push((*bone_id, *group));
+                    }
+                }
+            }
+            let menu = egui::Rect::from_x_y_ranges(rect.left()..=rect.right() - 20., rect.y_range());
+            if ui.interact(menu, id.with("menu"), egui::Sense::click()).secondary_clicked() {
+                shared_ui.context_menu.show(&format!("kfrow_{}_g_{}", bone_id, *group as usize));
+            }
+        }
+        Row::Channel(bone_id, el) => {
+            let name = shared_ui.loc(&format!("keyframe_editor.elements.{}", el.to_string()));
+            painter.text(egui::pos2(rect.left() + 54., y), egui::Align2::LEFT_CENTER, name, font, dim);
+            if ui.interact(rect, id.with("menu"), egui::Sense::click()).secondary_clicked() {
+                shared_ui.context_menu.show(&format!("kfrow_{}_e_{}", bone_id, el.clone() as usize));
+            }
+        }
+    }
+}
+
+/// A summary key's tooltip: what's keyed on its frame.
+fn column_summary(shared_ui: &crate::Ui, armature: &Armature, anim: &Animation, row: &Row, frame: i32) -> String {
+    let mut lines: Vec<String> = vec![];
+    let ids: Vec<i32> = match row {
+        Row::Bone(id) => vec![*id],
+        _ => armature.bones.iter().map(|b| b.id).collect(),
+    };
+    for id in ids {
+        let mut groups: Vec<timeline_rows::Group> = timeline_rows::keys_at(anim, &Row::Bone(id), frame)
+            .iter()
+            .map(|k| timeline_rows::Group::of(&k.element))
+            .collect();
+        groups.sort();
+        groups.dedup();
+        if groups.is_empty() {
+            continue;
+        }
+        let names: Vec<String> = groups.iter().map(|g| shared_ui.loc(&format!("keyframe_editor.groups.{}", g.key()))).collect();
+        let bone = armature.bones.iter().find(|b| b.id == id).map_or("?".to_string(), |b| b.name.clone());
+        lines.push(format!("{bone}: {}", names.join(", ")));
+    }
+    format!("{} {}\n{}", shared_ui.loc("keyframe_editor.frame"), frame, lines.join("\n"))
 }
 
 fn add_selected_keyframes(selected_keyframes: &mut Vec<Keyframe>, kf: &Keyframe) {
@@ -1338,14 +1314,17 @@ fn add_selected_keyframes(selected_keyframes: &mut Vec<Keyframe>, kf: &Keyframe)
     }
 }
 
-pub fn is_relevant_keyframe(kfs: &mut Vec<Keyframe>, kf: &Keyframe, els: &Vec<AnimElement>) {
-    kfs.retain(|okf| {
-        okf.frame == kf.frame && okf.bone_id == kf.bone_id && els.contains(&okf.element)
-    });
-}
-
 /// Where the animation ends (its End, or its last key), or `None` for an empty one
 /// with no End set.
 fn end_of(anim: &Animation) -> Option<i32> {
     (anim.end_frame > 0 || !anim.keyframes.is_empty()).then(|| anim.last_frame())
+}
+
+/// Scaling keys pivots on the current frame, or the first selected key without one.
+fn pivot_frame(selections: &SelectionState, selected: &[Keyframe]) -> i32 {
+    if selections.anim_frame >= 0 {
+        selections.anim_frame
+    } else {
+        selected.iter().map(|k| k.frame).min().unwrap_or(0)
+    }
 }

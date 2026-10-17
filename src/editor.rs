@@ -43,7 +43,7 @@ pub fn iterate_events(
             E::AddCamera | E::DeleteCamera | E::DuplicateCamera | E::FitCamera => undo_states.new_undo_cameras(&armature.cameras),
             E::SetCamera if events.values[0] == 1. => undo_states.new_undo_cameras(&armature.cameras),
             E::RenameStyle => if !ui.just_made_style { undo_states.new_undo_style(&armature.sel_style(&selections).unwrap()); ui.just_made_style = false }
-            E::DeleteSelectedKeyframes | E::DeleteKeyframeLine | E::PasteKeyframesOnFrame | E::InsertKeyframe | E::InsertKeyframeAll | E::DeleteBoneKeyframes | E::SetAnimEnd => {
+            E::DeleteSelectedKeyframes | E::DeleteKeyframeLine | E::PasteKeyframesOnFrame | E::InsertKeyframe | E::InsertKeyframeAll | E::DeleteBoneKeyframes | E::SetAnimEnd | E::DeleteKeyframeGroup | E::ScaleSelectedKeyframes => {
                 undo_states.new_undo_anim(armature.sel_anim(&selections).unwrap())
             }
             E::ResetVertices | E::CenterBoneVerts | E::DeleteVertex | E::TraceBoneVerts | E::NewVertex | E::DeleteTriangle | E::RetriangulateVerts | E::PenApply => {
@@ -160,6 +160,24 @@ pub fn iterate_events(
 
         events.events.remove(0);
         events.values.drain(0..=2);
+    } else if event == Events::ScaleSelectedKeyframes {
+        let (pivot, factor) = (events.values[0] as i32, events.values[1]);
+        let anim = armature.sel_anim_mut(&selections).unwrap();
+        let (keys, moved, _) = timeline_rows::retime(&anim.keyframes, &ui.selected_keyframes, |f| {
+            timeline_rows::scale_frame(f, pivot, factor)
+        });
+        anim.keyframes = keys;
+        ui.selected_keyframes = moved;
+        events.events.remove(0);
+        events.values.drain(0..=1);
+    } else if event == Events::DeleteKeyframeGroup {
+        let bone_id = events.values[0] as i32;
+        if let Some(group) = timeline_rows::Group::from_index(events.values[1] as usize) {
+            let keys = &mut armature.sel_anim_mut(&selections).unwrap().keyframes;
+            keys.retain(|kf| !(kf.bone_id == bone_id && timeline_rows::Group::of(&kf.element) == group));
+        }
+        events.events.remove(0);
+        events.values.drain(0..=1);
     } else if event == Events::DeleteKeyframeLine {
         armature
             .sel_anim_mut(&selections)
@@ -1480,26 +1498,11 @@ pub fn simple_event(
             undo_states.new_undo_anim(&armature.sel_anim(&selections).unwrap());
             let sel_anim = &mut armature.sel_anim_mut(&selections).unwrap();
 
-            for skf in &mut ui.selected_keyframes {
-                // get difference between this frame and the frame being dragged
-                let diff = skf.frame - ui.dragged_keyframe.frame;
-                let new_frame = (value as i32 + diff).max(0);
-
-                // remove keyframe that is the same as this
-                if let Some(k) = sel_anim.keyframes.iter().position(|kf| {
-                    kf.bone_id == skf.bone_id && kf.element == skf.element && kf.frame == new_frame
-                }) {
-                    sel_anim.keyframes.remove(k);
-                }
-
-                // set this keyframe's frame to the dropped one
-                if let Some(idx) = sel_anim.keyframes.iter().position(|kf| kf == skf) {
-                    sel_anim.keyframes[idx].frame = new_frame;
-                    skf.frame = new_frame;
-                }
-            }
-
-            sel_anim.sort_keyframes();
+            // shift the selected keys by the drag; what they land on is replaced
+            let delta = value as i32 - ui.dragged_keyframe.frame;
+            let (keys, moved, _) = timeline_rows::retime(&sel_anim.keyframes, &ui.selected_keyframes, |f| f + delta);
+            sel_anim.keyframes = keys;
+            ui.selected_keyframes = moved;
             ui.dragged_keyframe.frame = -1;
         }
         Events::GlobalCopy => match ui.last_selected.as_str() {
@@ -1797,9 +1800,12 @@ fn select_bone(
     sel.bind = -1;
     let bone_id = armature.bones[idx].id;
     // scroll to this bone in keyframe editor
+    // (`height` is the bone row's top within the rows; scroll only if it's out of view)
     if let Some(bone) = ui.bone_tops.tops.iter().find(|b| b.id == bone_id) {
-        ui.timeline_offset.y =
-            bone.height + ui.timeline_offset.y - ui.keyframe_panel_rect.unwrap().top() - 47.;
+        let row_h = 18.;
+        if bone.height < ui.timeline_offset.y || bone.height + row_h > ui.timeline_offset.y + ui.timeline_rows_h {
+            ui.timeline_offset.y = (bone.height - row_h).max(0.);
+        }
     }
 
     // select only this bone if not holding modifiers
