@@ -422,6 +422,8 @@ pub enum SettingsState {
     Colors,
     Misc,
     Agent,
+    /// voice generation's providers (docs/LIP_SYNC.md §8)
+    Voices,
     /// the Export dialog's Frame Sequence tab
     FrameSequence,
 }
@@ -775,6 +777,16 @@ pub struct Ui {
     /// transcription error
     pub whisper_model: Option<usize>,
     pub lipsync_error: Option<String>,
+    /// the Dialog window; generated takes' audio waiting to be added; the last
+    /// generation error; voices fetched from ElevenLabs; whether a line's text is
+    /// being typed (one undo step)
+    pub dialog_open: bool,
+    pub pending_audio: Vec<crate::audio::AudioData>,
+    pub dialog_error: Option<(i32, String)>,
+    pub elevenlabs_voices: Option<Result<Vec<crate::dialog::Voice>, String>>,
+    pub dialog_typing: Option<i32>,
+    /// the artist confirmed they have the cloned voice's owner's consent (this session)
+    pub chatterbox_consent: bool,
     /// the bone panel's Shapes section is folded
     pub shapes_folded: bool,
     /// the Face Landmarks section is open
@@ -967,6 +979,12 @@ pub struct Config {
     pub agent_port: u16,
     pub agent_token: String,
     pub agent_read_only: bool,
+    /// Voice generation (docs/LIP_SYNC.md §8): the artist's ElevenLabs API key (kept
+    /// here like the agent token, never sent anywhere else), the Kokoro model
+    /// (`voice::KOKORO_MODELS`), and what runs the Chatterbox helper (`uv`, or a Python)
+    pub elevenlabs_key: String,
+    pub kokoro_model: usize,
+    pub chatterbox_runner: String,
 
     #[serde(skip)]
     pub colors: ColorConfig,
@@ -1030,6 +1048,9 @@ impl Default for Config {
             agent_port: 0,
             agent_token: String::new(),
             agent_read_only: false,
+            elevenlabs_key: String::new(),
+            kokoro_model: 0,
+            chatterbox_runner: String::new(),
         }
     }
 }
@@ -2042,6 +2063,9 @@ pub struct Animation {
     /// dialog audio placed on this animation's timeline (docs/LIP_SYNC.md §5)
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub clips: Vec<crate::audio::AudioClip>,
+    /// dialog lines and their takes (docs/LIP_SYNC.md §8)
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub dialog: Vec<crate::dialog::DialogLine>,
     /// lip sync for the clips (docs/LIP_SYNC.md §7.1); keys in their generated layers
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub lipsync: Vec<crate::lipsync::LipSyncTrack>,
@@ -3148,6 +3172,11 @@ pub enum Events {
     SetClip,
     DeleteClip,
     GenerateLipSync,
+    SetDialogLine,
+    DeleteDialogLine,
+    AddTake,
+    UseTake,
+    DeleteTake,
     DeleteLipSync,
     BakeLipSync,
     SetMouthRig,
@@ -3392,6 +3421,42 @@ impl EventState {
         self.events.push(E::BakeLipSync);
         self.values.push(id as f32);
         self.str_values.push(String::new());
+    }
+
+    /// Add or change a dialog line (matched by id). `new_step` makes an undo step, so
+    /// typing a line is one.
+    pub fn set_dialog_line(&mut self, line: &crate::dialog::DialogLine, new_step: bool) {
+        self.events.push(E::SetDialogLine);
+        self.values.push(if new_step { 1. } else { 0. });
+        self.str_values.push(serde_json::to_string(line).unwrap());
+    }
+
+    /// Remove a dialog line, with its clip and lip sync.
+    pub fn delete_dialog_line(&mut self, id: i32) {
+        self.events.push(E::DeleteDialogLine);
+        self.values.push(id as f32);
+        self.str_values.push(String::new());
+    }
+
+    /// Add a generated take to a line and use it. Its audio is waiting in
+    /// `Ui::pending_audio`.
+    pub fn add_take(&mut self, line: i32, take: &crate::dialog::Take) {
+        self.events.push(E::AddTake);
+        self.values.push(line as f32);
+        self.str_values.push(serde_json::to_string(&(line, take)).unwrap());
+    }
+
+    /// Use one of a line's takes (it becomes the line's clip, lip-synced).
+    pub fn use_take(&mut self, line: i32, take: i32) {
+        self.events.push(E::UseTake);
+        self.values.push(line as f32);
+        self.str_values.push(format!("{line}|{take}"));
+    }
+
+    pub fn delete_take(&mut self, line: i32, take: i32) {
+        self.events.push(E::DeleteTake);
+        self.values.push(line as f32);
+        self.str_values.push(format!("{line}|{take}"));
     }
 
     /// Set (or with `None`, clear back to automatic) the mouth rig a bone hosts.

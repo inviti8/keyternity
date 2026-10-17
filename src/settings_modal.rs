@@ -78,6 +78,8 @@ pub fn draw(
                     {
                         let str_agent = shared_ui.loc("settings_modal.agent.heading").clone();
                         tab!(str_agent, shared::SettingsState::Agent);
+                        let str_voices = shared_ui.loc("settings_modal.voices.heading").clone();
+                        tab!(str_voices, shared::SettingsState::Voices);
                     }
 
                     if shared_ui.settings_state != shared::SettingsState::Rendering {
@@ -114,6 +116,7 @@ pub fn draw(
                         shared::SettingsState::Colors => colors(ui, shared_ui),
                         shared::SettingsState::Misc => misc(ui, shared_ui, config),
                         shared::SettingsState::Agent => agent(ui, shared_ui, config),
+                        shared::SettingsState::Voices => voices(ui, shared_ui),
                         shared::SettingsState::FrameSequence => {}
                     });
 
@@ -597,6 +600,48 @@ fn agent(ui: &mut egui::Ui, shared_ui: &mut crate::Ui, config: &crate::Config) {
         if ui.skf_button(loc(shared_ui, "regenerate")).on_hover_text(loc(shared_ui, "regenerate_desc")).clicked() {
             shared_ui.updated_config.agent_token = crate::agent::server::new_token();
         }
+    });
+}
+
+/// Voice generation's providers (docs/LIP_SYNC.md §8).
+fn voices(ui: &mut egui::Ui, shared_ui: &mut crate::Ui) {
+    let loc = |shared_ui: &crate::Ui, key: &str| shared_ui.loc(&format!("settings_modal.voices.{key}"));
+    ui.heading(loc(shared_ui, "heading"));
+    ui.label(loc(shared_ui, "desc"));
+    ui.add_space(10.);
+
+    ui.label(egui::RichText::new("Kokoro").strong());
+    ui.label(loc(shared_ui, "kokoro_desc"));
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let models = crate::voice::KOKORO_MODELS;
+        let pick = &mut shared_ui.updated_config.kokoro_model;
+        let name = |i: usize| {
+            let m = &models[i.min(models.len() - 1)];
+            format!("{} ({} MB){}", m.name, m.mb, if crate::voice::has_kokoro_model(m) { " ✓" } else { "" })
+        };
+        let current = name(*pick);
+        egui::ComboBox::from_id_salt("kokoro_model").selected_text(current).show_ui(ui, |ui| {
+            for i in 0..models.len() {
+                ui.selectable_value(pick, i, name(i));
+            }
+        });
+    }
+    ui.add_space(10.);
+
+    ui.label(egui::RichText::new("ElevenLabs").strong());
+    ui.label(loc(shared_ui, "elevenlabs_desc"));
+    ui.horizontal(|ui| {
+        ui.label(loc(shared_ui, "api_key"));
+        ui.add(egui::TextEdit::singleline(&mut shared_ui.updated_config.elevenlabs_key).password(true).desired_width(220.));
+    });
+    ui.add_space(10.);
+
+    ui.label(egui::RichText::new("Chatterbox").strong());
+    ui.label(loc(shared_ui, "chatterbox_desc"));
+    ui.horizontal(|ui| {
+        ui.label(loc(shared_ui, "runner")).on_hover_text(loc(shared_ui, "runner_desc"));
+        ui.add(egui::TextEdit::singleline(&mut shared_ui.updated_config.chatterbox_runner).hint_text("uv").desired_width(220.));
     });
 }
 

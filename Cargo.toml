@@ -78,6 +78,8 @@ ureq = "3.1.4"
 sha2 = "0.10" # verify downloaded ffmpeg; agent server token
 base64 = "0.22"
 rodio = "0.21" # dialog audio: decoding (Symphonia: wav, mp3, ogg, flac) and playback
+bzip2 = "0.6" # unpacking the voice tool and models (tar.bz2), as zip already does
+tar = "0.4"
 
 # web-only dependencies
 [target.'cfg(target_arch = "wasm32")'.dependencies]

@@ -140,6 +140,7 @@ pub fn draw(
         layer_settings(egui_ctx, shared_ui, armature, selections, events);
         scale_dialog(egui_ctx, shared_ui, selections, events);
         crate::lipsync_ui::window(egui_ctx, shared_ui, armature, selections, events);
+        crate::dialog_ui::window(egui_ctx, shared_ui, armature, config, selections, events);
     }
 }
 
@@ -774,6 +775,11 @@ pub fn draw_bottom_bar(
                 ui.add_space(5.);
                 if ui.skf_button(shared_ui.loc("audio.add")).on_hover_text(shared_ui.loc("audio.add_desc")).clicked() {
                     utils::open_audio_dialog(&shared_ui.file_path, &shared_ui.file_type);
+                }
+                let label = egui::RichText::new(shared_ui.loc("dialog.open"));
+                let label = if shared_ui.dialog_open { label.strong() } else { label };
+                if ui.skf_button(label).on_hover_text(shared_ui.loc("dialog.open_desc")).clicked() {
+                    shared_ui.dialog_open = !shared_ui.dialog_open;
                 }
             }
         });

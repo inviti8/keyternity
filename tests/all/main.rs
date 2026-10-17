@@ -12,6 +12,7 @@ mod bone_length;
 mod camera_ui;
 mod crash_log;
 mod delete_bones;
+mod dialog;
 mod dragonbones_export;
 mod dragonbones_import;
 mod envelope;

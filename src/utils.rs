@@ -1734,5 +1734,7 @@ pub fn solved_local_rot(world: &[Bone], bone_id: i32) -> f32 {
 /// The audio files any animation's clips use (docs/LIP_SYNC.md §5): saved into the
 /// `.skf` as they were imported.
 pub fn used_audio(armature: &Armature) -> Vec<&crate::audio::AudioData> {
-    armature.audio.iter().filter(|a| armature.animations.iter().any(|an| an.clips.iter().any(|c| c.audio == a.id))).collect()
+    // clips' audio, and every dialog take's (so takes can still be swapped in)
+    let used = |id: i32| armature.animations.iter().any(|an| an.clips.iter().any(|c| c.audio == id) || an.dialog.iter().any(|l| l.takes.iter().any(|t| t.audio == id)));
+    armature.audio.iter().filter(|a| used(a.id)).collect()
 }

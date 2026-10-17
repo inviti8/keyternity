@@ -266,9 +266,12 @@ pub struct LipSyncTrack {
     pub text: String,
     pub source: TrackSource,
     pub language: Language,
-    /// what transcription heard (words and times), guiding the timing of `text`
+    /// what transcription heard (words and times), guiding the timing of `text`; or,
+    /// with `exact`, the words' times as a voice generator spoke them
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub heard: Vec<TimedWord>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub exact: bool,
     /// as last generated
     pub words: Vec<TimedWord>,
     pub settings: KeyerSettings,
@@ -559,6 +562,36 @@ pub fn spread_heard(words: &[(String, f32)], spans: &[(f32, f32)], heard: &[Time
     };
     let anchored: Vec<Option<usize>> = matched.iter().map(|m| m.map(|j| span_at((heard[j].start + heard[j].end) / 2.))).collect();
     spread_parts(words, spans, &partition(words, spans, Some(&anchored), lang), lang)
+}
+
+/// Words timed by a voice generator's own word times (exact): each word takes the time
+/// of the spoken word it matches, and words it doesn't match share the time between
+/// their neighbours. If too few match (the line was edited after speaking), they're
+/// spread over the speech with what was spoken as a guide.
+pub fn exact_timing(words: &[(String, f32)], spans: &[(f32, f32)], spoken: &[TimedWord], lang: Language) -> Vec<TimedWord> {
+    let m = align_words(words, spoken);
+    if m.iter().flatten().count() * 3 < words.len() * 2 {
+        return spread_heard(words, spans, spoken, lang);
+    }
+    let mut out: Vec<TimedWord> = vec![];
+    let mut k = 0;
+    while k < words.len() {
+        if let Some(j) = m[k] {
+            out.push(TimedWord { text: words[k].0.clone(), start: spoken[j].start, end: spoken[j].end });
+            k += 1;
+            continue;
+        }
+        let run_end = (k..words.len()).find(|i| m[*i].is_some()).unwrap_or(words.len());
+        let a = out.last().map_or(spoken.first().map_or(0., |s| s.start), |w| w.end);
+        let b = if run_end < words.len() { spoken[m[run_end].unwrap()].start } else { spoken.last().map_or(a, |s| s.end) };
+        let n = (run_end - k) as f32;
+        let step = (b - a).max(0.05 * n) / n;
+        for (i, w) in words[k..run_end].iter().enumerate() {
+            out.push(TimedWord { text: w.0.clone(), start: a + i as f32 * step, end: a + (i + 1) as f32 * step });
+        }
+        k = run_end;
+    }
+    out
 }
 
 /// Cues (seconds, sound) from timed words: each word's sounds stretched over it, and
@@ -993,7 +1026,13 @@ pub fn generate(armature: &mut Armature, anim: usize, track_id: i32) -> Result<u
                 // no audio to listen to: an even pace
                 None => vec![(0., words.len() as f32 * 0.35)],
             };
-            let timed = if track.heard.is_empty() { spread(&words, &spans, track.language) } else { spread_heard(&words, &spans, &track.heard, track.language) };
+            let timed = if track.heard.is_empty() {
+                spread(&words, &spans, track.language)
+            } else if track.exact {
+                exact_timing(&words, &spans, &track.heard, track.language)
+            } else {
+                spread_heard(&words, &spans, &track.heard, track.language)
+            };
             (cues_from_words(&timed, track.settings.rest_gap, track.language), timed)
         }
         TrackSource::Loudness => {

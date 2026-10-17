@@ -47,6 +47,8 @@ pub fn iterate_events(
             E::SetClip if events.values[0] == 1. => undo_states.new_undo_anim(armature.sel_anim(&selections).unwrap()),
             E::DeleteClip => undo_states.new_undo_anim(armature.sel_anim(&selections).unwrap()),
             E::GenerateLipSync | E::DeleteLipSync | E::BakeLipSync => undo_states.new_undo_anim(armature.sel_anim(&selections).unwrap()),
+            E::SetDialogLine if events.values[0] == 1. => undo_states.new_undo_anim(armature.sel_anim(&selections).unwrap()),
+            E::DeleteDialogLine | E::AddTake | E::UseTake | E::DeleteTake => undo_states.new_undo_anim(armature.sel_anim(&selections).unwrap()),
             E::SetMouthRig => {
                 if let Some(b) = armature.bones.iter().find(|b| b.id == events.values[0] as i32) {
                     undo_states.new_undo_bone(b);
@@ -697,6 +699,15 @@ pub fn simple_event(
             // rigs from before limits take the current layout
             face::upgrade(armature);
             ui.face_panel_open = true;
+        }
+        Events::SetDialogLine | Events::DeleteDialogLine | Events::AddTake | Events::UseTake | Events::DeleteTake => {
+            let mut pending = std::mem::take(&mut ui.pending_audio);
+            let err = crate::dialog::dialog_event(event, value, &str_value, armature, selections.anim, &mut pending);
+            ui.pending_audio = pending;
+            if let Some(err) = err {
+                ui.custom_error = err;
+                open_modal(ui, false, ui.loc("lipsync.failed"));
+            }
         }
         Events::GenerateLipSync | Events::DeleteLipSync | Events::BakeLipSync | Events::SetMouthRig => {
             if let Some(err) = crate::lipsync::lipsync_event(event, value, &str_value, armature, selections.anim) {

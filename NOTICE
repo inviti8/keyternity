@@ -99,12 +99,24 @@ Modifications (GPLv3 section 5a)
     src/lipsync_de.rs, src/lipsync_fr.rs, src/lipsync_pt.rs,
     src/lipsync_fi.rs, src/lipsync.rs, src/lipsync_ui.rs,
     tests/all/lipsync_langs.rs, tests/all/transcribe.rs, tests/data/
+  Voice generation (Kokoro through sherpa-onnx, system voices, ElevenLabs,
+  Chatterbox) and dialog lines with takes
+    src/voice.rs, src/dialog.rs, src/dialog_ui.rs, src/settings_modal.rs,
+    src/audio.rs, tools/voice/chatterbox_tts.py, tests/all/dialog.rs
 
 The user-facing strings for all of the above are in assets/i18n/en.json.
 
 
 Third-party components
 ----------------------
+
+sherpa-onnx (Apache-2.0, https://github.com/k2-fsa/sherpa-onnx), Kokoro
+(Apache-2.0) and the espeak-ng data bundled with it (GPL-3.0) aren't included
+either: the app downloads sherpa-onnx's official TTS build (v1.13.8) and the
+Kokoro v1.0 model package from sherpa-onnx's releases on first use, checked
+against their published SHA-256. Chatterbox (MIT, Resemble AI) is installed by
+uv when the artist uses it; tools/voice/chatterbox_tts.py is Keyternity's own
+helper. See src/voice.rs.
 
 whisper.cpp (MIT, https://github.com/ggml-org/whisper.cpp) and its models
 are not included either: on Windows the app downloads the official build

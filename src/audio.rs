@@ -242,6 +242,19 @@ mod player {
         });
     }
 
+    /// Play one piece of audio from its start, alone (auditioning a take).
+    pub fn play_data(data: &AudioData) {
+        let source = slice(data, 0., None);
+        with_player(|p| {
+            for s in p.sinks.drain(..) {
+                s.stop();
+            }
+            let sink = rodio::Sink::connect_new(p.stream.mixer());
+            sink.append(source);
+            p.sinks.push(sink);
+        });
+    }
+
     pub fn stop() {
         PLAYER.with(|p| {
             if let Some(p) = p.borrow_mut().as_mut() {
@@ -274,6 +287,14 @@ pub fn scrub(armature: &Armature, anim: usize, frame: f32) {
 pub fn stop() {
     #[cfg(not(target_arch = "wasm32"))]
     player::stop();
+}
+
+/// Audition one piece of audio on its own.
+pub fn play_data(data: &AudioData) {
+    #[cfg(not(target_arch = "wasm32"))]
+    player::play_data(data);
+    #[cfg(target_arch = "wasm32")]
+    let _ = data;
 }
 
 /// Apply a clip event (`Events::SetClip`, `Events::DeleteClip`) to `anim`.

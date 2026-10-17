@@ -1,6 +1,6 @@
 # Shapes, dialog and auto lip sync
 
-Status: phases 1, 1b, 1c, 2, 3 and 3b are built (§10). The rest is research and scope. Decisions to confirm are in §11.
+Status: phases 1, 1b, 1c, 2, 3, 3b and 4 are built (§10). The rest is research and scope. Decisions to confirm are in §11.
 
 ## 1. Goal
 
@@ -908,6 +908,58 @@ The text is known, so lip sync only needs **word timings**:
 **Consent:** voice cloning needs the voice owner's consent. The UI says so when a
 reference clip is added, and Keyternity ships no celebrity or real-person voices.
 
+### 8.1 As built (phase 4)
+
+The providers are in `src/voice.rs`, lines and takes in `src/dialog.rs`, and the
+window in `src/dialog_ui.rs`.
+
+- **Kokoro:**
+  - Runs on this computer through sherpa-onnx's official `sherpa-onnx-offline-tts`
+    (release v1.13.8, Apache-2.0), which bundles espeak-ng's data, so nothing is
+    compiled into Keyternity.
+  - The tool (17–44 MB depending on platform) and the model are downloaded on first
+    use and SHA-256 checked. Builds exist for Windows, macOS and Linux.
+  - Models:
+    - Kokoro v1.0 (334 MB, the default): measured at about 0.65× real time on 8
+      threads.
+    - int8 (126 MB): about 3× slower than real time on the same CPU.
+  - 32 voices, for the languages lip sync reads: US and UK English, French and
+    Brazilian Portuguese.
+  - No word timings, but generated speech is clean, so lip sync's speech detection
+    times it well (§7.6).
+- **System:** the computer's own voices, with nothing to download.
+  - Windows' voices through SAPI, which gives exact word timings.
+  - `say` on macOS, `espeak-ng` on Linux. These two are untested.
+- **ElevenLabs:**
+  - Opt-in, with the artist's API key from Settings → Voices.
+  - Uses `/with-timestamps`, whose character timings are joined into words.
+  - The response parsing is tested; a live call hasn't been tested, since it needs a
+    key.
+- **Chatterbox:**
+  - `tools/voice/chatterbox_tts.py` declares its dependencies inline. Keyternity
+    writes it to its data folder and runs it with `uv run`, or with a Python set in
+    Settings.
+  - It handles a reference clip to clone, the language, and the emotion exaggeration.
+  - When a reference is set, Generate waits for a consent checkbox.
+  - Untested here: it installs PyTorch (several GB).
+- **Lines and takes:**
+  - The **Dialog** button in the timeline's bottom bar opens the window.
+  - A line has its text, language, voice and speed, and the frame it starts at.
+  - **Generate** speaks the line on a thread, showing download progress, and adds the
+    result as a take. Each take keeps its audio, voice, speed and any word timings.
+  - The take in use is the line's clip, lip-synced on the line's words. Exact word
+    timings (SAPI, ElevenLabs) are used as they are; an edited line keeps the matched
+    words' times and shares the gaps among the new ones.
+  - **Use** swaps a take in, and the lip sync follows it. **▶** auditions a take.
+    Deleting the take in use falls back to the newest one left.
+  - Removing a line removes its clip and lip sync.
+  - All of these are events, so they undo, and every take's audio is saved in the
+    `.skf`.
+- **Opt-in tests:**
+  - `cargo test --test all -- dialog::kokoro_speaks --ignored` downloads Kokoro
+    through the app's own path and speaks.
+  - `dialog::system_voice_speaks` uses the system voice.
+
 ## 9. Agent (MCP) tools
 
 These sit alongside the skinning tools:
@@ -931,7 +983,7 @@ reviews and refines.
 | **2. Dialog audio** ✓ (desktop) | Clips embedded in `.skf`, Symphonia decoding, rodio playback in sync, waveform, audio scrub, video export with audio | Desktop first |
 | **3. Mouth rigs + lip sync** ✓ (first pass, §7.5) | The 17 sounds and the viseme-set mappings, mouth rig panel and auto-fill, the English text rules (ported from TalkingHead), typed transcripts with words spread over speech, lip-sync tracks and keyer, regenerate and bake, loudness fallback, drawn and morph mouths | The Facebot loop, end to end. No downloads. |
 | **3b. Transcription** ✓ (§7.6) | whisper.cpp through `whisper-rs`, model download, word timings, editable transcript; TalkingHead's other language modules | Imported recordings |
-| **4. Voice generation** | Provider interface, Kokoro local with timings, Dialog panel with takes; then ElevenLabs (opt-in) and Chatterbox (helper process) | |
+| **4. Voice generation** ✓ (§8.1) | Provider interface, Kokoro local with timings, Dialog panel with takes; then ElevenLabs (opt-in) and Chatterbox (helper process) | |
 | **5. Agent** | MCP tools; optional audio-recognition engines (Rhubarb, ONNX phonemes) only if transcripts prove too coarse | |
 
 ## 11. Decisions to confirm
