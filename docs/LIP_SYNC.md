@@ -356,6 +356,29 @@ twist.
 A rig can mix the two. Auto-fill picks viseme shapes when they exist; otherwise it
 uses the built-in rig-value poses for the standard set.
 
+**Controls follow FaceBot's own limits** (read from each manipulator's transform
+limits in `FaceBot.FBX`). Full weight is at the limit:
+
+| control | moves | twists | other |
+|---|---|---|---|
+| Eyes | – | – | **Y scale 0–1.5**: drag down to close (Blink); 1.5 is wide (unmapped) |
+| Brows | up/down ±1 | ±20°: one way BrowsIn, the other BrowsOuterLower | – |
+| Nose wings | up 0–1 (NoseScrunch) | – | – |
+| Mouth | ±1 each way (MidMouth L/R, MouthUp/Down) | – | – |
+| Corners | **inward only** 0–2 (MouthNarrow), up/down ±2 (Smile/Frown) | – | – |
+| Upper lip | up 0–1 (UpperLipUp L+R) | – | **depth ±2** (UpperLipOut/In) |
+| Lower lip | down 0–1 (LowerLipDown L+R) | – | **depth ±2** (LowerLipOut/In) |
+| Jaw | sideways ±1 (JawSide), down 1 (MouthOpen) | ±10° (JawTwist) | **depth ±1** (JawForward/Backward) |
+| Tongue | up 0–1 (TongueUp; FaceBot tilts it about X) | – | – |
+
+- **Dragging:** depth is Alt + vertical drag, and twist is Shift + horizontal drag.
+- **Where depth is stored:** bones are 2D, so a control's depth rides on its hidden
+  bone's X scale and the eyes' closing on its Y scale. The panel shows depth as a
+  slight change in size.
+- **Older rigs:** rigs set up before limits are upgraded when the panel opens.
+- **Unmapped:** MouthWhistle has no control (slider only), as in FaceBot's
+  manipulators.
+
 **The Face Rig panel (decided):** the rig is worked from its own dedicated panel,
 not with bones on the canvas.
 - **What it shows:** FaceBot's mask with its coloured manipulators: brows orange,

@@ -18,7 +18,7 @@ pub fn panel(ui: &mut egui::Ui, bone: &Bone, shared_ui: &mut crate::Ui, config: 
     let dim = text.gamma_multiply(0.6);
 
     if ui.skf_button(loc(shared_ui, "open_panel")).on_hover_text(loc(shared_ui, "open_panel_desc")).clicked() {
-        shared_ui.face_panel_open = true;
+        events.open_face_panel();
     }
 
     let mut new = fc.clone();
@@ -92,11 +92,11 @@ pub fn face_buttons(ui: &mut egui::Ui, bone: &Bone, shared_ui: &mut crate::Ui, a
     });
     if rigged {
         if ui.skf_button(loc(shared_ui, "open_panel")).on_hover_text(loc(shared_ui, "open_panel_desc")).clicked() {
-            shared_ui.face_panel_open = true;
+            events.open_face_panel();
         }
     } else if ui.skf_button(loc(shared_ui, "set_up")).on_hover_text(loc(shared_ui, "set_up_desc")).clicked() {
         events.set_up_face(bone.id, &loc(shared_ui, "root_name"));
-        shared_ui.face_panel_open = true;
+        events.open_face_panel();
     }
 }
 

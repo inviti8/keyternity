@@ -774,7 +774,7 @@ pub struct Ui {
     pub face_panel_root: Option<i32>,
     pub face_panel_drag: Option<i32>,
     /// where the dragged control started (position, rotation) and the press point
-    pub face_panel_drag_start: Option<(Vec2, f32, egui::Pos2)>,
+    pub face_panel_drag_start: Option<(Vec2, f32, Vec2, egui::Pos2)>,
     pub face_panel_menu: Option<i32>,
     /// picking a landmark: its name, and the vertex selection when picking started
     pub picking_landmark: Option<String>,
@@ -2092,6 +2092,9 @@ pub struct FaceControl {
     /// the face mesh this rig was set up for: its shapes fill empty slots
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mesh: Option<i32>,
+    /// FaceBot's limits; without them (rigs from before), `range` applies to all
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limits: Option<ControlLimits>,
 }
 
 /// A direction a control can move, each driving its own shapes.
@@ -2106,6 +2109,25 @@ pub enum ControlAxis {
     /// counter-clockwise twist
     TwistCcw,
     TwistCw,
+    /// toward the viewer (depth: lips out, jaw forward), carried in the bone's X scale
+    Forward,
+    Back,
+    /// the control's Y scale above or below 1 (eyes: wide, and closed)
+    ScaleUp,
+    ScaleDown,
+}
+
+/// How far a control may go on each channel (docs/LIP_SYNC.md §6.5), from FaceBot's
+/// limits: offsets from rest (x, y; mesh units), twist (radians), depth (in the bone's
+/// X scale, above 1), and Y scale. Full weight is at the limit.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq, Default, Debug)]
+#[serde(default)]
+pub struct ControlLimits {
+    pub x: (f32, f32),
+    pub y: (f32, f32),
+    pub twist: (f32, f32),
+    pub depth: (f32, f32),
+    pub scale: (f32, f32),
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Default, Debug)]

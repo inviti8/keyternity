@@ -418,7 +418,7 @@ pub fn draw(
     } else if crate::face_panel::rigs(armature).iter().any(|(root, _)| *root == bone.id) {
         ui.label(shared_ui.loc("face_panel.root_note"));
         if ui.button(shared_ui.loc("bone_panel.face.open_panel")).clicked() {
-            shared_ui.face_panel_open = true;
+            events.open_face_panel();
         }
         ui.add_space(20.);
     }

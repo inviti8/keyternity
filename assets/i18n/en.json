@@ -303,7 +303,10 @@
   },
   "face_panel": {
     "title": "Face Rig",
-    "hint": "Drag a control to pose; Shift-drag twists. Double-click resets; right-click to key or select.",
+    "hint": "Drag to pose. Eyes: drag down to close. Shift-drag twists (brows, jaw); Alt-drag pushes in and out (lips, jaw). Double-click resets; right-click to key or select.",
+    "how_scale": "drag down to close",
+    "how_twist": "Shift: twist",
+    "how_depth": "Alt: in/out",
     "reset": "Reset",
     "key": "Key",
     "select": "Select Control Bone",
@@ -365,6 +368,10 @@
       "axis_left": "Left",
       "axis_twistccw": "Twist ⟲",
       "axis_twistcw": "Twist ⟳",
+      "axis_forward": "Out",
+      "axis_back": "In",
+      "axis_scaleup": "Open wide",
+      "axis_scaledown": "Close",
       "unmapped": "nothing",
       "target_desc": "Double- or right-click to remove."
     },

@@ -46,7 +46,7 @@ pub fn shade_of(a: [f32; 3], b: [f32; 3], c: [f32; 3]) -> f32 {
 /// The face's vertices deformed by the controls: each vertex blends its controls'
 /// moves (offset, and twist about the control's rest), linear-blend skinning in the
 /// mask's plane. `xf` gives each control's (offset, twist, rest).
-pub fn deform(face: &ArtFace, xf: &std::collections::HashMap<String, (egui::Vec2, f32, [f32; 2])>) -> Vec<[f32; 3]> {
+pub fn deform(face: &ArtFace, xf: &std::collections::HashMap<String, ControlPose>) -> Vec<[f32; 3]> {
     face.verts
         .iter()
         .zip(&face.weights)
@@ -54,10 +54,10 @@ pub fn deform(face: &ArtFace, xf: &std::collections::HashMap<String, (egui::Vec2
             let (mut x, mut y, mut total) = (0., 0., 0.);
             for (name, w) in ws {
                 let (px, py) = match xf.get(name) {
-                    Some((off, twist, rest)) => {
-                        let (dx, dy) = (v[0] - rest[0], v[1] - rest[1]);
-                        let (c, s) = (twist.cos(), twist.sin());
-                        (rest[0] + dx * c - dy * s + off.x, rest[1] + dx * s + dy * c + off.y)
+                    Some(p) => {
+                        let (dx, dy) = (v[0] - p.rest[0], (v[1] - p.rest[1]) * p.scale_y);
+                        let (c, s) = (p.twist.cos(), p.twist.sin());
+                        (p.rest[0] + dx * c - dy * s + p.off.x, p.rest[1] + dx * s + dy * c + p.off.y)
                     }
                     None => (v[0], v[1]),
                 };
@@ -124,25 +124,43 @@ pub fn rigs(armature: &Armature) -> Vec<(i32, Vec<(String, i32)>)> {
     out
 }
 
-/// A control's offset on the panel (mask units) and twist, from its bone's pose,
-/// plus its parent controls' offsets (the mouth carries the corners, lips and jaw).
-pub fn placement(armature: &Armature, posed: &[Bone], bone_id: i32) -> (egui::Vec2, f32) {
-    let mut off = egui::Vec2::ZERO;
-    let mut twist = 0.;
+/// A control as the panel shows it: its offset (mask units, with its parent controls'
+/// offsets: the mouth carries the corners, lips and jaw), twist, Y scale (eyes),
+/// depth (lips and jaw, in and out), and its rest on the art.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ControlPose {
+    pub off: egui::Vec2,
+    pub twist: f32,
+    pub scale_y: f32,
+    pub depth: f32,
+    pub rest: [f32; 2],
+}
+
+pub fn placement(armature: &Armature, posed: &[Bone], bone_id: i32) -> ControlPose {
+    let mut p = ControlPose { off: egui::Vec2::ZERO, twist: 0., scale_y: 1., depth: 0., rest: [0., 0.] };
     let mut id = bone_id;
     let mut first = true;
     while let Some(b) = posed.iter().find(|b| b.id == id) {
         let Some(fc) = armature.bones.iter().find(|x| x.id == id).and_then(|x| x.face_control.as_ref()) else { break };
         let s = (fc.range / face::RANGE).max(1e-4);
         let d = (b.pos - fc.rest) / s;
-        off += egui::vec2(d.x, d.y);
+        p.off += egui::vec2(d.x, d.y);
         if first {
-            twist = b.rot - fc.rest_rot;
+            p.twist = b.rot - fc.rest_rot;
+            if fc.limits.is_some() {
+                p.scale_y = b.scale.y;
+                p.depth = b.scale.x - 1.;
+            }
             first = false;
         }
         id = b.parent_id;
     }
-    (off, twist)
+    p
+}
+
+/// Panel units per mesh unit for a control (its rig's scale).
+fn rig_scale(fc: &FaceControl) -> f32 {
+    (fc.range / face::RANGE).max(1e-4)
 }
 
 fn tri_contains(p: egui::Pos2, t: &[egui::Pos2; 3]) -> bool {
@@ -270,12 +288,13 @@ fn board(
     let anim = armature.animations.get(selections.anim);
     let pointer = ui.ctx().pointer_hover_pos().filter(|p| rect.contains(*p));
 
-    // each control's move (offset, twist, rest), and the face deformed by them
-    let mut xf: std::collections::HashMap<String, (egui::Vec2, f32, [f32; 2])> = std::collections::HashMap::new();
+    // each control's pose, and the face deformed by them
+    let mut xf: std::collections::HashMap<String, ControlPose> = std::collections::HashMap::new();
     for a in &art.controls {
         if let Some((_, bone)) = controls.iter().find(|(n, _)| *n == a.name) {
-            let (off, twist) = placement(armature, posed, *bone);
-            xf.insert(a.name.clone(), (off, twist, a.rest));
+            let mut p = placement(armature, posed, *bone);
+            p.rest = a.rest;
+            xf.insert(a.name.clone(), p);
         }
     }
     if let Some(face) = &art.face {
@@ -304,11 +323,14 @@ fn board(
     let mut placed: Vec<Placed> = vec![];
     for a in &art.controls {
         let Some((_, bone)) = controls.iter().find(|(n, _)| *n == a.name) else { continue };
-        let (off, twist) = placement(armature, posed, *bone);
-        let (c, s) = (twist.cos(), twist.sin());
+        let p = placement(armature, posed, *bone);
+        let (c, s) = (p.twist.cos(), p.twist.sin());
+        // depth reads as size: nearer is a little larger
+        let grow = (1. + 0.08 * p.depth).max(0.5);
         let at = |x: f32, y: f32| {
+            let (x, y) = (x * grow, y * p.scale_y.max(0.15) * grow);
             let (rx, ry) = (x * c - y * s, x * s + y * c);
-            to_screen(a.rest[0] + off.x + rx, a.rest[1] + off.y + ry)
+            to_screen(a.rest[0] + p.off.x + rx, a.rest[1] + p.off.y + ry)
         };
         let tris = a.tris.iter().map(|t| [at(t[0][0], t[0][1]), at(t[1][0], t[1][1]), at(t[2][0], t[2][1])]).collect();
         placed.push(Placed { art: a, bone: *bone, tris, rest: to_screen(a.rest[0], a.rest[1]) });
@@ -355,18 +377,37 @@ fn board(
     // the active control's travel box, and its name
     if let Some(pl) = placed.iter().find(|pl| Some(pl.bone) == active) {
         if let Some(fc) = armature.bones.iter().find(|b| b.id == pl.bone).and_then(|b| b.face_control.as_ref()) {
-            let has = |a: ControlAxis| fc.slots.iter().any(|s| s.axis == a);
-            let r = face::RANGE * scale;
-            let x0 = if has(ControlAxis::Left) { -r } else { 0. };
-            let x1 = if has(ControlAxis::Right) { r } else { 0. };
-            let y0 = if has(ControlAxis::Up) { -r } else { 0. };
-            let y1 = if has(ControlAxis::Down) { r } else { 0. };
+            // the box it travels in (screen: y down), from its limits
+            let (x0, x1, y0, y1) = match &fc.limits {
+                Some(l) => {
+                    let k = scale / rig_scale(fc);
+                    (l.x.0 * k, l.x.1 * k, -l.y.1 * k, -l.y.0 * k)
+                }
+                None => {
+                    let has = |a: ControlAxis| fc.slots.iter().any(|s| s.axis == a);
+                    let r = face::RANGE * scale;
+                    (if has(ControlAxis::Left) { -r } else { 0. }, if has(ControlAxis::Right) { r } else { 0. }, if has(ControlAxis::Up) { -r } else { 0. }, if has(ControlAxis::Down) { r } else { 0. })
+                }
+            };
             // the box moves with the control's parents
-            let (parent_off, _) = armature.bones.iter().find(|b| b.id == pl.bone).map_or((egui::Vec2::ZERO, 0.), |b| placement(armature, posed, b.parent_id));
+            let parent_off = armature.bones.iter().find(|b| b.id == pl.bone).map_or(egui::Vec2::ZERO, |b| placement(armature, posed, b.parent_id).off);
             let o = pl.rest + egui::vec2(parent_off.x, -parent_off.y) * scale;
             let boxr = egui::Rect::from_min_max(o + egui::vec2(x0, y0), o + egui::vec2(x1, y1)).expand(1.);
             painter.rect_stroke(boxr, egui::CornerRadius::same(2), egui::Stroke::new(1., egui::Color32::from_white_alpha(140)), egui::StrokeKind::Middle);
-            painter.text(rect.left_top() + egui::vec2(6., 4.), egui::Align2::LEFT_TOP, &fc.name, egui::FontId::proportional(12.), egui::Color32::from_gray(220));
+            // what it does, and how to drag it
+            let has = |a: ControlAxis| fc.slots.iter().any(|s| s.axis == a);
+            let mut how = vec![];
+            if has(ControlAxis::ScaleDown) || has(ControlAxis::ScaleUp) {
+                how.push(shared_ui.loc("face_panel.how_scale"));
+            }
+            if has(ControlAxis::TwistCcw) || has(ControlAxis::TwistCw) {
+                how.push(shared_ui.loc("face_panel.how_twist"));
+            }
+            if has(ControlAxis::Forward) || has(ControlAxis::Back) {
+                how.push(shared_ui.loc("face_panel.how_depth"));
+            }
+            let label = if how.is_empty() { fc.name.clone() } else { format!("{}  ·  {}", fc.name, how.join(" · ")) };
+            painter.text(rect.left_top() + egui::vec2(6., 4.), egui::Align2::LEFT_TOP, label, egui::FontId::proportional(12.), egui::Color32::from_gray(220));
         }
         shared_ui.cursor_icon = if shared_ui.face_panel_drag.is_some() { egui::CursorIcon::Grabbing } else { egui::CursorIcon::Grab };
     }
@@ -387,35 +428,60 @@ fn board(
             if let (Some(idx), Some(pose)) = (armature.bones.iter().position(|b| b.id == id), posed.iter().find(|b| b.id == id)) {
                 events.save_edited_bone(idx);
                 let origin = ui.input(|i| i.pointer.press_origin()).unwrap_or(rect.center());
-                shared_ui.face_panel_drag_start = Some((pose.pos, pose.rot, origin));
+                shared_ui.face_panel_drag_start = Some((pose.pos, pose.rot, pose.scale, origin));
             }
         }
     }
-    if let (Some(id), Some((start_pos, start_rot, origin))) = (shared_ui.face_panel_drag, shared_ui.face_panel_drag_start) {
+    if let (Some(id), Some((start_pos, start_rot, start_scale, origin))) = (shared_ui.face_panel_drag, shared_ui.face_panel_drag_start) {
         let now = ui.input(|i| i.pointer.interact_pos());
         if let (true, Some(now)) = (resp.dragged(), now) {
             let Some(bone) = bone_of(id) else { return };
             let fc = bone.face_control.as_ref().unwrap();
-            let s = fc.range / face::RANGE;
+            let s = rig_scale(fc);
+            // the pointer's movement since the press, in mask units (y up)
             let d = now - origin;
-            let twisting = ui.input(|i| i.modifiers.shift);
+            let (dx, dy) = (d.x / scale, -d.y / scale);
+            let (twisting, depth) = ui.input(|i| (i.modifiers.shift, i.modifiers.alt));
             let has = |a: ControlAxis| fc.slots.iter().any(|sl| sl.axis == a);
-            if twisting {
-                let lo = if has(ControlAxis::TwistCw) { -1.5 } else { 0. } * std::f32::consts::FRAC_PI_4;
-                let hi = if has(ControlAxis::TwistCcw) { 1.5 } else { 0. } * std::f32::consts::FRAC_PI_4;
-                let rot = (start_rot - fc.rest_rot - d.x * 0.01).clamp(lo, hi) + fc.rest_rot;
-                events.edit_bone(id, &AnimElement::Rotation, rot, "", anim_idx, frame);
-            } else {
-                let lim = |neg: ControlAxis, pos: ControlAxis| {
-                    (if has(neg) { -1.5 * fc.range } else { 0. }, if has(pos) { 1.5 * fc.range } else { 0. })
-                };
-                let (xl, xh) = lim(ControlAxis::Left, ControlAxis::Right);
-                let (yl, yh) = lim(ControlAxis::Down, ControlAxis::Up);
-                let off = start_pos - fc.rest + Vec2::new(d.x / scale * s, -d.y / scale * s);
-                let x = fc.rest.x + off.x.clamp(xl, xh);
-                let y = fc.rest.y + off.y.clamp(yl, yh);
-                events.edit_bone(id, &AnimElement::PositionX, x, "", anim_idx, frame);
-                events.edit_bone(id, &AnimElement::PositionY, y, "", anim_idx, frame);
+            let scales = has(ControlAxis::ScaleDown) || has(ControlAxis::ScaleUp);
+            match fc.limits {
+                Some(l) if scales => {
+                    // eyes: dragging down closes (scale 1 → 0 over two mask units)
+                    let sy = (start_scale.y + dy * 0.5).clamp(l.scale.0, l.scale.1);
+                    events.edit_bone(id, &AnimElement::ScaleY, sy, "", anim_idx, frame);
+                }
+                Some(l) if twisting => {
+                    let rot = (start_rot - fc.rest_rot - dx * 0.08).clamp(l.twist.0, l.twist.1) + fc.rest_rot;
+                    events.edit_bone(id, &AnimElement::Rotation, rot, "", anim_idx, frame);
+                }
+                Some(l) if depth => {
+                    let z = (start_scale.x - 1. + dy * 0.5).clamp(l.depth.0, l.depth.1);
+                    events.edit_bone(id, &AnimElement::ScaleX, 1. + z, "", anim_idx, frame);
+                }
+                Some(l) => {
+                    let off = start_pos - fc.rest + Vec2::new(dx * s, dy * s);
+                    let x = fc.rest.x + off.x.clamp(l.x.0, l.x.1);
+                    let y = fc.rest.y + off.y.clamp(l.y.0, l.y.1);
+                    events.edit_bone(id, &AnimElement::PositionX, x, "", anim_idx, frame);
+                    events.edit_bone(id, &AnimElement::PositionY, y, "", anim_idx, frame);
+                }
+                // rigs from before limits (until the panel upgrades them)
+                None if twisting => {
+                    let lo = if has(ControlAxis::TwistCw) { -1.5 } else { 0. } * std::f32::consts::FRAC_PI_4;
+                    let hi = if has(ControlAxis::TwistCcw) { 1.5 } else { 0. } * std::f32::consts::FRAC_PI_4;
+                    let rot = (start_rot - fc.rest_rot - dx * 0.08).clamp(lo, hi) + fc.rest_rot;
+                    events.edit_bone(id, &AnimElement::Rotation, rot, "", anim_idx, frame);
+                }
+                None => {
+                    let lim = |neg: ControlAxis, pos: ControlAxis| {
+                        (if has(neg) { -1.5 * fc.range } else { 0. }, if has(pos) { 1.5 * fc.range } else { 0. })
+                    };
+                    let (xl, xh) = lim(ControlAxis::Left, ControlAxis::Right);
+                    let (yl, yh) = lim(ControlAxis::Down, ControlAxis::Up);
+                    let off = start_pos - fc.rest + Vec2::new(dx * s, dy * s);
+                    events.edit_bone(id, &AnimElement::PositionX, fc.rest.x + off.x.clamp(xl, xh), "", anim_idx, frame);
+                    events.edit_bone(id, &AnimElement::PositionY, fc.rest.y + off.y.clamp(yl, yh), "", anim_idx, frame);
+                }
             }
         }
         if resp.drag_stopped() || !ui.input(|i| i.pointer.primary_down()) {
@@ -446,6 +512,8 @@ fn board(
                     events.edit_bone(id, &AnimElement::PositionX, p.pos.x, "", anim_idx, frame);
                     events.edit_bone(id, &AnimElement::PositionY, p.pos.y, "", anim_idx, frame);
                     events.edit_bone(id, &AnimElement::Rotation, p.rot, "", anim_idx, frame);
+                    events.edit_bone(id, &AnimElement::ScaleX, p.scale.x, "", anim_idx, frame);
+                    events.edit_bone(id, &AnimElement::ScaleY, p.scale.y, "", anim_idx, frame);
                 }
                 close = true;
             }
@@ -471,4 +539,6 @@ fn reset(armature: &Armature, id: i32, anim: usize, frame: i32, events: &mut Eve
     events.edit_bone(id, &AnimElement::PositionX, fc.rest.x, "", anim, frame);
     events.edit_bone(id, &AnimElement::PositionY, fc.rest.y, "", anim, frame);
     events.edit_bone(id, &AnimElement::Rotation, fc.rest_rot, "", anim, frame);
+    events.edit_bone(id, &AnimElement::ScaleX, 1., "", anim, frame);
+    events.edit_bone(id, &AnimElement::ScaleY, 1., "", anim, frame);
 }

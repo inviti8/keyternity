@@ -105,16 +105,18 @@ fn setting_up_a_face_lays_out_the_controls() {
 fn moving_a_control_drives_its_shapes() {
     let (mut arm, _) = rigged();
     assert_eq!(weight(&constructed(&arm), "Smile_L"), 0., "at rest, nothing");
+    // full weight at FaceBot's limit: the corners move 2 up or down
     let c = control(&mut arm, "Corner_L");
-    let range = c.face_control.as_ref().unwrap().range;
-    c.pos.y += range * 0.5;
+    let up = c.face_control.as_ref().unwrap().limits.unwrap().y.1;
+    c.pos.y += up * 0.5;
     let posed = constructed(&arm);
     assert!((weight(&posed, "Smile_L") - 0.5).abs() < 1e-4);
     assert_eq!(weight(&posed, "Frown_L"), 0., "opposite slots never mix");
 
-    // the upper lip drives both sides; twisting the lower lip rolls it
-    control(&mut arm, "UpperLip").pos.y += range;
-    control(&mut arm, "LowerLip").rot = -std::f32::consts::FRAC_PI_4;
+    // the upper lip drives both sides; the lower lip pushed in (depth) rolls it in
+    let lip_up = control(&mut arm, "UpperLip").face_control.as_ref().unwrap().limits.unwrap().y.1;
+    control(&mut arm, "UpperLip").pos.y += lip_up;
+    control(&mut arm, "LowerLip").scale.x = 1. - 2.;
     let posed = constructed(&arm);
     assert_eq!((weight(&posed, "UpperLipUp_L"), weight(&posed, "UpperLipUp_R")), (1., 1.));
     assert!((weight(&posed, "LowerLipIn") - 1.).abs() < 1e-4);
@@ -222,7 +224,8 @@ fn the_panel_places_controls_with_their_parents() {
     control(&mut arm, "Corner_L").pos.y += range * 0.5;
     let corner = arm.bones.iter().find(|b| b.face_control.as_ref().is_some_and(|c| c.name == "Corner_L")).unwrap().id;
     let posed = arm.bones.clone();
-    let (off, twist) = keyternity_lib::face_panel::placement(&arm, &posed, corner);
+    let pose = keyternity_lib::face_panel::placement(&arm, &posed, corner);
+    let (off, twist) = (pose.off, pose.twist);
     // in panel units (the rig's RANGE per full travel): mouth down 1 range, corner up half
     assert!((off.y - (-face::RANGE + face::RANGE * 0.5)).abs() < 1e-3, "{:?}", off);
     assert_eq!(twist, 0.);
@@ -269,7 +272,7 @@ fn the_panel_face_deforms_with_its_controls() {
     let face = art.face.as_ref().expect("the skinned face");
     let jaw_rest = art.controls.iter().find(|c| c.name == "Jaw").unwrap().rest;
     let mut xf = std::collections::HashMap::new();
-    xf.insert("Jaw".to_string(), (egui::vec2(0., -2.), 0., jaw_rest));
+    xf.insert("Jaw".to_string(), face_panel::ControlPose { off: egui::vec2(0., -2.), twist: 0., scale_y: 1., depth: 0., rest: jaw_rest });
     let moved = face_panel::deform(face, &xf);
     for (i, ws) in face.weights.iter().enumerate() {
         let jaw: f32 = ws.iter().filter(|(n, _)| n == "Jaw").map(|(_, w)| w).sum();
@@ -282,4 +285,46 @@ fn the_panel_face_deforms_with_its_controls() {
         }
     }
     assert!(face.weights.iter().any(|ws| ws.iter().any(|(n, _)| n == "Jaw")));
+}
+
+
+#[test]
+fn eyes_close_by_scale_and_brows_twist_in() {
+    let (mut arm, _) = rigged();
+    // eyes don't move: they squash closed (FaceBot's Y scale, 1 open, 0 shut)
+    control(&mut arm, "Eye_L").scale.y = 0.25;
+    control(&mut arm, "Eye_L").pos.y -= 100.;
+    let posed = constructed(&arm);
+    assert!((weight(&posed, "Blink_L") - 0.75).abs() < 1e-4, "{}", weight(&posed, "Blink_L"));
+    // brows: no sideways move; a twist lowers the inner end (BrowsIn) or the outer
+    control(&mut arm, "Brow_L").rot = 20f32.to_radians();
+    control(&mut arm, "Brow_R").rot = (-20f32).to_radians();
+    let posed = constructed(&arm);
+    assert!((weight(&posed, "BrowsIn_L") - 1.).abs() < 1e-4 && (weight(&posed, "BrowsIn_R") - 1.).abs() < 1e-4);
+    assert_eq!(weight(&posed, "BrowsOuterLower_L"), 0.);
+    // corners only move inward: outward drives nothing
+    let c = control(&mut arm, "Corner_L");
+    c.pos.x += 50.;
+    let posed = constructed(&arm);
+    assert_eq!(weight(&posed, "MouthNarrow_L"), 0.);
+}
+
+#[test]
+fn older_rigs_upgrade_to_the_layout_with_limits() {
+    let (mut arm, _) = rigged();
+    for b in &mut arm.bones {
+        if let Some(fc) = &mut b.face_control {
+            fc.limits = None;
+            if fc.name == "Eye_L" {
+                // the old layout moved eyes down to blink
+                fc.slots = vec![ControlSlot { axis: ControlAxis::Down, targets: fc.slots[0].targets.clone() }];
+            }
+        }
+    }
+    assert_eq!(face::upgrade(&mut arm), 13);
+    let eye = control(&mut arm, "Eye_L").face_control.clone().unwrap();
+    assert!(eye.limits.is_some());
+    assert_eq!(eye.slots[0].axis, ControlAxis::ScaleDown);
+    assert_eq!(eye.slots[0].targets.len(), 1, "remapped to Blink_L");
+    assert_eq!(face::upgrade(&mut arm), 0, "once");
 }

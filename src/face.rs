@@ -116,9 +116,30 @@ pub fn add_standard_shapes(bone: &mut Bone, visemes: bool) -> usize {
     added
 }
 
-/// A control's value along `axis`, from its offset (in units of its range) and twist
-/// (in units of 45°): the positive half of one direction, so opposite slots never mix.
-pub fn axis_value(c: &FaceControl, pos: Vec2, rot: f32, axis: ControlAxis) -> f32 {
+/// A control's value along `axis` (0..1): the positive half of one direction, so
+/// opposite slots never mix. With limits, full weight is at the limit; rigs from
+/// before limits use `range` for moves and 45° for twists.
+pub fn axis_value(c: &FaceControl, b: &Bone, axis: ControlAxis) -> f32 {
+    let (pos, rot) = (b.pos, b.rot);
+    if let Some(l) = &c.limits {
+        let frac = |v: f32, lim: f32| if lim.abs() < 1e-6 { 0. } else { (v / lim).clamp(0., 1.) };
+        let off = pos - c.rest;
+        let twist = rot - c.rest_rot;
+        let depth = b.scale.x - 1.;
+        let sy = b.scale.y - 1.;
+        return match axis {
+            ControlAxis::Right => frac(off.x, l.x.1),
+            ControlAxis::Left => frac(off.x, l.x.0),
+            ControlAxis::Up => frac(off.y, l.y.1),
+            ControlAxis::Down => frac(off.y, l.y.0),
+            ControlAxis::TwistCcw => frac(twist, l.twist.1),
+            ControlAxis::TwistCw => frac(twist, l.twist.0),
+            ControlAxis::Forward => frac(depth, l.depth.1),
+            ControlAxis::Back => frac(depth, l.depth.0),
+            ControlAxis::ScaleUp => frac(sy, l.scale.1 - 1.),
+            ControlAxis::ScaleDown => frac(sy, l.scale.0 - 1.),
+        };
+    }
     let range = c.range.max(1e-4);
     let off = (pos - c.rest) / range;
     let twist = (rot - c.rest_rot) / std::f32::consts::FRAC_PI_4;
@@ -129,6 +150,7 @@ pub fn axis_value(c: &FaceControl, pos: Vec2, rot: f32, axis: ControlAxis) -> f3
         ControlAxis::Down => -off.y,
         ControlAxis::TwistCcw => twist,
         ControlAxis::TwistCw => -twist,
+        _ => 0.,
     };
     v.clamp(0., 1.5)
 }
@@ -141,7 +163,7 @@ pub fn drive(bones: &mut [Bone]) {
     for b in bones.iter() {
         let Some(c) = &b.face_control else { continue };
         for slot in &c.slots {
-            let v = axis_value(c, b.pos, b.rot, slot.axis);
+            let v = axis_value(c, b, slot.axis);
             if v <= 0. {
                 continue;
             }
@@ -157,35 +179,70 @@ pub fn drive(bones: &mut [Bone]) {
     }
 }
 
+/// FaceBot's limits for a control, in its mask's units: offsets (x, y), twist in
+/// degrees, depth, and Y scale.
+#[derive(Clone, Copy)]
+pub struct LayoutLimits {
+    pub x: (f32, f32),
+    pub y: (f32, f32),
+    pub twist_deg: (f32, f32),
+    pub depth: (f32, f32),
+    pub scale: (f32, f32),
+}
+
+const fn lim(x: (f32, f32), y: (f32, f32), twist_deg: (f32, f32), depth: (f32, f32), scale: (f32, f32)) -> LayoutLimits {
+    LayoutLimits { x, y, twist_deg, depth, scale }
+}
+
+const NONE: (f32, f32) = (0., 0.);
+const UNSCALED: (f32, f32) = (1., 1.);
+
+impl LayoutLimits {
+    /// In a rig scaled `s` mesh units per mask unit.
+    pub fn scaled(&self, s: f32) -> ControlLimits {
+        ControlLimits {
+            x: (self.x.0 * s, self.x.1 * s),
+            y: (self.y.0 * s, self.y.1 * s),
+            twist: (self.twist_deg.0.to_radians(), self.twist_deg.1.to_radians()),
+            depth: self.depth,
+            scale: self.scale,
+        }
+    }
+}
+
 /// One control of the default layout: its name, parent control, rest position on
-/// FaceBot's mask (x across, y up; relative to its parent's rest), and its slots as
-/// (axis, [(standard shape, weight)]).
+/// FaceBot's mask (x across, y up; relative to its parent's rest), FaceBot's limits,
+/// and its slots as (axis, [(standard shape, weight)]).
 pub struct LayoutControl {
     pub name: &'static str,
     pub parent: Option<&'static str>,
     pub pos: (f32, f32),
+    pub limits: LayoutLimits,
     pub slots: &'static [(ControlAxis, &'static [(&'static str, f32)])],
 }
 
 use ControlAxis::*;
 
 /// FaceBot's 13 manipulators in 2D (docs/LIP_SYNC.md §6.5). Rest positions come from
-/// the zero groups in `FaceBot.FBX`; the jaw sits below the mouth, and the tongue
-/// beside the jaw, so no two handles overlap. Character left (`_L`) is screen right.
+/// the zero groups in `FaceBot.FBX`, and limits from its manipulators' transform
+/// limits: eyes only scale (closed at 0), brows move up and down and twist, corners
+/// move only inward, lips and jaw have depth (in and out, forward and back). The jaw
+/// sits below the mouth and the tongue below the jaw, so no two handles overlap.
+/// Character left (`_L`) is screen right.
 pub const LAYOUT: &[LayoutControl] = &[
-    LayoutControl { name: "Brow_L", parent: None, pos: (6.6, 7.6), slots: &[(Up, &[("BrowsUp_L", 1.)]), (Down, &[("BrowsDown_L", 1.)]), (Left, &[("BrowsIn_L", 1.)]), (TwistCw, &[("BrowsOuterLower_L", 1.)])] },
-    LayoutControl { name: "Brow_R", parent: None, pos: (-6.6, 7.6), slots: &[(Up, &[("BrowsUp_R", 1.)]), (Down, &[("BrowsDown_R", 1.)]), (Right, &[("BrowsIn_R", 1.)]), (TwistCcw, &[("BrowsOuterLower_R", 1.)])] },
-    LayoutControl { name: "Eye_L", parent: None, pos: (6.4, 4.6), slots: &[(Down, &[("Blink_L", 1.)])] },
-    LayoutControl { name: "Eye_R", parent: None, pos: (-6.4, 4.6), slots: &[(Down, &[("Blink_R", 1.)])] },
-    LayoutControl { name: "Nose_L", parent: None, pos: (2.0, -2.8), slots: &[(Up, &[("NoseScrunch_L", 1.)])] },
-    LayoutControl { name: "Nose_R", parent: None, pos: (-2.0, -2.8), slots: &[(Up, &[("NoseScrunch_R", 1.)])] },
-    LayoutControl { name: "Mouth", parent: None, pos: (0., -8.6), slots: &[(Up, &[("MouthUp", 1.)]), (Down, &[("MouthDown", 1.)]), (Right, &[("MidMouth_L", 1.)]), (Left, &[("MidMouth_R", 1.)])] },
-    LayoutControl { name: "Corner_L", parent: Some("Mouth"), pos: (5.8, -0.3), slots: &[(Up, &[("Smile_L", 1.)]), (Down, &[("Frown_L", 1.)]), (Left, &[("MouthNarrow_L", 1.)]), (Right, &[("MouthWhistle_L", 1.)])] },
-    LayoutControl { name: "Corner_R", parent: Some("Mouth"), pos: (-5.8, -0.3), slots: &[(Up, &[("Smile_R", 1.)]), (Down, &[("Frown_R", 1.)]), (Right, &[("MouthNarrow_R", 1.)]), (Left, &[("MouthWhistle_R", 1.)])] },
-    LayoutControl { name: "UpperLip", parent: Some("Mouth"), pos: (0., 1.3), slots: &[(Up, &[("UpperLipUp_L", 1.), ("UpperLipUp_R", 1.)]), (TwistCcw, &[("UpperLipOut", 1.)]), (TwistCw, &[("UpperLipIn", 1.)])] },
-    LayoutControl { name: "Jaw", parent: Some("Mouth"), pos: (0., -3.2), slots: &[(Down, &[("MouthOpen", 1.)]), (Up, &[("JawForward", 1.)]), (Right, &[("JawSide_L", 1.)]), (Left, &[("JawSide_R", 1.)]), (TwistCcw, &[("JawTwist_L", 1.)]), (TwistCw, &[("JawTwist_R", 1.)])] },
-    LayoutControl { name: "LowerLip", parent: Some("Jaw"), pos: (0., 1.9), slots: &[(Down, &[("LowerLipDown_L", 1.), ("LowerLipDown_R", 1.)]), (TwistCcw, &[("LowerLipOut", 1.)]), (TwistCw, &[("LowerLipIn", 1.)])] },
-    LayoutControl { name: "Tongue", parent: None, pos: (0., -14.4), slots: &[(Up, &[("TongueUp", 1.)])] },
+    LayoutControl { name: "Brow_L", parent: None, pos: (6.6, 7.6), limits: lim(NONE, (-1., 1.), (-20., 20.), NONE, UNSCALED), slots: &[(Up, &[("BrowsUp_L", 1.)]), (Down, &[("BrowsDown_L", 1.)]), (TwistCcw, &[("BrowsIn_L", 1.)]), (TwistCw, &[("BrowsOuterLower_L", 1.)])] },
+    LayoutControl { name: "Brow_R", parent: None, pos: (-6.6, 7.6), limits: lim(NONE, (-1., 1.), (-20., 20.), NONE, UNSCALED), slots: &[(Up, &[("BrowsUp_R", 1.)]), (Down, &[("BrowsDown_R", 1.)]), (TwistCw, &[("BrowsIn_R", 1.)]), (TwistCcw, &[("BrowsOuterLower_R", 1.)])] },
+    LayoutControl { name: "Eye_L", parent: None, pos: (6.4, 4.6), limits: lim(NONE, NONE, NONE, NONE, (0., 1.5)), slots: &[(ScaleDown, &[("Blink_L", 1.)]), (ScaleUp, &[])] },
+    LayoutControl { name: "Eye_R", parent: None, pos: (-6.4, 4.6), limits: lim(NONE, NONE, NONE, NONE, (0., 1.5)), slots: &[(ScaleDown, &[("Blink_R", 1.)]), (ScaleUp, &[])] },
+    LayoutControl { name: "Nose_L", parent: None, pos: (2.0, -2.8), limits: lim(NONE, (0., 1.), NONE, NONE, UNSCALED), slots: &[(Up, &[("NoseScrunch_L", 1.)])] },
+    LayoutControl { name: "Nose_R", parent: None, pos: (-2.0, -2.8), limits: lim(NONE, (0., 1.), NONE, NONE, UNSCALED), slots: &[(Up, &[("NoseScrunch_R", 1.)])] },
+    LayoutControl { name: "Mouth", parent: None, pos: (0., -8.6), limits: lim((-1., 1.), (-1., 1.), NONE, NONE, UNSCALED), slots: &[(Up, &[("MouthUp", 1.)]), (Down, &[("MouthDown", 1.)]), (Right, &[("MidMouth_L", 1.)]), (Left, &[("MidMouth_R", 1.)])] },
+    LayoutControl { name: "Corner_L", parent: Some("Mouth"), pos: (5.8, -0.3), limits: lim((-2., 0.), (-2., 2.), NONE, NONE, UNSCALED), slots: &[(Up, &[("Smile_L", 1.)]), (Down, &[("Frown_L", 1.)]), (Left, &[("MouthNarrow_L", 1.)])] },
+    LayoutControl { name: "Corner_R", parent: Some("Mouth"), pos: (-5.8, -0.3), limits: lim((0., 2.), (-2., 2.), NONE, NONE, UNSCALED), slots: &[(Up, &[("Smile_R", 1.)]), (Down, &[("Frown_R", 1.)]), (Right, &[("MouthNarrow_R", 1.)])] },
+    LayoutControl { name: "UpperLip", parent: Some("Mouth"), pos: (0., 1.3), limits: lim(NONE, (0., 1.), NONE, (-2., 2.), UNSCALED), slots: &[(Up, &[("UpperLipUp_L", 1.), ("UpperLipUp_R", 1.)]), (Forward, &[("UpperLipOut", 1.)]), (Back, &[("UpperLipIn", 1.)])] },
+    LayoutControl { name: "Jaw", parent: Some("Mouth"), pos: (0., -3.2), limits: lim((-1., 1.), (-1., 1.), (-10., 10.), (-1., 1.), UNSCALED), slots: &[(Down, &[("MouthOpen", 1.)]), (Up, &[]), (Right, &[("JawSide_L", 1.)]), (Left, &[("JawSide_R", 1.)]), (TwistCcw, &[("JawTwist_L", 1.)]), (TwistCw, &[("JawTwist_R", 1.)]), (Forward, &[("JawForward", 1.)]), (Back, &[("JawBackward", 1.)])] },
+    LayoutControl { name: "LowerLip", parent: Some("Jaw"), pos: (0., 1.9), limits: lim(NONE, (-1., 0.), NONE, (-2., 2.), UNSCALED), slots: &[(Down, &[("LowerLipDown_L", 1.), ("LowerLipDown_R", 1.)]), (Forward, &[("LowerLipOut", 1.)]), (Back, &[("LowerLipIn", 1.)])] },
+    LayoutControl { name: "Tongue", parent: None, pos: (0., -14.4), limits: lim(NONE, (0., 1.), NONE, NONE, UNSCALED), slots: &[(Up, &[("TongueUp", 1.)])] },
 ];
 
 /// The mask's extent in its own units (x half-width, y bottom and top), for fitting it
@@ -254,7 +311,15 @@ pub fn set_up(armature: &mut Armature, mesh_id: i32, root_name: &str) -> Vec<i32
             .collect();
         let id = next();
         let mut b = base(id, parent, format!("{root_name}_{}", lc.name), pos);
-        b.face_control = Some(FaceControl { name: lc.name.to_string(), rest: pos, rest_rot: 0., range: RANGE * s, slots, mesh: Some(mesh_id) });
+        b.face_control = Some(FaceControl {
+            name: lc.name.to_string(),
+            rest: pos,
+            rest_rot: 0.,
+            range: RANGE * s,
+            slots,
+            mesh: Some(mesh_id),
+            limits: Some(lc.limits.scaled(s)),
+        });
         new_bones.push(b);
         placed.push((lc.name, id));
     }
@@ -365,4 +430,35 @@ pub fn automap(armature: &mut Armature, mesh_id: i32) -> usize {
         }
     }
     filled
+}
+
+/// Bring rigs from before limits up to the current layout: FaceBot's limits, and the
+/// layout's slots mapped afresh to the mesh's standard shapes. Returns how many
+/// controls changed.
+pub fn upgrade(armature: &mut Armature) -> usize {
+    let meshes: Vec<Bone> = armature.bones.iter().filter(|b| !b.shapes.is_empty()).cloned().collect();
+    let mut n = 0;
+    for b in armature.bones.iter_mut() {
+        let Some(fc) = &mut b.face_control else { continue };
+        if fc.limits.is_some() {
+            continue;
+        }
+        let Some(lc) = LAYOUT.iter().find(|l| l.name == fc.name) else { continue };
+        let s = fc.range / RANGE;
+        fc.limits = Some(lc.limits.scaled(s));
+        let mesh_id = fc.mesh.or_else(|| fc.slots.iter().flat_map(|sl| &sl.targets).map(|t| t.mesh).next());
+        let mesh = mesh_id.and_then(|id| meshes.iter().find(|m| m.id == id));
+        fc.slots = lc
+            .slots
+            .iter()
+            .map(|(axis, defaults)| ControlSlot {
+                axis: *axis,
+                targets: mesh.map_or(vec![], |m| {
+                    defaults.iter().filter_map(|(name, w)| find_shape(m, name).map(|shape| SlotTarget { mesh: m.id, shape, weight: *w })).collect()
+                }),
+            })
+            .collect();
+        n += 1;
+    }
+    n
 }
