@@ -11,7 +11,7 @@ re-triangulating the whole mesh on every vertex edit.
 
 ## 0. As built
 
-**Step 1 (model change)** is in `src/topology.rs`, with tests in `tests/topology.rs`.
+**Step 1 (model change)** is in `src/topology.rs`, with tests in `tests/all/topology.rs`.
 - Click-to-add splits a triangle into 3, or the 1–2 triangles on an edge into 2 each.
   Right-click on a vertex dissolves it, and right-click on a triangle removes it.
   The blacklist and edit-time `sort_vertices` are gone. Re-triangulate is
@@ -39,7 +39,7 @@ re-triangulating the whole mesh on every vertex edit.
   `toolbar_icons.png` (64 px cells) and tinted with the theme's text color.
 
 **Step 3 (navigation)** is in `src/navigation.rs`, with tests in
-`tests/navigation.rs`. The tests check the maths against the renderer's own
+`tests/all/navigation.rs`. The tests check the maths against the renderer's own
 `world_vert`, in all three layouts.
 - Pan (H) and Zoom take the left button: `navigate` runs before the renderer,
   which then sees the left button as released, so these tools can't select or
@@ -57,7 +57,7 @@ re-triangulating the whole mesh on every vertex edit.
   armature's 2000), and it can be edited.
 
 **Step 4 (Eraser)**: hit-testing is in `src/mesh_tools.rs`, the canvas side is
-`renderer::eraser`, and the tests are in `tests/mesh_tools.rs`.
+`renderer::eraser`, and the tests are in `tests/all/mesh_tools.rs`.
 - Shift+K, or the toolbar button, which is enabled when the selected bone has a
   texture. Picking it turns on Edit Vertices and clears the vertex selection, so
   a stroke can't drag vertices.
@@ -74,8 +74,8 @@ re-triangulating the whole mesh on every vertex edit.
   drag, right-click delete) see an idle mouse.
 
 **Step 5 (Pen)**: the cut algorithm is `pen::apply_cuts` (`src/pen.rs`, tests in
-`tests/pen.rs`). Placement and snapping are in `src/mesh_tools.rs` (tests in
-`tests/mesh_tools.rs`), and the canvas side is `renderer::pen_tool`.
+`tests/all/pen.rs`). Placement and snapping are in `src/mesh_tools.rs` (tests in
+`tests/all/mesh_tools.rs`), and the canvas side is `renderer::pen_tool`.
 - The algorithm follows §5.3:
   - Edge-snapped points are inserted first with `topology::add_vertex`, so they
     sit exactly on their edge.
@@ -486,7 +486,7 @@ Pen never starts a vertex drag. It stays for click-to-add in the Move tool.
 ## 9. Tests
 
 The topology operations are pure functions on `Bone`, in a new `src/topology.rs`.
-They are tested in `tests/topology.rs` with no UI:
+They are tested in `tests/all/topology.rs` with no UI:
 
 - `split_triangle`, `split_edge`: triangle count, vertices appended, ids
   stable, interpolated binds.
@@ -504,8 +504,8 @@ They are tested in `tests/topology.rs` with no UI:
 - Round trip: an imported DragonBones sample keeps its exact `indices` after a
   split, then save and reload (the regression this design exists to fix).
 - Bind pose: split an edge on a bind-posed mesh. The new vertex renders at the
-  interpolated rest position (reuses `tests/bind_pose.rs` helpers).
-- The existing `tests/dragonbones_export.rs` and `tests/bind_pose.rs` stay green.
+  interpolated rest position (reuses `tests/all/bind_pose.rs` helpers).
+- The existing `tests/all/dragonbones_export.rs` and `tests/all/bind_pose.rs` stay green.
 
 
 ## 10. Work plan

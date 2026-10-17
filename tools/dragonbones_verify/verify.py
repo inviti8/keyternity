@@ -23,7 +23,7 @@ def main():
 
     # the exporter tests write <name>_ske/_tex json, _tex.png and <name>_ref.json when DB_OUT_DIR is set
     env = dict(os.environ, DB_OUT_DIR=out)
-    subprocess.run(["cargo", "test", "--test", "dragonbones_export"], cwd=REPO, env=env, check=True)
+    subprocess.run(["cargo", "test", "--test", "all", "--", "dragonbones_export::"], cwd=REPO, env=env, check=True)
 
     failed = False
     for ske in sorted(glob.glob(os.path.join(out, "*_ske.json"))):

@@ -32,14 +32,14 @@ IK, and SkelForm runtimes can't play rigs with IK.
   targets that are the deleted bone or one of its children.
 - **Straight two-bone chains** with bend *As drawn* bend the way FABRIK settles
   from the current pose (§3.3), as the old solver did.
-- Tests: `tests/ik.rs` (16), and the PSD import IK test was rewritten.
+- Tests: `tests/all/ik.rs` (16), and the PSD import IK test was rewritten.
 - **Target Space** (§4.1): `editor::ik_target_spaces` and `set_ik_target_space`.
   It builds on a fix to reparenting: dragging a bone onto another in the hierarchy
   kept only its position, by adding and subtracting parent positions, so under a
   rotated or scaled parent it jumped (and PSD import aims group bones, so most
   parents are rotated). `Armature::keep_world` now keeps the world position,
   rotation and scale, as the inverse of `renderer::inheritance`. Tests:
-  `tests/ik_space.rs` (4).
+  `tests/all/ik_space.rs` (4).
 
 
 ## 1. What was wrong
@@ -228,7 +228,7 @@ app version, so Keyternity 0.3 and 0.5 would have run them on their own files
 (#10).
 
 
-## 7. Tests (`tests/ik.rs`)
+## 7. Tests (`tests/all/ik.rs`)
 - solving with the target at the tip changes nothing, for bent chains of 1, 2 and 4 bones
 - 1-bone aim, 2-bone analytic and FABRIK all reach a reachable target; out of reach, the chain straightens toward it
 - bend: as-drawn keeps the side, and CW/CCW force it

@@ -768,6 +768,9 @@ pub struct Ui {
     pub audio_drag: Option<(i32, i32, f32)>,
     /// whether the current clip drag has made its undo step
     pub audio_drag_stepped: bool,
+    /// the Lip Sync window: the clip it's for, and the track being edited there
+    pub lipsync_clip: Option<i32>,
+    pub lipsync_draft: Option<crate::lipsync::LipSyncTrack>,
     /// the bone panel's Shapes section is folded
     pub shapes_folded: bool,
     /// the Face Landmarks section is open
@@ -1391,6 +1394,10 @@ pub struct Bone {
     /// a face-rig control: this helper bone drives shapes (docs/LIP_SYNC.md §6.5)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub face_control: Option<FaceControl>,
+    /// the mouth this bone hosts: which viseme each sound shows, and how each is posed
+    /// (docs/LIP_SYNC.md §6.2). Without one, lip sync fills one in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mouth_rig: Option<crate::lipsync::MouthRig>,
     /// the face's landmark map, for generating shapes (docs/LIP_SYNC.md §6.7)
     #[serde(skip)]
     pub face_map: Option<FaceMap>,
@@ -2031,6 +2038,9 @@ pub struct Animation {
     /// dialog audio placed on this animation's timeline (docs/LIP_SYNC.md §5)
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub clips: Vec<crate::audio::AudioClip>,
+    /// lip sync for the clips (docs/LIP_SYNC.md §7.1); keys in their generated layers
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub lipsync: Vec<crate::lipsync::LipSyncTrack>,
     /// The layer being edited: its keys are in `keyframes`. Saved files have 0.
     #[serde(skip_serializing_if = "is_zero_usize")]
     pub active_layer: usize,
@@ -2395,8 +2405,13 @@ impl Animation {
         }
     }
 
+    /// Whether any layer has keys.
+    pub fn has_keys(&self) -> bool {
+        !self.keyframes.is_empty() || self.layers.iter().any(|l| !l.keyframes.is_empty())
+    }
+
     pub fn get_frame(&self) -> i32 {
-        if self.elapsed == None || self.keyframes.len() == 0 {
+        if self.elapsed == None || !self.has_keys() {
             return 0;
         }
 
@@ -2412,7 +2427,7 @@ impl Animation {
     }
 
     pub fn set_frame(&mut self) -> i32 {
-        if self.elapsed == None || self.keyframes.len() == 0 {
+        if self.elapsed == None || !self.has_keys() {
             return 0;
         }
 
@@ -3128,6 +3143,10 @@ pub enum Events {
     OpenFacePanel,
     SetClip,
     DeleteClip,
+    GenerateLipSync,
+    DeleteLipSync,
+    BakeLipSync,
+    SetMouthRig,
     SetSculptRadius,
     ResetVertices,
     SelectBind,
@@ -3348,6 +3367,34 @@ impl EventState {
         self.events.push(E::DeleteClip);
         self.values.push(id as f32);
         self.str_values.push(String::new());
+    }
+
+    /// Save a lip-sync track (added if new) and make its keys.
+    pub fn generate_lipsync(&mut self, track: &crate::lipsync::LipSyncTrack) {
+        self.events.push(E::GenerateLipSync);
+        self.values.push(track.id as f32);
+        self.str_values.push(serde_json::to_string(track).unwrap());
+    }
+
+    /// Remove a lip-sync track and its layer.
+    pub fn delete_lipsync(&mut self, id: i32) {
+        self.events.push(E::DeleteLipSync);
+        self.values.push(id as f32);
+        self.str_values.push(String::new());
+    }
+
+    /// Turn a lip-sync track's layer into an ordinary one.
+    pub fn bake_lipsync(&mut self, id: i32) {
+        self.events.push(E::BakeLipSync);
+        self.values.push(id as f32);
+        self.str_values.push(String::new());
+    }
+
+    /// Set (or with `None`, clear back to automatic) the mouth rig a bone hosts.
+    pub fn set_mouth_rig(&mut self, bone_id: i32, rig: Option<&crate::lipsync::MouthRig>) {
+        self.events.push(E::SetMouthRig);
+        self.values.push(bone_id as f32);
+        self.str_values.push(serde_json::to_string(&rig).unwrap());
     }
 
     pub fn open_face_panel(&mut self) {

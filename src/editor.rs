@@ -46,6 +46,12 @@ pub fn iterate_events(
             E::SetUpFace => undo_states.new_undo_bones(&armature.bones),
             E::SetClip if events.values[0] == 1. => undo_states.new_undo_anim(armature.sel_anim(&selections).unwrap()),
             E::DeleteClip => undo_states.new_undo_anim(armature.sel_anim(&selections).unwrap()),
+            E::GenerateLipSync | E::DeleteLipSync | E::BakeLipSync => undo_states.new_undo_anim(armature.sel_anim(&selections).unwrap()),
+            E::SetMouthRig => {
+                if let Some(b) = armature.bones.iter().find(|b| b.id == events.values[0] as i32) {
+                    undo_states.new_undo_bone(b);
+                }
+            }
             E::FaceLandmarks => {
                 if let Some(b) = armature.bones.iter().find(|b| b.id == events.values[0] as i32) {
                     undo_states.new_undo_bone(b);
@@ -691,6 +697,12 @@ pub fn simple_event(
             // rigs from before limits take the current layout
             face::upgrade(armature);
             ui.face_panel_open = true;
+        }
+        Events::GenerateLipSync | Events::DeleteLipSync | Events::BakeLipSync | Events::SetMouthRig => {
+            if let Some(err) = crate::lipsync::lipsync_event(event, value, &str_value, armature, selections.anim) {
+                ui.custom_error = err;
+                open_modal(ui, false, ui.loc("lipsync.failed"));
+            }
         }
         Events::SetClip | Events::DeleteClip => {
             if let Some(anim) = armature.animations.get_mut(selections.anim) {

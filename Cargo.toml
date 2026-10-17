@@ -33,6 +33,15 @@ backtrace = "0.3.76"
 global-hotkey = "0.7.0"
 serde_path_to_error = "0.1.20"
 
+# Dependencies without debug info, and tests with line tables only: much smaller
+# objects and links, so builds need far less memory. Keyternity's own code keeps
+# full debug info in `cargo build`.
+[profile.dev.package."*"]
+debug = false
+
+[profile.test]
+debug = "line-tables-only"
+
 [profile.dev.package.psd]
 opt-level = 3
 

@@ -21,7 +21,7 @@ copy, run once in a terminal:
 "Authorization: Bearer <token>"`. Then, in Claude Code, with a rig open in
 Keyternity: "skin the character", or the `skin_character` prompt.
 
-**Region maths** (`weights.rs`, `skin.rs`; `tests/regions.rs`, 5):
+**Region maths** (`weights.rs`, `skin.rs`; `tests/all/regions.rs`, 5):
 - `in_polygon`, `polygon_edge_distance`, `geodesic` (Dijkstra along mesh edges,
   so distances go round gaps), `part_shares` (labelled vertices to shares: full
   share inside a part, `(1 − d/blend)²` toward neighbouring parts, normalized),
@@ -44,7 +44,7 @@ result text gives the pixel→world mapping and the bones' id, name and colour.
 `distortion` compares a mesh's triangles at rest and posed: flips, area changes
 over 50%, the largest edge stretch.
 
-**Tools** (`agent/mod.rs`; `tests/agent.rs`, 7): `get_rig`, `get_mesh`,
+**Tools** (`agent/mod.rs`; `tests/all/agent.rs`, 7): `get_rig`, `get_mesh`,
 `render`, `pose_test`, `bind_to_skeleton`, `set_envelope`, `set_bone_length`,
 `assign_parts`, `set_region`, `smooth`, `blend_joint`, `set_weights`, `unlock`,
 `checkpoint`, `revert`. JSON schemas are strict (every object closed). Editing

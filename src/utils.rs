@@ -1570,7 +1570,7 @@ pub fn animate_bones(armature: &mut Armature, selection: &SelectionState, edit_m
             if anim.elapsed == None {
                 continue;
             }
-            let looped = anim.keyframes.len() > 0 && anim.get_frame() >= anim.last_frame();
+            let looped = anim.has_keys() && anim.get_frame() >= anim.last_frame();
             let frame = anim.set_frame();
             if looped {
                 crate::audio::play(armature, a, 0.);

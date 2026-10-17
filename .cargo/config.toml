@@ -1,0 +1,4 @@
+[build]
+# Rust links each test and binary with the whole app and its graphics libraries; a
+# few at a time keeps a full build within memory on a 16 GB machine.
+jobs = 3

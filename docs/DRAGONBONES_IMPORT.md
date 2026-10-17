@@ -42,8 +42,8 @@ plan and what was measured; the rest of the doc is the original scoping.
   Other weighted meshes become Bind Pose meshes (`BIND_POSE.md`).
 - **Older formats** (2.x–4.x) get an error pointing at `db2 -t new`.
 
-**Measured** (`tests/dragonbones_import.rs`, every frame against DragonBonesCPP;
-`tests/dragonbones_export.rs` for round trips):
+**Measured** (`tests/all/dragonbones_import.rs`, every frame against DragonBonesCPP;
+`tests/all/dragonbones_export.rs` for round trips):
 
 | rigs | result |
 |---|---|

@@ -139,6 +139,7 @@ pub fn draw(
     if selections.anim != usize::MAX {
         layer_settings(egui_ctx, shared_ui, armature, selections, events);
         scale_dialog(egui_ctx, shared_ui, selections, events);
+        crate::lipsync_ui::window(egui_ctx, shared_ui, armature, selections, events);
     }
 }
 
@@ -626,7 +627,7 @@ pub fn draw_bottom_bar(
                 if button.clicked() {
                     pressed = true;
                 }
-                if !pressed || armature.sel_anim(&sel).unwrap().keyframes.len() == 0 {
+                if !pressed || !armature.sel_anim(&sel).unwrap().has_keys() {
                     return;
                 }
 
@@ -1300,6 +1301,22 @@ fn draw_audio_lanes(
             gp.text(body.left_center() + egui::vec2(4., 0.), egui::Align2::LEFT_CENTER, shared_ui.loc("audio.missing"), font, text.gamma_multiply(0.6));
         }
         gp.rect_stroke(body, egui::CornerRadius::same(2), egui::Stroke::new(1., dim(wave.gamma_multiply(0.7))), egui::StrokeKind::Inside);
+        // the lip-synced words, where they were timed
+        let track = anim.lipsync.iter().find(|t| t.clip == clip.id);
+        if let Some(t) = track {
+            let font = egui::FontId::proportional(10.);
+            let mut free = f32::MIN;
+            for w in &t.words {
+                let x = x_of(clip.start_frame as f32 + w.start * fps);
+                let xe = x_of(clip.start_frame as f32 + w.end * fps);
+                gp.vline(x, lane.top()..=lane.top() + 4., egui::Stroke::new(1., text.gamma_multiply(0.6)));
+                // labels only where they don't overlap the last one
+                if x >= free && xe > lane.left() && x < lane.right() {
+                    let r = gp.text(egui::pos2(x + 2., lane.top() + 1.), egui::Align2::LEFT_TOP, &w.text, font.clone(), text.gamma_multiply(0.85));
+                    free = r.right() + 3.;
+                }
+            }
+        }
 
         // drag the clip in time, by whole frames, as one undo step
         let tip = shared_ui.loc("audio.clip_desc").replace("$name", &clip.name).replace("$secs", &format!("{secs:.2}"));
@@ -1339,6 +1356,22 @@ fn draw_audio_lanes(
         }
         if button(ui, &mut x, "M", clip.muted, shared_ui.loc("audio.mute"), "mute") {
             events.set_clip(&crate::audio::AudioClip { muted: !clip.muted, ..clip.clone() }, true);
+        }
+        // lip sync for this clip
+        {
+            let b = egui::Rect::from_min_max(egui::pos2(x - 26., r.center().y - 8.), egui::pos2(x, r.center().y + 8.));
+            x -= 28.;
+            let on = shared_ui.lipsync_clip == Some(clip.id);
+            let synced = anim.lipsync.iter().any(|t| t.clip == clip.id);
+            let resp = ui.interact(b, id.with("lipsync"), egui::Sense::click()).on_hover_cursor(hand).on_hover_text(shared_ui.loc("lipsync.open"));
+            let bg = if on || synced { shade(dark, 50) } else { shade(dark, 8) };
+            painter.rect_filled(b, egui::CornerRadius::same(2), if resp.hovered() { shade(bg, 15) } else { bg });
+            let col = if on || synced { text } else { text.gamma_multiply(0.6) };
+            painter.text(b.center(), egui::Align2::CENTER_CENTER, "Lip", egui::FontId::proportional(11.), col);
+            if resp.clicked() {
+                shared_ui.lipsync_clip = if on { None } else { Some(clip.id) };
+                shared_ui.lipsync_draft = None;
+            }
         }
         // volume: drag to change, as one undo step; double-click for 100%
         let w = egui::Rect::from_min_max(egui::pos2(x - 38., r.center().y - 8.), egui::pos2(x, r.center().y + 8.));

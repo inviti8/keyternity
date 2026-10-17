@@ -1,6 +1,6 @@
 # Shapes, dialog and auto lip sync
 
-Status: phases 1, 1b, 1c and 2 are built (§10). The rest is research and scope. Decisions to confirm are in §11.
+Status: phases 1, 1b, 1c, 2 and 3 are built (§10). The rest is research and scope. Decisions to confirm are in §11.
 
 ## 1. Goal
 
@@ -768,6 +768,62 @@ It gives the text and word timestamps, which feed the same engine.
 - **Desktop only.** On the web, the artist types or pastes the transcript, and the
   words are spread evenly over speech found by loudness.
 
+### 7.5 As built (phase 3)
+
+The engine is in `src/lipsync.rs`, the English rules in `src/lipsync_en.rs`, and the
+window in `src/lipsync_ui.rs`.
+
+- **English rules:**
+  - Ported from TalkingHead's `lipsync-en.mjs`, credited in the file's header.
+  - A small backtracking matcher stands in for its regular expressions.
+  - `tests/data/lipsync_en_reference.tsv` is the original's output on 155 words. The
+    port matches it word for word, starts and lengths included, once `L` and `W` are
+    folded back into `nn` and `FF`.
+  - `OO` and `EE`, which aren't visemes, are read as `U` and `E`.
+  - Numbers, ordinals, symbols and accents are spelled out. Decades ("the 70s") aren't
+    yet.
+- **Opening it:** each audio lane has a **Lip** button that opens the Lip Sync window
+  for that clip. Edits stay in a draft until **Generate**, which saves the track and
+  makes its keys as one undo step.
+- **Mouth:** any bone that can host one:
+  - a face rig's root;
+  - a mesh with viseme shapes (`AI`, `viseme_PP`, `Mouth_O`…);
+  - a bone whose style has viseme textures.
+- **Timing:**
+  - **Words:** the typed line's words are spread over the speech found in the clip,
+    using a 10 ms loudness envelope with gaps under 120 ms bridged. The share is by
+    each word's sound lengths. A word that would cross a silence goes to the side
+    holding most of it. Punctuation pauses count only when the clip has a single
+    stretch of speech.
+  - **Loudness:** the mouth opens with the volume, a frame at a time.
+- **Mouth rig:**
+  - Without one saved, it's filled in automatically:
+    - viseme shapes where the face has them;
+    - textures for a drawn mouth, where a missing viseme shows rest;
+    - otherwise built-in face-rig poses of the jaw, corners, lips and tongue, stored
+      as fractions of each control's limits so they fit any rig.
+  - **Use pose** takes a viseme from the face rig as posed in the Face Rig panel.
+  - **Auto** puts one viseme back to automatic.
+  - Changing the viseme set refills the rig.
+  - The rig is saved on the host bone (`Bone::mouth_rig`), so it undoes with it.
+  - Per-sound overrides are in the data, but have no UI yet.
+- **Keyer:**
+  - Lead (rest isn't led), minimum hold (closed lips are kept over brief sounds),
+    smoothing, intensity, and rest after silences.
+  - With smoothing, each viseme is held and then eased into the next over 1 or 2
+    frames (Low, Medium); High eases the whole way, and Off steps.
+  - Keys go only where values change.
+  - Textures are always stepped.
+- **Layer:**
+  - Keys go in the track's own **Additive**, locked layer, "Lip Sync: <clip>".
+    Expressions keyed on other layers add on top.
+  - **Regenerate** replaces only that layer's keys.
+  - **Bake** makes it an ordinary layer.
+  - **Remove** deletes the track and its layer.
+  - The timed words are drawn over the clip's waveform.
+- **Playback:** an animation whose keys are all in layers (only a Lip Sync layer, say)
+  now plays.
+
 ## 8. Voice generation (dialog from text)
 
 A **provider** interface:
@@ -818,7 +874,7 @@ reviews and refines.
 | **1b. Standard face and face rig** ✓ | The standard shape list and aliases, *Add Standard Face Shapes*, the mapping table, *Set Up Face*, control helper bones and the driver table, the default layout generated from `FaceBot.FBX`, the rig overlay panel, Eye Look, driven weights baked on export | The FaceBot structure in 2D (§6.4–6.6) |
 | **1c. Generated faces** ✓ (first pass) | Landmark map on the rig mask, *Set Up Face* (midline, one side, derived side: mirror for front views, cylinder model for three-quarter, profile mode), view suggestion, snapping to feature lines, mesh checks (lip and lid seams, mouth interior, density) with fixes, templates (JSON) with style presets and per-shape strength, helper-bone propagation with regions, *Generate Face*, generated + corrections and regenerate | After 1 and 1b. Makes the whole face a few minutes' setup. |
 | **2. Dialog audio** ✓ (desktop) | Clips embedded in `.skf`, Symphonia decoding, rodio playback in sync, waveform, audio scrub, video export with audio | Desktop first |
-| **3. Mouth rigs + lip sync** | The 17 sounds and the viseme-set mappings, mouth rig panel and auto-fill, the English text rules (ported from TalkingHead), typed transcripts with words spread over speech, lip-sync tracks and keyer, regenerate and bake, loudness fallback, drawn and morph mouths | The Facebot loop, end to end. No downloads. |
+| **3. Mouth rigs + lip sync** ✓ (first pass, §7.5) | The 17 sounds and the viseme-set mappings, mouth rig panel and auto-fill, the English text rules (ported from TalkingHead), typed transcripts with words spread over speech, lip-sync tracks and keyer, regenerate and bake, loudness fallback, drawn and morph mouths | The Facebot loop, end to end. No downloads. |
 | **3b. Transcription** | whisper.cpp through `whisper-rs`, model download, word timings, editable transcript; TalkingHead's other language modules | Imported recordings |
 | **4. Voice generation** | Provider interface, Kokoro local with timings, Dialog panel with takes; then ElevenLabs (opt-in) and Chatterbox (helper process) | |
 | **5. Agent** | MCP tools; optional audio-recognition engines (Rhubarb, ONNX phonemes) only if transcripts prove too coarse | |

@@ -258,15 +258,17 @@ icon, the Windows `.ico` (also the web favicon) and the macOS `.icns` with
 
 ### Tests
 
-- `cargo test --test topology`, `--test pen`, `--test mesh_tools`,
-  `--test navigation` (mesh topology, Pen cuts, Pen and Eraser picking, camera
-  maths)
-- `cargo test --test bind_pose`
-- `cargo test --test dragonbones_export`
-- `cargo test --test dragonbones_import -- --ignored` (opt-in; needs MSVC and a
-  DragonBonesCPP checkout, see [DRAGONBONES_VERIFY.md](docs/DRAGONBONES_VERIFY.md))
-- `cargo test --test ffmpeg_download -- --ignored` (opt-in, Windows; downloads
-  the pinned FFmpeg build)
+The integration tests are one test binary, `tests/all/` (one module per file),
+so a full run links the app once.
+
+- `cargo test --test all`: everything
+- `cargo test --test all -- topology:: pen::`: only some, by module
+- `cargo test --test all -- dragonbones_import:: --ignored` (opt-in; needs MSVC and
+  a DragonBonesCPP checkout, see [DRAGONBONES_VERIFY.md](docs/DRAGONBONES_VERIFY.md))
+- `cargo test --test all -- ffmpeg_download:: --ignored` (opt-in, Windows;
+  downloads the pinned FFmpeg build)
+
+Builds run three jobs at a time (`.cargo/config.toml`) to stay within memory.
 
 ## Documentation
 

@@ -206,7 +206,7 @@ around the colored marker (D6). Every other vertex still turns white.
 
 ## 4. Tests
 
-- **`tests/mesh_tools.rs`:**
+- **`tests/all/mesh_tools.rs`:**
   - `pick_edge` returns the nearest edge within the tolerance and nothing
     beyond it
   - vertices win over edges

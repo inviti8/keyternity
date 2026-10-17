@@ -32,7 +32,7 @@ Decisions are in §9.
   angle, so no art moves. This is safe only at import, before any keyframes exist,
   so the editor's *To child* doesn't aim.
 - DragonBones export writes `length`; import keeps it.
-- Tests: `tests/bone_length.rs` (4), plus a PSD import test.
+- Tests: `tests/all/bone_length.rs` (4), plus a PSD import test.
 
 **Step 2, envelope maths (§3.2–3.3)**, in `src/envelope.rs`, without UI yet:
 - `Envelope` (deform, four radii, falloff, absolute) with `for_length` defaults
@@ -44,7 +44,7 @@ Decisions are in §9.
 - `vertex_weights`: influences, the strongest *N* (ties keep bone order),
   normalized, or the nearest bone by `gap` with the outside flag.
 - `bind_weights` and `shares` convert between shares and ordered bind weights.
-- Tests: `tests/envelope.rs` (10), including the conversion through
+- Tests: `tests/all/envelope.rs` (10), including the conversion through
   `renderer::construct_verts`.
 
 **Step 3, Bind to Skeleton (§3.4–3.6, §4.2–4.3, §5)**, in `src/skin.rs`:
@@ -80,7 +80,7 @@ Decisions are in §9.
   uses the rest pose, which animating leaves alone. (They were first also
   disabled while animating, which left Bind to Skeleton greyed out with no
   explanation after testing a mesh in an animation.)
-- Tests: `tests/skin.rs` (9).
+- Tests: `tests/all/skin.rs` (9).
 
 **Step 4, Envelope tool and weight view (§4.1, §4.4)**, in `renderer.rs`
 (`envelope_tool`, `drag_envelope`, `capsule_outline`, `envelope_handles`):
@@ -106,7 +106,7 @@ Decisions are in §9.
   of the bone (above a point bone). Clicking a label selects that bind in the
   panel, so a stray vertex outside every envelope can be added to the right bind.
   The renderer computes the positions; egui draws them behind the panels.
-- Tests: `tests/envelope_tool.rs` (5).
+- Tests: `tests/all/envelope_tool.rs` (5).
 
 **Step 5, normalized hand weights and weight painting (§4.5)**, in `src/weights.rs`
 (share maths) and `skin.rs` (`edit_shares`, `paint`, `bind_shares`):
@@ -145,7 +145,7 @@ Decisions are in §9.
   doesn't select or move bones.
 - Not done: Set and Blur modes, painting a bone that has no bind yet (add the bind
   first), Alt-click to pick the bone on the canvas, the weight table (§4.6).
-- Tests: `tests/weights.rs` (8).
+- Tests: `tests/all/weights.rs` (8).
 
 
 ## 1. Today

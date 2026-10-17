@@ -2,10 +2,10 @@
 
 Status: **Phase 1 in progress.** Built so far:
 - Render cameras: `src/render_camera.rs`, `src/camera_ui.rs`, tested in
-  `tests/render_camera.rs` and `tests/camera_ui.rs`.
+  `tests/all/render_camera.rs` and `tests/all/camera_ui.rs`.
 - The Frame Sequence tab (desktop): `src/export_sequence.rs`, rendered in `lib.rs`
   (`start_sequence_export`, `step_sequence_export`), tested in
-  `tests/export_sequence.rs`. It covers:
+  `tests/all/export_sequence.rs`. It covers:
   - camera, output size, step, skip-last and per-animation ranges;
   - folder or zip output, with naming;
   - the manifest, and the Phaser pack and animation files;

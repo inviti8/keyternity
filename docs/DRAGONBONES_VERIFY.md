@@ -39,7 +39,7 @@ python tools/dragonbones_verify/verify.py [out_dir]
 
 `out_dir` defaults to `tools/dragonbones_verify/build/out`. The script does the following:
 
-1. Runs `cargo test --test dragonbones_export` with `DB_OUT_DIR=out_dir`.
+1. Runs `cargo test --test all -- dragonbones_export::` with `DB_OUT_DIR=out_dir`.
    - The tests export three rigs: a synthetic rig plus `samples/_skellington.skf`
      and `samples/_skellina.skf`.
    - Each rig gets `<name>_ske.json`, `<name>_tex.json` and `<name>_tex.png`.
@@ -57,14 +57,14 @@ Harness exit codes:
 
 On a failure it prints the stage, e.g. `animation "Walk" frame 12`.
 
-To check one of your own rigs, add a test in `tests/dragonbones_export.rs` that
+To check one of your own rigs, add a test in `tests/all/dragonbones_export.rs` that
 loads it with `load_skf` and calls `export(&arm, "<name>")`, then rerun `verify.py`.
 
 ### Importer check (DragonBones-authored rigs)
 
 ```sh
 set DB_SAMPLES=<folder of *_ske.json rigs, e.g. DragonBonesCPP/Cocos2DX_3.x/Demos/Resources>
-cargo test --test dragonbones_import -- --ignored --nocapture
+cargo test --test all -- dragonbones_import:: --ignored --nocapture
 ```
 
 This imports each rig into SkelForm, plays the **original** files in DragonBonesCPP

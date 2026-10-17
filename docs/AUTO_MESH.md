@@ -14,7 +14,7 @@ Decisions are in §7.
 ## 0. As built
 
 The pipeline is `src/auto_mesh.rs` (`trace`, `trace_alpha`, `TraceOptions`),
-with tests in `tests/auto_mesh.rs`. The old `editor::trace_mesh`,
+with tests in `tests/all/auto_mesh.rs`. The old `editor::trace_mesh`,
 `winding_sort` and `line_of_sight` are gone.
 
 **Departures from §2:**
@@ -190,7 +190,7 @@ mesh and removes its binds"), using the same yes/no confirmation as
 Re-triangulate.
 
 
-## 5. Tests (`tests/auto_mesh.rs`)
+## 5. Tests (`tests/all/auto_mesh.rs`)
 
 Synthetic RGBA masks, built in the test:
 

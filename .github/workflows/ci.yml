@@ -31,6 +31,5 @@ jobs:
       # the quick suites; dragonbones_export takes minutes in debug and runs locally
       - name: Test
         run: >
-          cargo test
-          --test topology --test pen --test mesh_tools --test navigation
-          --test palette --test bind_pose
+          cargo test --test all --
+          topology:: pen:: mesh_tools:: navigation:: palette:: bind_pose::
