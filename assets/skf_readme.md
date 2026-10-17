@@ -22,3 +22,7 @@ X is the atlas number).
   position is stored as `PositionX` and `PositionY` keyframes, separately
 
 - Tint is stored as a Vector4 (red, green, blue, alpha)
+
+- An animation's `end_frame` is its last frame, where playback loops. When it's 0
+  (or missing), the animation ends on its last keyframe. Keys after `end_frame` are
+  kept in the file but aren't played

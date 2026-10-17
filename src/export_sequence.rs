@@ -167,7 +167,7 @@ pub fn effective(opts: &SequenceOptions, sheets: bool) -> SequenceOptions {
 
 /// An animation's last frame (its last keyframe), 0 if it has none.
 pub fn last_frame(armature: &Armature, anim: usize) -> i32 {
-    armature.animations[anim].keyframes.iter().map(|k| k.frame).max().unwrap_or(0).max(0)
+    armature.animations[anim].last_frame()
 }
 
 /// One image to render.

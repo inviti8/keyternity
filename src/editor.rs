@@ -43,7 +43,7 @@ pub fn iterate_events(
             E::AddCamera | E::DeleteCamera | E::DuplicateCamera | E::FitCamera => undo_states.new_undo_cameras(&armature.cameras),
             E::SetCamera if events.values[0] == 1. => undo_states.new_undo_cameras(&armature.cameras),
             E::RenameStyle => if !ui.just_made_style { undo_states.new_undo_style(&armature.sel_style(&selections).unwrap()); ui.just_made_style = false }
-            E::DeleteSelectedKeyframes | E::DeleteKeyframeLine | E::PasteKeyframesOnFrame | E::InsertKeyframe | E::InsertKeyframeAll | E::DeleteBoneKeyframes => {
+            E::DeleteSelectedKeyframes | E::DeleteKeyframeLine | E::PasteKeyframesOnFrame | E::InsertKeyframe | E::InsertKeyframeAll | E::DeleteBoneKeyframes | E::SetAnimEnd => {
                 undo_states.new_undo_anim(armature.sel_anim(&selections).unwrap())
             }
             E::ResetVertices | E::CenterBoneVerts | E::DeleteVertex | E::TraceBoneVerts | E::NewVertex | E::DeleteTriangle | E::RetriangulateVerts | E::PenApply => {
@@ -1130,6 +1130,12 @@ pub fn simple_event(
             cleanup_vertices(bone);
             let ids: Vec<usize> = bone.vertices.iter().map(|v| v.id as usize).collect();
             selections.vert_ids.retain(|id| ids.contains(id));
+        }
+        Events::SetAnimEnd => {
+            // 0 (or less) follows the last key again
+            if let Some(anim) = armature.sel_anim_mut(selections) {
+                anim.end_frame = (value as i32).max(0);
+            }
         }
         Events::AdjustKeyframesByFPS => {
             let anim_mut = armature.sel_anim_mut(selections).unwrap();

@@ -652,6 +652,13 @@
     "breakdown_desc": "Key the selected bones on this frame between their previous and next keys: 0% is the previous pose, 100% the next, 50% halfway. Drag to set it live.",
     "delete_key_desc": "Remove the selected bones' keys on this frame, or every key on it when no bone is selected.",
     "zoom_kb_tip": "\nTip - hold $kb to zoom in/out by scrolling",
+    "range_bar_desc": "Drag the middle to scroll, drag either end to zoom. Click to jump there; double-click to fit the animation (Home over the timeline). Shift+Home fits the selected keys.",
+    "ruler_frames": "The ruler counts frames. Click to count seconds.",
+    "ruler_seconds": "The ruler counts seconds. Click to count frames.",
+    "end": "End:",
+    "end_auto_desc": "The animation's last frame: playback loops here, exports stop here, and frames after it are dimmed. It follows the last key (frame $frames, $secs) until you set it.",
+    "end_set_desc": "The animation's last frame, set to $frames ($secs): playback loops here, exports stop here, and frames after it are dimmed. Keys after it are kept, but not played.",
+    "end_reset": "Follow the last key again",
     "double_click_tip": "Double-click to select related keyframes in this bone",
     "elements": {
       "PositionX": "Position X",

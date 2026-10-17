@@ -618,9 +618,7 @@ pub fn process_inputs(
             let timeline_mod = config.keys.timeline_zoom_mode.modifiers;
             let timeline_mode = i.modifiers.matches_any(timeline_mod);
             if timeline_mode && shared_ui.pointer_on_timeline {
-                // zoom timeline instead of scrolling
-                shared_ui.timeline_zoom -= input.scroll_delta / 25.;
-                shared_ui.timeline_zoom = shared_ui.timeline_zoom.min(10.).max(0.1);
+                // the timeline zooms itself (keyframe_editor::navigate)
             } else if !camera.on_ui {
                 events.cam_zoom_scroll();
             }
@@ -928,8 +926,17 @@ pub fn kb_inputs(
         events.set_tool(Tool::Pen as usize);
     }
 
+    // over the timeline, Home fits the animation and Shift+Home the selected keys
+    let fit_keys = egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, config.keys.fit_view.logical_key);
+    if shared_ui.pointer_on_timeline && edit_mode.anim_open && input.consume_shortcut(&fit_keys) {
+        shared_ui.timeline_fit = Some(true);
+    }
     if input.consume_shortcut(&config.keys.fit_view) {
-        events.fit_view();
+        if shared_ui.pointer_on_timeline && edit_mode.anim_open {
+            shared_ui.timeline_fit = Some(false);
+        } else {
+            events.fit_view();
+        }
     }
 
     if input.consume_shortcut(&config.keys.toggle_edit_vertices) {

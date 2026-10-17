@@ -1125,13 +1125,12 @@ fn animations_list(
 
                     // show frame info, if this animation has any
                     // (frameless anims are allowed for export)
-                    let total_frames = anim.keyframes.last();
-                    if total_frames == None {
+                    if anim.keyframes.is_empty() {
                         return;
                     }
                     let str = anim.fps.to_string()
                         + &" FPS  -  ".to_string()
-                        + &total_frames.unwrap().frame.to_string()
+                        + &anim.last_frame().to_string()
                         + &shared_ui.loc("export_modal.image.frames");
                     let mut meta_col = config.colors.text;
                     meta_col -= crate::Color::new(40, 40, 40, 0);

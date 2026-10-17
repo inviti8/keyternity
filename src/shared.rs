@@ -735,8 +735,18 @@ pub struct Ui {
     // Keyframe editor stuff
     pub hovering_diamond: bool,
     pub hovering_frame: i32,
-    pub timeline_zoom: f32,
-    pub lines_x: Vec<f32>,
+    /// the visible frame range (docs/TIMELINE.md §2)
+    pub timeline_view: crate::timeline_view::TimelineView,
+    /// the graph's screen x span (left, width), shared by the ruler, rows and range bar
+    pub timeline_graph: (f32, f32),
+    /// the range bar handle being dragged
+    pub timeline_bar_drag: Option<crate::timeline_view::BarHandle>,
+    /// set by Home / Shift+Home over the timeline: fit the animation (false) or the
+    /// selected keys (true)
+    pub timeline_fit: Option<bool>,
+    /// the ruler counts seconds instead of frames
+    pub timeline_seconds: bool,
+    /// only the vertical offset is used: rows scroll, time is `timeline_view`
     pub timeline_offset: Vec2,
     pub dragged_keyframe: Keyframe,
     pub icon_images: Vec<egui::TextureHandle>,
@@ -2001,12 +2011,24 @@ pub struct Animation {
     pub name: String,
     pub id: i32,
     pub fps: i32,
+    /// The animation's last frame, set in the timeline: playback loops here and
+    /// exports stop here. 0 follows the last key.
+    pub end_frame: i32,
     pub keyframes: Vec<Keyframe>,
     #[serde(skip)]
     pub elapsed: Option<Instant>,
 }
 
 impl Animation {
+    /// The last frame: the End set in the timeline, or else the last key (0 without
+    /// keys). Playback loops here, and exports stop here.
+    pub fn last_frame(&self) -> i32 {
+        if self.end_frame > 0 {
+            return self.end_frame;
+        }
+        self.keyframes.iter().map(|kf| kf.frame).max().unwrap_or(0).max(0)
+    }
+
     /// Return which frame has these attributes, or create a new one
     pub fn check_if_in_keyframe(
         &mut self,
@@ -2090,7 +2112,7 @@ impl Animation {
 
         let mut frame = self.get_frame();
 
-        if frame >= self.keyframes.last().unwrap().frame {
+        if frame >= self.last_frame() {
             self.elapsed = Some(Instant::now());
             frame = 0;
         }
@@ -2759,6 +2781,7 @@ pub enum Events {
     ClickVertex,
     CancelPendingTexture,
     AdjustKeyframesByFPS,
+    SetAnimEnd,
     ResetVertices,
     SelectBind,
     DeleteIkTarget,
@@ -2907,6 +2930,7 @@ impl EventState {
     event_with_value!(click_vertex, Events::ClickVertex, vert_id, usize);
     event_with_value!(delete_triangle, Events::DeleteTriangle, idx, usize);
     event_with_value!(adjust_keyframes_by_fps, E::AdjustKeyframesByFPS, fps, usize);
+    event_with_value!(set_anim_end, E::SetAnimEnd, end_frame, i32);
     event_with_value!(toggle_showing_mesh, E::ToggleShowingMesh, visible, usize);
     event_with_value!(select_bind, Events::SelectBind, idx, i32);
     event_with_value!(toggle_setting_ik_target, E::ToggleSettingIkTarget, idx, i32);

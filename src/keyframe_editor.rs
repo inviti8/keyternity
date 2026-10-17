@@ -6,7 +6,14 @@ use ui::{EguiUi, TextInputOptions};
 
 use crate::*;
 
-const LINE_OFFSET: f32 = 30.;
+use crate::timeline_view::{self, BarHandle, TimelineView};
+
+/// the ruler's height (labels and summary keys)
+const RULER_H: f32 = 30.;
+/// the range bar's height (docs/TIMELINE.md §2.2)
+const BAR_H: f32 = 14.;
+/// the bottom bar's height
+const BOTTOM_H: f32 = 20.;
 
 pub fn draw(
     egui_ctx: &egui::Context,
@@ -57,17 +64,16 @@ pub fn draw(
                 }
             }
             sel_frame = prev;
-        } else if right {
-            let last_frame = kfs.last();
-            sel_frame += 1;
-            if last_frame != None && sel_frame > last_frame.unwrap().frame {
+        } else if right || left {
+            // step, wrapping at the animation's End
+            let anim = armature.sel_anim(&sel).unwrap();
+            let has_end = anim.end_frame > 0 || !kfs.is_empty();
+            let last = anim.last_frame();
+            sel_frame += if right { 1 } else { -1 };
+            if has_end && sel_frame > last {
                 sel_frame = 0;
-            }
-        } else if left {
-            sel_frame -= 1;
-            let last_frame = armature.sel_anim(&sel).unwrap().keyframes.last();
-            if last_frame != None && sel_frame < 0 {
-                sel_frame = last_frame.unwrap().frame;
+            } else if has_end && sel_frame < 0 {
+                sel_frame = last;
             }
         }
     }
@@ -303,9 +309,10 @@ fn timeline_editor(
         let sel = selections.clone();
 
         if armature.sel_anim(&sel).unwrap().keyframes.len() > 0 {
+            // line the rows up with the graph, between the ruler and the range bar
             let frame = egui::Frame::new().inner_margin(egui::Margin {
-                top: 27,
-                bottom: 27,
+                top: RULER_H as i8 + 7,
+                bottom: (BAR_H + BOTTOM_H) as i8 + 7,
                 left: 0,
                 right: 0,
             });
@@ -316,59 +323,100 @@ fn timeline_editor(
             });
         }
 
-        // calculate how far apart each keyframe should visually be
-        let gap = 400.;
-        let fps = armature.sel_anim(&sel).unwrap().fps as f32;
-        let hitbox = gap / shared_ui.timeline_zoom / fps / 2.;
-
-        // add 1 second worth of frames after the last keyframe
-        let frames: i32;
-        let extra = armature.sel_anim(&sel).unwrap().fps * 5;
-        if armature.sel_anim(&sel).unwrap().keyframes.last() != None {
-            let sel_anim = armature.sel_anim(&sel).unwrap();
-            frames = sel_anim.keyframes.last().unwrap().frame + extra;
-        } else {
-            frames = extra
+        // a fresh view for each animation opened, fitted to its keys
+        let anim = armature.sel_anim(&sel).unwrap();
+        let last_key = end_of(anim);
+        let total = timeline_view::content_frames(last_key, anim.fps);
+        if shared_ui.timeline_view.anim_id != anim.id || !shared_ui.timeline_view.is_valid() {
+            shared_ui.timeline_view = timeline_view::initial_view(last_key, anim.fps);
+            shared_ui.timeline_view.anim_id = anim.id;
         }
 
-        let width: f32;
-        let generated_width = hitbox * frames as f32 * 2. + LINE_OFFSET;
-        if generated_width > ui.min_rect().width() {
-            width = generated_width;
-        } else {
-            width = ui.min_rect().width();
-        }
+        let column = ui.vertical(|ui| {
+            let area = ui.available_rect_before_wrap();
+            shared_ui.timeline_graph = (area.left(), area.width());
+            let zoom_mode = navigate(ui, shared_ui, config, selections, armature, total, area);
 
-        ui.vertical(|ui| {
-            // render top bar background
-            let rect = egui::Rect::from_min_size(
-                ui.cursor().left_top(),
-                egui::vec2(ui.available_width(), 20.),
-            );
-            let light_accent = config.colors.light_accent;
-            let zero_corner = egui::CornerRadius::ZERO;
-            ui.painter().rect_filled(rect, zero_corner, light_accent);
-
-            if shared_ui.lines_x.len() > 0 {
-                draw_top_bar(
-                    ui, width, hitbox, shared_ui, selections, armature, config, events,
-                );
-            }
+            draw_ruler(ui, shared_ui, selections, armature, config, events);
 
             // The options bar has to be at the bottom, but it needs to be created first
             // so that the remaining height can be taken up by timeline graph.
-            let timeline = ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
+            ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
                 draw_bottom_bar(
                     ui, selections, &config, &armature, shared_ui, events, edit_mode,
                 );
+                draw_range_bar(ui, shared_ui, config, selections, armature, total);
                 draw_timeline_graph(
-                    ui, width, hitbox, shared_ui, config, selections, armature, events, input,
+                    ui, shared_ui, config, selections, armature, events, input, zoom_mode,
                 );
             });
-
-            shared_ui.pointer_on_timeline = timeline.response.contains_pointer();
         });
+
+        shared_ui.pointer_on_timeline = column.response.contains_pointer();
     });
+}
+
+/// Wheel zoom and pan, middle-drag pan, Home/Shift+Home fitting, and following the
+/// playhead while playing (docs/TIMELINE.md §2.3). Returns whether the zoom modifier
+/// is held, so the rows don't also scroll.
+fn navigate(
+    ui: &egui::Ui,
+    shared_ui: &mut crate::Ui,
+    config: &Config,
+    selections: &SelectionState,
+    armature: &Armature,
+    total: f32,
+    area: egui::Rect,
+) -> bool {
+    let (left, width) = shared_ui.timeline_graph;
+    let anim = &armature.animations[selections.anim];
+    let blocked = shared_ui.modal || shared_ui.settings_modal || shared_ui.export_modal;
+    let (raw, mods, pointer, middle, delta) = ui.input(|i| {
+        let p = &i.pointer;
+        (i.raw_scroll_delta, i.modifiers, p.hover_pos(), p.middle_down(), p.delta())
+    });
+    let zoom_mode = mods.matches_any(config.keys.timeline_zoom_mode.modifiers);
+    let view = &mut shared_ui.timeline_view;
+
+    if let Some(p) = pointer.filter(|_| !blocked && ui.rect_contains_pointer(area)) {
+        // plain wheel over the ruler or range bar zooms too: there are no rows to scroll
+        let ruler = p.y < area.top() + RULER_H;
+        let bar = p.y > area.bottom() - BOTTOM_H - BAR_H && p.y < area.bottom() - BOTTOM_H;
+        if raw.y != 0. && (zoom_mode || ruler || bar) {
+            let anchor = view.x_to_frame(p.x, left, width);
+            view.zoom_at(anchor, timeline_view::ZOOM_STEP.powf(raw.y / 40.), total);
+        } else if raw.x != 0. {
+            // Shift+wheel, or a sideways trackpad swipe: scroll in time
+            view.pan(-raw.x / view.px_per_frame(width));
+        }
+        if middle && delta.x != 0. {
+            view.pan(-delta.x / view.px_per_frame(width));
+        }
+    }
+
+    // Home: the whole animation. Shift+Home: the selected keys (all, if none).
+    if let Some(selected) = shared_ui.timeline_fit.take() {
+        let picked: Vec<i32> = shared_ui.selected_keyframes.iter().map(|kf| kf.frame).collect();
+        let frames: Vec<i32> = if selected && !picked.is_empty() {
+            picked
+        } else {
+            end_of(anim).into_iter().collect()
+        };
+        let first = if selected { frames.iter().min().copied().unwrap_or(0) } else { 0 };
+        match frames.iter().max() {
+            Some(last) => view.fit(first as f32, *last as f32, total),
+            None => *view = TimelineView { anim_id: view.anim_id, ..timeline_view::initial_view(None, anim.fps) },
+        }
+    }
+
+    // keep the playhead in view while playing, a page at a time
+    if anim.elapsed.is_some() && shared_ui.timeline_bar_drag.is_none() {
+        let f = anim.get_frame() as f32;
+        if f < view.start || f > view.end {
+            view.pan(f - view.start - view.span() * 0.05);
+        }
+    }
+    zoom_mode
 }
 
 pub fn draw_bones_list(
@@ -494,250 +542,315 @@ pub fn draw_bones_list(
     }
 }
 
-pub fn draw_top_bar(
+/// The ruler: labels spaced to the zoom (docs/TIMELINE.md §2.4), the summary keys
+/// for each frame, and scrubbing.
+pub fn draw_ruler(
     ui: &mut egui::Ui,
-    width: f32,
-    hitbox: f32,
     shared_ui: &mut crate::Ui,
     selections: &SelectionState,
     armature: &Armature,
     config: &Config,
     events: &mut EventState,
 ) {
-    let scroll_area = egui::ScrollArea::horizontal()
-        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-        .scroll_offset(egui::Vec2::new(shared_ui.timeline_offset.x, 0.));
+    let (left, width) = shared_ui.timeline_graph;
+    let rect = egui::Rect::from_min_size(egui::pos2(left, ui.cursor().top()), egui::vec2(width, RULER_H));
+    let ruler = ui.allocate_rect(rect, egui::Sense::click_and_drag());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, egui::CornerRadius::ZERO, config.colors.light_accent);
+
     let sel = selections.clone();
+    let anim = armature.sel_anim(&sel).unwrap();
+    let fps = anim.fps;
+    let view = shared_ui.timeline_view;
+    let x_of = |frame: i32| view.frame_to_x(frame as f32, left, width);
+    let visible = |frame: i32| frame as f32 >= view.start - 1. && frame as f32 <= view.end + 1.;
 
-    scroll_area.show(ui, |ui| {
-        egui::Frame::new().show(ui, |ui| {
-            ui.set_width(width);
-            ui.set_height(20.);
+    // labels, with ticks between them
+    let ppf = view.px_per_frame(width);
+    let step = timeline_view::ruler_step(ppf, fps, shared_ui.timeline_seconds);
+    let minor = if step % 5 == 0 { step / 5 } else if step % 2 == 0 { step / 2 } else { step }.max(1);
+    let text_col: egui::Color32 = config.colors.text.into();
+    let tick_col = text_col.gamma_multiply(0.45);
+    let frames = view.visible_frames();
+    let mut f = *frames.start() - *frames.start() % minor;
+    while f <= *frames.end() {
+        let x = x_of(f);
+        if f % step == 0 {
+            painter.vline(x, egui::Rangef::new(rect.bottom() - 7., rect.bottom()), egui::Stroke::new(1., text_col));
+            let label = timeline_view::ruler_label(f, fps, shared_ui.timeline_seconds);
+            let font = egui::FontId::proportional(11.);
+            painter.text(egui::pos2(x, rect.top() + 2.), egui::Align2::CENTER_TOP, label, font, text_col);
+        } else {
+            painter.vline(x, egui::Rangef::new(rect.bottom() - 3., rect.bottom()), egui::Stroke::new(1., tick_col));
+        }
+        f += minor;
+    }
 
-            let mut second = -1;
-            for (i, x) in shared_ui.lines_x.iter().enumerate() {
-                let pos = Vec2::new(ui.min_rect().left() + x, ui.min_rect().top() + 10.);
-                if i as i32 % armature.sel_anim(&sel).unwrap().fps != 0 {
-                    continue;
-                }
-
-                // if this frame line represents a second (1s, 2s, etc),
-                // draw the number
-                second += 1;
-                // don't show 0s
-                if second == 0 {
-                    continue;
-                }
-
-                let center = egui::Align2::CENTER_CENTER;
-                let fontid = egui::FontId::default();
-                let col = config.colors.text;
-                let painter = ui.painter_at(ui.min_rect());
-                let str = second.to_string() + "s";
-                painter.text(pos.into(), center, str, fontid, col.into());
+    // scrub: press or drag on the ruler to move the current frame
+    if ruler.is_pointer_button_down_on() && !shared_ui.hovering_diamond {
+        if let Some(p) = ui.ctx().pointer_interact_pos() {
+            let frame = view.nearest_frame(p.x, left, width);
+            if frame != selections.anim_frame {
+                events.select_anim_frame(frame as usize, false, false);
             }
+            shared_ui.last_selected = "keyframe".to_string();
+        }
+    }
 
-            let mut last_unique_frame = -1;
-            let mut alt = false;
-            for i in 0..armature.sel_anim(&sel).unwrap().keyframes.len() {
-                let frame = armature.sel_anim(&sel).unwrap().keyframes[i].frame;
-                if frame == last_unique_frame {
-                    continue;
-                }
-                last_unique_frame = frame;
+    let mut last_unique_frame = -1;
+    let mut alt = false;
+    for i in 0..anim.keyframes.len() {
+        let frame = anim.keyframes[i].frame;
+        if frame == last_unique_frame {
+            continue;
+        }
+        last_unique_frame = frame;
 
-                // alternate diamond color
-                let mut diamond_color;
-                if alt {
-                    diamond_color = Color::new(255, 255, 255, 0);
-                    diamond_color -= Color::new(40, 40, 40, 0);
-                } else {
-                    diamond_color = Color::new(255, 255, 255, 0);
-                }
-                alt = !alt;
+        // alternate diamond color
+        let mut diamond_color;
+        if alt {
+            diamond_color = Color::new(255, 255, 255, 0);
+            diamond_color -= Color::new(40, 40, 40, 0);
+        } else {
+            diamond_color = Color::new(255, 255, 255, 0);
+        }
+        alt = !alt;
 
-                // don't draw diamond if it's beyond the recorded lines
-                if shared_ui.lines_x.len() - 1 < frame as usize {
-                    break;
-                }
+        // only the frames in view
+        if !visible(frame) {
+            continue;
+        }
+        let pos = Vec2::new(x_of(frame), rect.top() + 21.);
 
-                let pos = Vec2::new(
-                    ui.min_rect().left() + shared_ui.lines_x[frame as usize] + 3.,
-                    ui.min_rect().top() + 10.,
-                );
+        // create dragging area for diamond
+        let rect = egui::Rect::from_center_size(pos.into(), egui::Vec2::splat(9.));
+        let response: egui::Response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
+        let mut diamond_size = 4.;
 
-                // create dragging area for diamond
-                let rect = egui::Rect::from_center_size(pos.into(), egui::Vec2::splat(5.));
-                let response: egui::Response =
-                    ui.allocate_rect(rect, egui::Sense::click_and_drag());
-                let mut diamond_size = 5.;
-
-                // enlarge diamond if all of its keyframes are selected
-                let keyframes = &armature.sel_anim(&sel).unwrap().keyframes;
-                // used to determine if 'cmd' should be held when selecting
-                // this diamond
-                let mut is_selected = false;
-                if shared_ui.selected_keyframes.len() > 0 {
-                    let this_keyframes: Vec<&Keyframe> = keyframes
-                        .iter()
-                        .filter(|kf| kf.frame == last_unique_frame)
-                        .collect();
-                    let this_sel_kf: Vec<&Keyframe> = shared_ui
-                        .selected_keyframes
-                        .iter()
-                        .filter(|kf| kf.frame == last_unique_frame)
-                        .collect();
-                    is_selected = this_keyframes.len() == this_sel_kf.len();
-                    if is_selected {
-                        diamond_color = Color::new(100, 255, 100, 0);
-                        diamond_size += 2.;
-                    }
-                }
-
-                if response.drag_started() {
-                    events.select_anim_frame(frame as usize, true, is_selected);
-                }
-
-                if response.hovered() {
-                    shared_ui.hovering_diamond = true;
-                    shared_ui.cursor_icon = egui::CursorIcon::PointingHand;
-                    diamond_size += 2.;
-                }
-
-                if response.clicked() {
-                    shared_ui.last_selected = "keyframe".to_string();
-                    events.select_anim_frame(frame as usize, true, is_selected);
-                }
-
-                if response.secondary_clicked() {
-                    events.select_anim_frame(frame as usize, true, is_selected);
-                    shared_ui.last_selected = "keyframe".to_string();
-                    let kf = &armature.sel_anim(&sel).unwrap().keyframes[i];
-                    let el = &(kf.element.clone() as usize);
-                    let context_id =
-                        &format!("keyframe_{}_{}_{}_{}", el, &kf.bone_id, &kf.frame, &i);
-                    shared_ui.context_menu.show(context_id);
-                }
-
-                let cursor = get_cursor(ui);
-                if response.dragged() {
-                    shared_ui.cursor_icon = egui::CursorIcon::Grabbing;
-                    shared_ui.dragged_keyframe = Keyframe {
-                        frame,
-                        bone_id: -1,
-                        ..Default::default()
-                    };
-
-                    // draw diamond following mouse
-                    let color = if cursor.y < 0. {
-                        // red diamond if dragged above keyframe bar (being removed)
-                        egui::Color32::RED
-                    } else {
-                        diamond_color.into()
-                    };
-                    let pos = cursor + ui.min_rect().left_top().into();
-                    draw_diamond(&ui.ctx().debug_painter(), pos, color, 5.);
-                }
-
-                let kf = &shared_ui.dragged_keyframe;
-                let not_dragging = kf.frame != frame || kf.bone_id != -1;
-                if not_dragging {
-                    // draw regular stationary diamond
-                    draw_diamond(ui.painter(), pos, diamond_color.into(), diamond_size);
-                } else {
-                    // draw stationary diamond with lower opacity when dragging
-                    let dc = diamond_color;
-                    let white = egui::Color32::from_rgba_unmultiplied(dc.r, dc.g, dc.b, 30);
-                    draw_diamond(ui.painter(), pos, white, 5.);
-                }
-
-                if !response.drag_stopped() {
-                    continue;
-                }
-
-                let anim = armature.sel_anim(&sel).unwrap().clone();
-                shared_ui.cursor_icon = egui::CursorIcon::Grabbing;
-
-                // remove keyframe if dragged out
-                if cursor.y < 0. {
-                    events.delete_keyframes_by_frame(anim.keyframes[i].frame);
-                    // break loop to prevent OOB errors
-                    break;
-                }
-
-                // move all keyframes under this one over
-                for j in 0..shared_ui.lines_x.len() {
-                    let x = shared_ui.lines_x[j];
-                    if cursor.x < x + hitbox && cursor.x > x - hitbox {
-                        events.move_selected_keyframes(j as i32);
-                        return;
-                    }
-                }
+        // enlarge diamond if all of its keyframes are selected
+        let keyframes = &anim.keyframes;
+        // used to determine if 'cmd' should be held when selecting
+        // this diamond
+        let mut is_selected = false;
+        if shared_ui.selected_keyframes.len() > 0 {
+            let this_keyframes: Vec<&Keyframe> = keyframes
+                .iter()
+                .filter(|kf| kf.frame == last_unique_frame)
+                .collect();
+            let this_sel_kf: Vec<&Keyframe> = shared_ui
+                .selected_keyframes
+                .iter()
+                .filter(|kf| kf.frame == last_unique_frame)
+                .collect();
+            is_selected = this_keyframes.len() == this_sel_kf.len();
+            if is_selected {
+                diamond_color = Color::new(100, 255, 100, 0);
+                diamond_size += 1.;
             }
-        });
-    });
+        }
+
+        if response.drag_started() {
+            events.select_anim_frame(frame as usize, true, is_selected);
+        }
+
+        if response.hovered() {
+            shared_ui.hovering_diamond = true;
+            shared_ui.cursor_icon = egui::CursorIcon::PointingHand;
+            diamond_size += 1.;
+        }
+
+        if response.clicked() {
+            shared_ui.last_selected = "keyframe".to_string();
+            events.select_anim_frame(frame as usize, true, is_selected);
+        }
+
+        if response.secondary_clicked() {
+            events.select_anim_frame(frame as usize, true, is_selected);
+            shared_ui.last_selected = "keyframe".to_string();
+            let kf = &anim.keyframes[i];
+            let el = &(kf.element.clone() as usize);
+            let context_id =
+                &format!("keyframe_{}_{}_{}_{}", el, &kf.bone_id, &kf.frame, &i);
+            shared_ui.context_menu.show(context_id);
+        }
+
+        let pointer = ui.ctx().pointer_latest_pos().unwrap_or_default();
+        // dragged above the ruler: being removed
+        let removing = pointer.y < ruler.rect.top();
+        if response.dragged() {
+            shared_ui.cursor_icon = egui::CursorIcon::Grabbing;
+            shared_ui.dragged_keyframe = Keyframe {
+                frame,
+                bone_id: -1,
+                ..Default::default()
+            };
+
+            // draw diamond following mouse
+            let color = if removing { egui::Color32::RED } else { diamond_color.into() };
+            draw_diamond(&ui.ctx().debug_painter(), pointer.into(), color, 4.);
+        }
+
+        let kf = &shared_ui.dragged_keyframe;
+        let not_dragging = kf.frame != frame || kf.bone_id != -1;
+        if not_dragging {
+            // draw regular stationary diamond
+            draw_diamond(ui.painter(), pos, diamond_color.into(), diamond_size);
+        } else {
+            // draw stationary diamond with lower opacity when dragging
+            let dc = diamond_color;
+            let white = egui::Color32::from_rgba_unmultiplied(dc.r, dc.g, dc.b, 30);
+            draw_diamond(ui.painter(), pos, white, 4.);
+        }
+
+        if !response.drag_stopped() {
+            continue;
+        }
+
+        shared_ui.cursor_icon = egui::CursorIcon::Grabbing;
+
+        // remove keyframe if dragged out
+        if removing {
+            events.delete_keyframes_by_frame(anim.keyframes[i].frame);
+            // break loop to prevent OOB errors
+            break;
+        }
+
+        // move all keyframes under this one over
+        events.move_selected_keyframes(view.nearest_frame(pointer.x, left, width));
+        return;
+    }
 }
 
 pub fn draw_timeline_graph(
     ui: &mut egui::Ui,
-    width: f32,
-    hitbox: f32,
     shared_ui: &mut crate::Ui,
     config: &Config,
     selections: &SelectionState,
     armature: &Armature,
     events: &mut EventState,
     input: &InputStates,
+    zoom_mode: bool,
 ) {
     let layout = egui::Layout::left_to_right(egui::Align::Center);
     ui.with_layout(layout, |ui| {
         let frame = egui::Frame::new()
             .fill(config.colors.light_accent.into())
-            .inner_margin(3);
+            .inner_margin(egui::Margin::symmetric(0, 3));
         frame.show(ui, |ui| {
-            let area = egui::ScrollArea::both()
-                .scroll_offset(shared_ui.timeline_offset.into())
-                .id_salt("test");
+            // rows scroll vertically; time is the view range (the range bar)
+            let source = egui::scroll_area::ScrollSource { mouse_wheel: !zoom_mode, ..egui::scroll_area::ScrollSource::ALL };
+            let area = egui::ScrollArea::vertical()
+                .vertical_scroll_offset(shared_ui.timeline_offset.y)
+                .scroll_source(source)
+                .auto_shrink(false)
+                .id_salt("timeline_rows");
             let response = area.show(ui, |ui| {
-                ui.set_width(width);
+                ui.set_width(ui.available_width());
                 ui.set_height(ui.available_height());
 
                 let mut cursor = get_cursor(ui);
                 // keep cursor on the frame
                 cursor.y -= shared_ui.timeline_offset.y;
 
-                // // render darkened background after last keyframe
-                // let sel = selections.clone();
-                // let lkf = armature.sel_anim(&sel).unwrap().keyframes.last();
-                // if shared_ui.bone_tops.tops.len() > 0
-                //     && lkf != None
-                //     && (lkf.unwrap().frame as usize) < shared_ui.lines_x.len()
-                // {
-                //     let left_top = egui::vec2(shared_ui.lines_x[lkf.unwrap().frame as usize], -3.);
-                //     let right_bot =
-                //         egui::vec2(0., shared_ui.bone_tops.tops.last().unwrap().height + 999.);
-
-                //     let rect_to_fill = egui::Rect::from_min_size(
-                //         ui.min_rect().left_top() + left_top,
-                //         ui.min_rect().size() + right_bot,
-                //     );
-                //     ui.painter()
-                //         .rect_filled(rect_to_fill, 0., config.colors.dark_accent);
-                // }
-
-                draw_frame_lines(
-                    ui, shared_ui, armature, config, input, selections, events, hitbox, cursor,
-                );
+                draw_frame_lines(ui, shared_ui, armature, config, input, selections, events, cursor);
             });
             if !input.left_clicked
                 && !input.left_down
                 && !input.left_pressed
                 && ui.ui_contains_pointer()
             {
-                shared_ui.timeline_offset = response.state.offset.into();
+                shared_ui.timeline_offset.y = response.state.offset.y;
             }
         });
     });
+}
+
+/// The range bar (docs/TIMELINE.md §2.2): the whole animation, with a thumb for the
+/// visible part. Drag the thumb to scroll, its ends to zoom; click the track to jump
+/// there, double-click to fit the animation.
+fn draw_range_bar(
+    ui: &mut egui::Ui,
+    shared_ui: &mut crate::Ui,
+    config: &Config,
+    selections: &SelectionState,
+    armature: &Armature,
+    total: f32,
+) {
+    let (left, width) = shared_ui.timeline_graph;
+    let (row, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), BAR_H), egui::Sense::hover());
+    let rect = egui::Rect::from_min_size(egui::pos2(left, row.top()), egui::vec2(width, BAR_H));
+    let response = ui.interact(rect, ui.id().with("timeline_range_bar"), egui::Sense::click_and_drag());
+    let mut view = shared_ui.timeline_view;
+    let bar_total = view.bar_total.unwrap_or(total.max(view.end));
+    let to_frames = |dx: f32| dx / width.max(1.) * bar_total;
+
+    let hit = |view: &TimelineView, x: f32| timeline_view::bar_hit(view, bar_total, left, width, x);
+    if response.drag_started() {
+        let origin = ui.input(|i| i.pointer.press_origin()).unwrap_or(rect.center());
+        let handle = hit(&view, origin.x).unwrap_or_else(|| {
+            // grabbed the track: centre the view there, then drag it
+            let jump = to_frames(origin.x - left) - view.span() / 2. - view.start;
+            timeline_view::bar_drag(&mut view, BarHandle::Middle, jump, bar_total);
+            BarHandle::Middle
+        });
+        shared_ui.timeline_bar_drag = Some(handle);
+        view.bar_total = Some(bar_total);
+    }
+    if let Some(handle) = shared_ui.timeline_bar_drag.filter(|_| response.dragged()) {
+        timeline_view::bar_drag(&mut view, handle, to_frames(response.drag_delta().x), bar_total);
+    }
+    if response.drag_stopped() || (shared_ui.timeline_bar_drag.is_some() && !response.dragged()) {
+        shared_ui.timeline_bar_drag = None;
+        view.bar_total = None;
+    }
+    if response.double_clicked() {
+        shared_ui.timeline_fit = Some(false);
+    } else if response.clicked() {
+        if let Some(p) = response.interact_pointer_pos().filter(|p| hit(&view, p.x).is_none()) {
+            let jump = to_frames(p.x - left) - view.span() / 2. - view.start;
+            timeline_view::bar_drag(&mut view, BarHandle::Middle, jump, bar_total);
+        }
+    }
+
+    // cursor: resize on the ends, grab on the middle
+    let hovered = response.hover_pos().and_then(|p| hit(&view, p.x));
+    match shared_ui.timeline_bar_drag.or(hovered) {
+        Some(BarHandle::Start | BarHandle::End) => shared_ui.cursor_icon = egui::CursorIcon::ResizeHorizontal,
+        Some(BarHandle::Middle) if shared_ui.timeline_bar_drag.is_some() => {
+            shared_ui.cursor_icon = egui::CursorIcon::Grabbing
+        }
+        Some(BarHandle::Middle) => shared_ui.cursor_icon = egui::CursorIcon::Grab,
+        None => {}
+    }
+    shared_ui.timeline_view = view;
+
+    // draw: track, the last key and the current frame, then the thumb and its ends
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, egui::CornerRadius::ZERO, config.colors.dark_accent);
+    let bar_x = |frame: f32| left + frame / bar_total * width;
+    let text: egui::Color32 = config.colors.text.into();
+    let anim = &armature.animations[selections.anim];
+    if let Some(last) = end_of(anim) {
+        painter.vline(bar_x(last as f32), rect.y_range(), egui::Stroke::new(1., text.gamma_multiply(0.5)));
+    }
+    let (a, b) = timeline_view::bar_thumb(&view, bar_total, left, width);
+    let thumb = egui::Rect::from_x_y_ranges(a..=b, rect.shrink2(egui::vec2(0., 2.)).y_range());
+    let lit = hovered.is_some() || shared_ui.timeline_bar_drag.is_some();
+    let mut thumb_col = config.colors.light_accent;
+    thumb_col += Color::new(if lit { 45 } else { 25 }, if lit { 45 } else { 25 }, if lit { 45 } else { 25 }, 0);
+    painter.rect_filled(thumb, egui::CornerRadius::same(3), thumb_col);
+    let grip = egui::Stroke::new(1., text.gamma_multiply(if lit { 0.9 } else { 0.55 }));
+    let grip_y = thumb.shrink2(egui::vec2(0., 2.)).y_range();
+    for x in [a + 3., a + 5., b - 3., b - 5.] {
+        painter.vline(x, grip_y, grip);
+    }
+    if selections.anim_frame >= 0 {
+        let x = bar_x(selections.anim_frame as f32);
+        let accent = config.colors.frameline + Color::new(100, 100, 100, 0);
+        painter.vline(x, rect.y_range(), egui::Stroke::new(1.5, accent));
+    }
+    let tip = shared_ui.loc("keyframe_editor.range_bar_desc");
+    response.on_hover_text_at_pointer(tip);
 }
 
 pub fn draw_bottom_bar(
@@ -788,18 +901,36 @@ pub fn draw_bottom_bar(
                 events.toggle_anim_playing(selections.anim, anim.elapsed == None);
             });
 
-            let desc = shared_ui.loc("top_bar.view.zoom_in");
+            // zoom about the current frame (or the middle of the view)
+            let anim = armature.sel_anim(&sel).unwrap();
+            let total = timeline_view::content_frames(end_of(anim), anim.fps);
+            let view = shared_ui.timeline_view;
+            let playhead = selections.anim_frame as f32;
+            let anchor = if playhead >= view.start && playhead <= view.end {
+                playhead
+            } else {
+                (view.start + view.end) / 2.
+            };
             let kb_tip = shared_ui
                 .loc("keyframe_editor.zoom_kb_tip")
                 .replace("$kb", &config.keys.timeline_zoom_mode.display());
+            let desc = shared_ui.loc("top_bar.view.zoom_in");
             if ui.skf_button("+").on_hover_text(desc + &kb_tip).clicked() {
-                shared_ui.timeline_zoom -= 0.1;
-                shared_ui.timeline_zoom = shared_ui.timeline_zoom.max(0.1);
+                shared_ui.timeline_view.zoom_at(anchor, timeline_view::ZOOM_STEP, total);
             }
             let desc = shared_ui.loc("top_bar.view.zoom_out");
             if ui.skf_button("-").on_hover_text(desc + &kb_tip).clicked() {
-                shared_ui.timeline_zoom += 0.1;
-                shared_ui.timeline_zoom = shared_ui.timeline_zoom.min(3.);
+                shared_ui.timeline_view.zoom_at(anchor, 1. / timeline_view::ZOOM_STEP, total);
+            }
+
+            // the ruler counts frames or seconds
+            let (label, tip) = if shared_ui.timeline_seconds {
+                ("s", shared_ui.loc("keyframe_editor.ruler_seconds"))
+            } else {
+                ("f", shared_ui.loc("keyframe_editor.ruler_frames"))
+            };
+            if ui.skf_button(label).on_hover_text(tip).clicked() {
+                shared_ui.timeline_seconds = !shared_ui.timeline_seconds;
             }
 
             ui.add_space(5.);
@@ -820,6 +951,30 @@ pub fn draw_bottom_bar(
                 ui.float_input("fps".to_string(), shared_ui, fps as f32, 1., None);
             if edited {
                 events.adjust_keyframes_by_fps(value as usize);
+            }
+
+            // End: the last frame. Unset, it follows the last key (and shows dimmed).
+            let anim = armature.sel_anim(&sel).unwrap();
+            let end = anim.last_frame();
+            let set = anim.end_frame > 0;
+            let secs = timeline_view::ruler_label(end, fps, true);
+            let tip = shared_ui.loc(if set { "keyframe_editor.end_set_desc" } else { "keyframe_editor.end_auto_desc" })
+                .replace("$frames", &end.to_string())
+                .replace("$secs", &secs);
+            let mut label_col = config.colors.text;
+            if !set {
+                label_col -= Color::new(60, 60, 60, 0);
+            }
+            ui.label(egui::RichText::new(shared_ui.loc("keyframe_editor.end")).color(label_col)).on_hover_text(&tip);
+            let (edited, value, _) = ui.float_input("anim_end".to_string(), shared_ui, end as f32, 1., None);
+            if edited {
+                events.set_anim_end(value.round() as i32);
+            }
+            if set {
+                let auto = ui.skf_button("⟲").on_hover_text(shared_ui.loc("keyframe_editor.end_reset"));
+                if auto.clicked() {
+                    events.set_anim_end(0);
+                }
             }
 
             // onion toggle
@@ -882,7 +1037,7 @@ pub fn draw_bottom_bar(
     });
 }
 
-/// Draw all lines representing frames in the timeline.
+/// Draw the frame lines in view, and the keys on them.
 fn draw_frame_lines(
     ui: &mut egui::Ui,
     shared_ui: &mut crate::Ui,
@@ -891,102 +1046,87 @@ fn draw_frame_lines(
     input: &InputStates,
     selections: &SelectionState,
     events: &mut EventState,
-    hitbox: f32,
     cursor: Vec2,
 ) {
-    shared_ui.lines_x = vec![];
-    let mut selected_line_x = 0.;
-    let mut hovered_line_x = -1.;
     let panel = shared_ui.keyframe_panel_rect;
-    let mut hovering = false;
+    let (left, width) = shared_ui.timeline_graph;
+    let view = shared_ui.timeline_view;
+    let x_of = |frame: i32| view.frame_to_x(frame as f32, left, width);
+    let visible = |frame: i32| frame as f32 >= view.start - 1. && frame as f32 <= view.end + 1.;
+    let ppf = view.px_per_frame(width);
 
-    let range = egui::Rangef { min: 0., max: 999. };
-    let painter = ui.painter();
+    let clip = ui.clip_rect();
+    let range = clip.y_range();
+    let painter = ui.painter().clone();
+    let anim = &armature.animations[selections.anim];
+    let last_keyframe = end_of(anim);
 
-    let mut x = 0.;
-    let mut i = 0;
-    while x < ui.min_rect().width() {
-        x = i as f32 * hitbox * 2. + LINE_OFFSET;
-        shared_ui.lines_x.push(x);
-
+    // every frame while there's room, else every 2nd, 5th, 10th…
+    let step = timeline_view::line_step(ppf);
+    let line_width = if ppf >= 8. { 2. } else { 1. };
+    let frames = view.visible_frames();
+    let mut i = *frames.start() - *frames.start() % step;
+    while i <= *frames.end() {
         let mut color: egui::Color32 = config.colors.frameline.into();
 
         // use different color for frameline if it exceeds last keyframe
-        let last_keyframe = armature.animations[selections.anim].keyframes.last();
-        if last_keyframe != None && i > last_keyframe.unwrap().frame {
+        if last_keyframe.is_some_and(|last| i > last) {
             color = config.colors.dark_accent.into();
         }
 
         // brighten frameline if current animation is playing, and on this frame
-        let anim = &armature.animations[selections.anim];
         if i == anim.get_frame() && anim.elapsed != None {
             color = color + egui::Color32::from_rgb(60, 60, 60);
-        }
-
-        // several checks for whether frameline can/is being hovered on
-        let below_top_bar = cursor.y < ui.min_rect().height() - 13.;
-        let in_ui = cursor.y > -25.;
-        let can_hover =
-            in_ui && !shared_ui.modal && !shared_ui.settings_modal && !shared_ui.export_modal;
-        let cur = cursor;
-        let is_in = can_hover && cur.x < x + hitbox && cur.x > x - hitbox && below_top_bar;
-
-        if selections.anim_frame == i {
-            selected_line_x = ui.min_rect().left() + x;
-        } else if i != 0 && i % anim.fps == 0 {
+        } else if i != 0 && i % anim.fps.max(1) == 0 {
             color = color + egui::Color32::from_rgb(20, 20, 20);
         }
-        if is_in && !shared_ui.hovering_diamond {
-            color = egui::Color32::from_rgb(175, 175, 175);
-            shared_ui.hovering_frame = i;
-            hovering = true;
-            hovered_line_x = ui.min_rect().left() + x;
 
-            // select frame if clicked/held down on.
-            // holding LMB lets frames be previewed via dragging.
-            if input.left_down && shared_ui.context_menu.id == "" {
-                events.select_anim_frame(i as usize, false, false);
-                shared_ui.last_selected = "keyframe".to_string();
-            }
-        }
-
-        if !shared_ui.hovering_diamond && is_in && input.right_clicked {
-            let context_id = format!("kfline_{}", i.to_string());
-            shared_ui.context_menu.show(&context_id);
-        }
-
-        // draw the line!
-        painter.vline(ui.min_rect().left() + x, range, Stroke { width: 2., color });
-
-        i += 1;
+        painter.vline(x_of(i), range, Stroke { width: line_width, color });
+        i += step;
     }
 
-    if !hovering {
-        shared_ui.hovering_frame = -1;
+    // a set End: mark it, so it reads apart from the last key
+    if anim.end_frame > 0 && visible(anim.end_frame) {
+        let col: egui::Color32 = config.colors.text.into();
+        painter.vline(x_of(anim.end_frame), range, Stroke { width: 2., color: col.gamma_multiply(0.6) });
+    }
+
+    // the frame under the pointer
+    let blocked = shared_ui.modal || shared_ui.settings_modal || shared_ui.export_modal;
+    let pointer = ui.ctx().pointer_hover_pos().filter(|p| !blocked && clip.contains(*p));
+    let hovered = pointer.filter(|_| ui.rect_contains_pointer(clip)).map(|p| view.nearest_frame(p.x, left, width));
+    shared_ui.hovering_frame = -1;
+    if let Some(frame) = hovered.filter(|_| !shared_ui.hovering_diamond) {
+        shared_ui.hovering_frame = frame;
+        let color = egui::Color32::from_rgb(175, 175, 175);
+        painter.vline(x_of(frame), range, Stroke { width: 2., color });
+
+        // select frame if clicked/held down on.
+        // holding LMB lets frames be previewed via dragging.
+        if input.left_down && shared_ui.context_menu.id == "" {
+            events.select_anim_frame(frame as usize, false, false);
+            shared_ui.last_selected = "keyframe".to_string();
+        }
+        if input.right_clicked {
+            let context_id = format!("kfline_{}", frame.to_string());
+            shared_ui.context_menu.show(&context_id);
+        }
     }
 
     let mut last_bone = -1;
     for top in &shared_ui.bone_tops.tops {
         if last_bone != top.id {
-            let range = egui::Rangef::new(0., ui.available_width());
-            let mut col = config.colors.dark_accent;
-            col -= Color::new(20, 20, 20, 0);
             let color = egui::Stroke::new(1.5, config.colors.dark_accent);
-            ui.painter().hline(range, top.height - 25.5, color);
+            painter.hline(clip.x_range(), top.height - 25.5, color);
         }
         last_bone = top.id;
-        continue;
-    }
-
-    // draw hovered line
-    if hovered_line_x != -1. {
-        let color = egui::Color32::from_rgb(175, 175, 175);
-        painter.vline(hovered_line_x, range, Stroke { width: 2., color });
     }
 
     // draw selected line
-    let color = (config.colors.frameline + egui::Color32::from_rgb(100, 100, 100).into()).into();
-    painter.vline(selected_line_x, range, Stroke { width: 2., color });
+    if visible(selections.anim_frame) {
+        let color = (config.colors.frameline + egui::Color32::from_rgb(100, 100, 100).into()).into();
+        painter.vline(x_of(selections.anim_frame), range, Stroke { width: 2., color });
+    }
 
     shared_ui.hovering_diamond = false;
 
@@ -1016,6 +1156,11 @@ fn draw_frame_lines(
             }
         }
 
+        // only the keys in view (a dragged one is kept so its drag can finish)
+        if !visible(kf.frame) && shared_ui.dragged_keyframe != kf {
+            continue;
+        }
+
         // the Y position is based on this diamond's respective label
         let top: f32;
 
@@ -1027,8 +1172,7 @@ fn draw_frame_lines(
         } else {
             continue;
         }
-        let x = shared_ui.lines_x[kf.frame as usize] + ui.min_rect().left();
-        let pos = Vec2::new(x, top + size.y / 2.);
+        let pos = Vec2::new(x_of(kf.frame), top + size.y / 2.);
         if panel != None && pos.y > panel.unwrap().bottom() {
             continue;
         }
@@ -1146,17 +1290,9 @@ fn draw_frame_lines(
                 break;
             }
 
-            // get the frame that cursor is on
-            let mut dropped_frame = 0;
-            for j in 0..shared_ui.lines_x.len() {
-                let x = shared_ui.lines_x[j];
-                if cursor.x < x + hitbox && cursor.x > x - hitbox {
-                    dropped_frame = j;
-                    break;
-                }
-            }
-
-            events.move_selected_keyframes(dropped_frame as i32);
+            // the frame that the pointer is on
+            let x = ui.ctx().pointer_latest_pos().map_or(pos.x, |p| p.x);
+            events.move_selected_keyframes(view.nearest_frame(x, left, width));
             break;
         }
     }
@@ -1206,4 +1342,10 @@ pub fn is_relevant_keyframe(kfs: &mut Vec<Keyframe>, kf: &Keyframe, els: &Vec<An
     kfs.retain(|okf| {
         okf.frame == kf.frame && okf.bone_id == kf.bone_id && els.contains(&okf.element)
     });
+}
+
+/// Where the animation ends (its End, or its last key), or `None` for an empty one
+/// with no End set.
+fn end_of(anim: &Animation) -> Option<i32> {
+    (anim.end_frame > 0 || !anim.keyframes.is_empty()).then(|| anim.last_frame())
 }

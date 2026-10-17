@@ -45,7 +45,8 @@ visible part:
 
 - **Drag the middle** to scroll. **Drag either end** (the sub-handles) to zoom; the
   opposite end stays put.
-- **Double-click the bar** to fit the whole animation.
+- **Click the track** to jump the view there. **Double-click the bar** to fit the whole
+  animation.
 - The bar marks the last key and the current frame, so you can see where you are in a
   long animation at a glance.
 - The handle never gets too small to grab: below ~24 px it keeps that size, and the end
@@ -57,11 +58,12 @@ visible part:
 |---|---|
 | wheel | scroll rows (as today) |
 | Shift + wheel | scroll in time |
-| zoom modifier (`timeline_zoom_mode`) + wheel | **zoom around the cursor**: the frame under the pointer stays under it, with each notch a fixed ratio (×1.2) |
-| middle-drag | pan in time and rows |
-| `Home` | fit the whole animation |
-| `F` (pointer over the timeline) | fit the selected keys, or around the current frame |
+| zoom modifier (`timeline_zoom_mode`) + wheel, or wheel over the ruler or range bar | **zoom around the cursor**: the frame under the pointer stays under it, with each notch a fixed ratio (×1.25) |
+| middle-drag | pan in time |
+| `Home` (pointer over the timeline) | fit the whole animation (elsewhere, `Home` still fits the canvas) |
+| `Shift+Home` (pointer over the timeline) | fit the selected keys, or all keys if none are selected (`F` is already Next Frame) |
 | +/− buttons | zoom ×1.25 around the current frame |
+| press or drag on the ruler | scrub the current frame |
 
 ### 2.4 Ruler
 
@@ -79,6 +81,17 @@ visible part:
   ruler step).
 - Keys are found per row by binary search over their sorted frames, so long
   animations stay fast.
+
+### 2.6 End (the animation's length)
+
+Each animation has an **End** field in the bottom bar: its last frame (`end_frame` in
+the `.skf`).
+- Unset (0), it follows the last key, as before, and shows dimmed.
+- Once set, playback loops there, D/F wrap there, exports (frame sequences,
+  spritesheets, DragonBones) stop there, and frames after it are dimmed with a line
+  marking the End. An End past the last key holds the final pose.
+- Keys after the End are kept, but not played.
+- ⟲ clears it. Setting it is undoable.
 
 ## 3. Rows and keys
 

@@ -219,11 +219,7 @@ pub fn render_spritesheets(
     if shared_ui.export_global_bounds {
         for a in 0..armature.animations.len() {
             let anim = &armature.animations[a];
-            let last_frame = if let Some(kf) = anim.keyframes.last() {
-                kf.frame + 1
-            } else {
-                1
-            };
+            let last_frame = anim.last_frame() + 1;
             let all_frames = last_frame * shared_ui.anim_cycles;
             let mut new_arm = armature.clone();
             for f in 0..all_frames {
@@ -242,11 +238,7 @@ pub fn render_spritesheets(
         }
         shared_ui.rendered_spritesheets.push(vec![]);
         let anim = &armature.animations[a];
-        let last_frame = if let Some(kf) = anim.keyframes.last() {
-            kf.frame + 1
-        } else {
-            1
-        };
+        let last_frame = anim.last_frame() + 1;
         let all_frames = last_frame * shared_ui.anim_cycles;
         let mut new_arm = armature.clone();
 

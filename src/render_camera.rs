@@ -295,7 +295,7 @@ pub fn animation_bounds(armature: &Armature, anims: &[usize], follow: Option<&Re
     };
     for &a in anims {
         let Some(anim) = armature.animations.get(a) else { continue };
-        let last = anim.keyframes.iter().map(|k| k.frame).max().unwrap_or(0);
+        let last = anim.last_frame();
         for f in 0..=last {
             let posed = arm.animate(a, f, Some(&armature.bones));
             let shift = follow.map_or(Vec2::ZERO, |cam| follow_offset(cam, &armature.bones, &posed));

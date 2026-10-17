@@ -317,7 +317,7 @@ fn clean_anim(arm: &Armature, a: usize) -> Armature {
 }
 
 fn last_frame(anim: &Animation) -> i32 {
-    anim.keyframes.iter().map(|k| k.frame).max().unwrap_or(0)
+    anim.last_frame()
 }
 
 /// Constructed pose of every frame of an animation.

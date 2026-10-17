@@ -82,6 +82,7 @@ pub mod settings_modal;
 pub mod shared;
 pub mod skin;
 pub mod startup_window;
+pub mod timeline_view;
 pub mod styles_modal;
 pub mod topology;
 pub mod ui;
