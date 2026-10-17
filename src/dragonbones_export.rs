@@ -1094,6 +1094,8 @@ impl<'a> Ctx<'a> {
             }
         }
 
+        let ffd = self.shape_timelines(&arm, a, duration_sf, &to_db, duration);
+
         let mut out = json!({
             "name": name,
             "duration": duration,
@@ -1102,8 +1104,68 @@ impl<'a> Ctx<'a> {
             "bone": bone_tls,
             "slot": slot_tls,
         });
+        if !ffd.is_empty() {
+            out["ffd"] = json!(ffd);
+        }
         if let Some(z) = self.zorder_frames(anim, &to_db, duration) {
             out["zOrder"] = json!({ "frame": z });
+        }
+        out
+    }
+
+    /// Shapes as deform (FFD) timelines (docs/LIP_SYNC.md §4.5): each mesh with shapes
+    /// gets its summed shape offsets per frame, in the slot's space (y down) as its
+    /// mesh vertices are written. DragonBones tweens offsets linearly, so every frame is
+    /// sampled and straight runs are dropped. The parser itself moves the offsets into
+    /// bone space for skinned meshes.
+    fn shape_timelines(&self, arm: &Armature, a: usize, duration_sf: i32, to_db: &dyn Fn(i32) -> i64, duration: i64) -> Vec<Value> {
+        let anim = &arm.animations[a];
+        let meshes: Vec<&SlotInfo> = self
+            .slots
+            .iter()
+            .filter(|slot| {
+                let Some(bone) = self.bone(slot.bone_id) else { return false };
+                let keyed = anim.keyframes.iter().any(|k| k.bone_id == bone.id && k.element == AnimElement::ShapeWeight);
+                bone.verts_edited && !bone.vertices.is_empty() && !bone.shapes.is_empty() && (keyed || bone.shapes.iter().any(|s| s.weight != 0.))
+            })
+            .collect();
+        if meshes.is_empty() {
+            return vec![];
+        }
+        let poses: Vec<Vec<Bone>> = (0..=duration_sf).map(|f| crate::layers::pose(anim, &self.arm.bones, f)).collect();
+        let mut out = vec![];
+        for slot in meshes {
+            let bone = self.bone(slot.bone_id).unwrap();
+            let size = self.tex_sizes.get(&bone.tex).copied().unwrap_or(Vec2::new(1., 1.));
+            let (pivot_rot, pivot_scale) = match self.pivot_helper(bone.id) {
+                Some(_) => (0., Vec2::new(1., 1.)),
+                None => (bone.pivot_rot, bone.pivot_scale),
+            };
+            // path-bound vertices are written in their helper's space: no offsets there
+            let pathed: Vec<bool> = match self.skin_weights(bone, size) {
+                Some(skin) => skin.overrides.iter().map(|o| o.is_some()).collect(),
+                None => vec![false; bone.vertices.len()],
+            };
+            let frames: Vec<TrackFrame> = poses
+                .iter()
+                .enumerate()
+                .map(|(f, pose)| {
+                    let posed = pose.iter().find(|b| b.id == bone.id).unwrap_or(bone);
+                    let mut values = Vec::with_capacity(bone.vertices.len() * 2);
+                    for (i, o) in crate::shapes::offsets(posed).iter().enumerate() {
+                        let p = if pathed.get(i).copied().unwrap_or(false) { Vec2::ZERO } else { utils::rotate(&(*o * pivot_scale), pivot_rot) };
+                        values.push(p.x);
+                        values.push(-p.y);
+                    }
+                    TrackFrame { frame: f as i32, values, ease: Ease::Linear }
+                })
+                .collect();
+            let frames = simplify_linear(frames);
+            let frames = frames_json(&frames, to_db, duration, |v, f| {
+                f.insert("offset".into(), json!(0));
+                f.insert("vertices".into(), json!(v.iter().map(|x| r(*x)).collect::<Vec<_>>()));
+            });
+            out.push(json!({ "name": bone.tex, "slot": slot.name, "skin": "", "frame": frames }));
         }
         out
     }
@@ -1475,6 +1537,22 @@ fn simplify(frames: Vec<TrackFrame>) -> Vec<TrackFrame> {
             && i + 1 < frames.len()
             && frames[i].values == frames[i - 1].values
             && frames[i].values == frames[i + 1].values;
+        if !redundant {
+            out.push(frames[i].clone());
+        }
+    }
+    out
+}
+
+/// Drop frames a straight line between their neighbours gives (for sampled tracks).
+fn simplify_linear(frames: Vec<TrackFrame>) -> Vec<TrackFrame> {
+    let mut out: Vec<TrackFrame> = vec![];
+    for i in 0..frames.len() {
+        let redundant = i > 0 && i + 1 < frames.len() && {
+            let (a, b, c) = (out.last().unwrap(), &frames[i], &frames[i + 1]);
+            let t = (b.frame - a.frame) as f32 / (c.frame - a.frame).max(1) as f32;
+            a.values.iter().zip(&b.values).zip(&c.values).all(|((x, y), z)| (x + (z - x) * t - y).abs() < 1e-3)
+        };
         if !redundant {
             out.push(frames[i].clone());
         }

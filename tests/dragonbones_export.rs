@@ -753,3 +753,36 @@ fn import_round_trip() {
         );
     }
 }
+
+#[test]
+fn shapes_export_as_deform_timelines() {
+    let mut arm = Armature::default();
+    let tex = texture(&mut arm, "mouth", 20, 10);
+    arm.styles.push(Style { name: "default".into(), active: true, textures: vec![tex], ..Default::default() });
+    let mut mouth = bone(0, -1, "mouth");
+    mouth.tex = "mouth".into();
+    mouth.verts_edited = true;
+    let v = |id: u32, x: f32, y: f32| Vertex { id, pos: Vec2::new(x, y), uv: Vec2::new(x / 20. + 0.5, 0.5 - y / 10.), ..Default::default() };
+    mouth.vertices = vec![v(0, -10., -5.), v(1, 10., -5.), v(2, 10., 5.), v(3, -10., 5.)];
+    mouth.indices = vec![0, 1, 2, 0, 2, 3];
+    mouth.shapes = vec![MeshShape { id: 1, name: "open".into(), deltas: vec![ShapeDelta { vert: 0, delta: Vec2::new(0., -4.) }], ..Default::default() }];
+    arm.bones = vec![mouth];
+    // weight 0 → 1 over 10 frames, linear: two deform frames suffice
+    let mut k0 = key(0, 0, AnimElement::ShapeWeight, 0., HandlePreset::Linear);
+    let mut k1 = key(10, 0, AnimElement::ShapeWeight, 1., HandlePreset::Linear);
+    k0.shape = 1;
+    k1.shape = 1;
+    arm.animations = vec![Animation { name: "talk".into(), fps: 24, keyframes: vec![k0, k1], ..Default::default() }];
+
+    let (_, ske, tex) = export(&arm, "shapes");
+    validate(&ske, &tex);
+    let ffd = &ske["armature"][0]["animation"][0]["ffd"][0];
+    assert_eq!(ffd["slot"], "mouth");
+    assert_eq!(ffd["name"], "mouth");
+    let frames = ffd["frame"].as_array().unwrap();
+    assert_eq!(frames.len(), 2, "a straight run needs only its ends: {:?}", frames);
+    let last = frames[1]["vertices"].as_array().unwrap();
+    // vertex 0 moves down 4 (y up in Keyternity, so +4 in DragonBones' y-down space)
+    assert_eq!((last[0].as_f64().unwrap(), last[1].as_f64().unwrap()), (0., 4.));
+    assert!(last[2..].iter().all(|x| x.as_f64().unwrap() == 0.));
+}

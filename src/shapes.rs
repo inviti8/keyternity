@@ -210,3 +210,49 @@ pub fn mirror_name(name: &str) -> String {
     }
     format!("{name} (mirror)")
 }
+
+/// Capture as shape (docs/LIP_SYNC.md §4.4): the offsets that make the setup pose show
+/// the mesh as it is posed now. `rest` and `posed` are the armature's bones posed by
+/// `renderer::construction`, at the setup pose (shapes at 0) and as shown. Both meshes
+/// are taken back into the mesh's own space through its setup transform, so applying
+/// the shape at the setup pose reproduces the pose exactly for vertices that follow
+/// the mesh bone, and closely for vertices bound to others.
+pub fn capture(rest: &[Bone], posed: &[Bone], bone_id: i32) -> Vec<ShapeDelta> {
+    let (Some(r), Some(p)) = (rest.iter().find(|b| b.id == bone_id), posed.iter().find(|b| b.id == bone_id)) else {
+        return vec![];
+    };
+    // the inverse of `renderer::inherit_vert` for the mesh bone at its setup pose
+    let scale = r.scale * r.pivot_scale;
+    let rot = r.rot + r.pivot_rot;
+    let local = |w: Vec2| {
+        let v = crate::utils::rotate(&(w - r.pos), -rot);
+        Vec2::new(if scale.x != 0. { v.x / scale.x } else { 0. }, if scale.y != 0. { v.y / scale.y } else { 0. })
+    };
+    let mut out = vec![];
+    for rv in &r.vertices {
+        let Some(pv) = p.vertices.iter().find(|v| v.id == rv.id) else { continue };
+        let delta = local(pv.pos) - local(rv.pos);
+        if delta.mag() > 1e-4 {
+            out.push(ShapeDelta { vert: rv.id, delta });
+        }
+    }
+    out
+}
+
+/// Soft sculpting: each unselected vertex within `radius` of a selected one (rest
+/// positions), with a smooth falloff weight (1 at the selection, 0 at the radius).
+pub fn soft_weights(vertices: &[Vertex], selected: &[u32], radius: f32) -> Vec<(u32, f32)> {
+    let picked: Vec<Vec2> = vertices.iter().filter(|v| selected.contains(&v.id)).map(|v| v.pos).collect();
+    if picked.is_empty() || radius <= 0. {
+        return vec![];
+    }
+    vertices
+        .iter()
+        .filter(|v| !selected.contains(&v.id))
+        .filter_map(|v| {
+            let d = picked.iter().map(|p| (*p - v.pos).mag()).fold(f32::MAX, f32::min);
+            let t = 1. - d / radius;
+            (t > 0.).then(|| (v.id, t * t * (3. - 2. * t)))
+        })
+        .collect()
+}

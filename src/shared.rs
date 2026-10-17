@@ -2556,6 +2556,9 @@ pub struct EditMode {
     /// sculpting a shape (bone id, shape id): vertex drags edit its offsets, and it
     /// shows at full weight with the bone's other shapes at 0 (docs/LIP_SYNC.md §4.4)
     pub sculpt_shape: Option<(i32, i32)>,
+    /// sculpting: unselected vertices this close (mesh units) to a dragged one follow
+    /// it with a smooth falloff; 0 moves only the selection
+    pub sculpt_radius: f32,
     pub export_bake_ik: bool,
     /// bake animation layers into Base (exports for runtimes)
     pub export_flatten_layers: bool,
@@ -2971,6 +2974,8 @@ pub enum Events {
     SetShape,
     ToggleSculptShape,
     DuplicateShape,
+    CaptureShape,
+    SetSculptRadius,
     ResetVertices,
     SelectBind,
     DeleteIkTarget,
@@ -3166,6 +3171,20 @@ impl EventState {
         self.events.push(E::ToggleSculptShape);
         self.values.push(bone_id as f32);
         self.str_values.push(shape.to_string());
+    }
+
+    /// Capture the mesh as it's posed now as a new shape (docs/LIP_SYNC.md §4.4).
+    pub fn capture_shape(&mut self, bone_id: i32, name: &str) {
+        self.events.push(E::CaptureShape);
+        self.values.push(bone_id as f32);
+        self.str_values.push(name.to_string());
+    }
+
+    /// Sculpting's soft radius (0: only the selection moves).
+    pub fn set_sculpt_radius(&mut self, radius: f32) {
+        self.events.push(E::SetSculptRadius);
+        self.values.push(radius);
+        self.str_values.push(String::new());
     }
 
     /// Copy a shape (mirrored across the mesh's x axis when `mirror`), as a new one.

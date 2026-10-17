@@ -222,3 +222,39 @@ fn sculpting_shows_the_shape_alone() {
     run(&mut s);
     assert_eq!(s.edit_mode.sculpt_shape, None);
 }
+
+#[test]
+fn capturing_a_pose_as_a_shape() {
+    // a jaw bone the mesh's bottom vertices are bound to
+    let mut arm = face();
+    arm.bones.push(Bone { id: 2, parent_id: -1, name: "jaw".into(), pos: Vec2::new(100., 50.), scale: Vec2::new(1., 1.), pivot_scale: Vec2::new(1., 1.), ..Default::default() });
+    arm.bones[0].binds = vec![BoneBind { bone_id: 2, is_path: false, verts: vec![BoneBindVert { id: 10, weight: 1. }, BoneBindVert { id: 11, weight: 1. }] }];
+    arm.bones[0].shapes = vec![];
+    let rest = { let mut r = vec![]; renderer::construction(&mut r, &arm.bones); r };
+
+    // pose: jaw down 6
+    let mut posed_setup = arm.bones.clone();
+    posed_setup[1].pos.y -= 6.;
+    let posed = { let mut p = vec![]; renderer::construction(&mut p, &posed_setup); p };
+
+    let deltas = shapes::capture(&rest, &posed, 1);
+    assert_eq!(deltas.len(), 2, "only the jaw's vertices moved: {:?}", deltas);
+
+    // the shape alone, at the setup pose, reproduces the pose
+    let mut with_shape = arm.bones.clone();
+    with_shape[0].shapes = vec![MeshShape { id: 1, name: "open".into(), deltas, weight: 1., ..Default::default() }];
+    let shown = { let mut s = vec![]; renderer::construction(&mut s, &with_shape); s };
+    for (a, b) in shown[0].vertices.iter().zip(&posed[0].vertices) {
+        assert!((a.pos - b.pos).mag() < 1e-3, "{:?} vs {:?}", a.pos, b.pos);
+    }
+}
+
+#[test]
+fn soft_sculpting_falls_off_with_distance() {
+    let verts: Vec<Vertex> = (0..5).map(|i| vertex(i, i as f32 * 2., 0.)).collect();
+    let w = shapes::soft_weights(&verts, &[0], 5.);
+    // distances 2 and 4 are inside the radius, 6 and 8 aren't
+    assert_eq!(w.iter().map(|(id, _)| *id).collect::<Vec<_>>(), vec![1, 2]);
+    assert!(w[0].1 > w[1].1 && w[0].1 < 1. && w[1].1 > 0.);
+    assert!(shapes::soft_weights(&verts, &[0], 0.).is_empty());
+}

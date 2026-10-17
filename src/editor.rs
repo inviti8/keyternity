@@ -43,7 +43,7 @@ pub fn iterate_events(
             E::AddCamera | E::DeleteCamera | E::DuplicateCamera | E::FitCamera => undo_states.new_undo_cameras(&armature.cameras),
             E::SetCamera if events.values[0] == 1. => undo_states.new_undo_cameras(&armature.cameras),
             E::SetLayer if events.values[0] == 1. => undo_states.new_undo_anim(armature.sel_anim(&selections).unwrap()),
-            E::AddShape | E::DeleteShape | E::DuplicateShape => {
+            E::AddShape | E::DeleteShape | E::DuplicateShape | E::CaptureShape => {
                 if let Some(b) = armature.bones.iter().find(|b| b.id == events.values[0] as i32) {
                     undo_states.new_undo_bone(b);
                     undo_states.new_undo_anims(&armature.animations);
@@ -196,6 +196,7 @@ pub fn iterate_events(
         || event == Events::SetShape
         || event == Events::ToggleSculptShape
         || event == Events::DuplicateShape
+        || event == Events::CaptureShape
     {
         let bone_id = events.values[0] as i32;
         let s = events.str_values[0].clone();
@@ -213,6 +214,23 @@ pub fn iterate_events(
                     if edit_mode.sculpt_shape == Some((bone_id, id)) {
                         edit_mode.sculpt_shape = None;
                     }
+                }
+            }
+            Events::CaptureShape => {
+                // the shown pose against the setup pose (shapes at 0)
+                let mut setup = armature.bones.clone();
+                for b in &mut setup {
+                    for s in &mut b.shapes {
+                        s.weight = 0.;
+                    }
+                }
+                let mut rest = vec![];
+                renderer::construction(&mut rest, &setup);
+                let deltas = shapes::capture(&rest, &renderer.temp_bones, bone_id);
+                if let Some(bone) = armature.bones.iter_mut().find(|b| b.id == bone_id) {
+                    let id = shapes::next_id(bone);
+                    let name = shapes::unique_name(bone, if s.is_empty() { "Pose" } else { &s });
+                    bone.shapes.push(MeshShape { id, name, deltas, ..Default::default() });
                 }
             }
             Events::ToggleSculptShape => {
@@ -585,6 +603,7 @@ pub fn simple_event(
         }
         Events::ToggleShowAllEnvelopes => edit_mode.show_all_envelopes = !edit_mode.show_all_envelopes,
         Events::ToggleShowCameras => edit_mode.show_cameras = !edit_mode.show_cameras,
+        Events::SetSculptRadius => edit_mode.sculpt_radius = value.max(0.),
         Events::AddLayer | Events::SelectLayer | Events::SetLayer | Events::DeleteLayer
         | Events::DuplicateLayer | Events::MergeLayerDown | Events::FlattenLayers
         | Events::CloseLoop | Events::BakeGenerator | Events::MoveLayer => {
@@ -1127,11 +1146,22 @@ pub fn simple_event(
             let og_bone = &mut armature.sel_bone_mut(&selections).unwrap();
             let moved = utils::rotate(&(mouse_vel * zoom), -total_rot) / scale;
             // sculpting a shape: the drag shapes its offset
-            if let Some((b, s)) = edit_mode.sculpt_shape.filter(|(b, _)| *b == og_bone.id) {
-                let _ = b;
+            if let Some((_, s)) = edit_mode.sculpt_shape.filter(|(b, _)| *b == og_bone.id) {
+                // with a soft radius, the first dragged vertex also carries its
+                // unselected neighbours (once per drag step)
+                let soft = if edit_mode.sculpt_radius > 0. && selections.vert_ids.first() == Some(&(value as usize)) {
+                    let sel: Vec<u32> = selections.vert_ids.iter().map(|v| *v as u32).collect();
+                    shapes::soft_weights(&og_bone.vertices, &sel, edit_mode.sculpt_radius)
+                } else {
+                    vec![]
+                };
                 if let Some(shape) = og_bone.shapes.iter_mut().find(|sh| sh.id == s) {
                     let d = shapes::delta_of(shape, value as u32);
                     shapes::set_delta(shape, value as u32, d - moved);
+                    for (id, w) in soft {
+                        let d = shapes::delta_of(shape, id);
+                        shapes::set_delta(shape, id, d - moved * w);
+                    }
                 }
                 return;
             }

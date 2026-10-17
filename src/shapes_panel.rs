@@ -53,6 +53,14 @@ pub fn draw(
                     }
                 });
             });
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(loc(shared_ui, "soft")).color(text)).on_hover_text(loc(shared_ui, "soft_desc"));
+                let mut r = edit_mode.sculpt_radius;
+                let drag = egui::DragValue::new(&mut r).range(0.0..=10_000.0).speed(0.5).max_decimals(1);
+                if ui.add(drag).on_hover_text(loc(shared_ui, "soft_desc")).changed() {
+                    events.set_sculpt_radius(r);
+                }
+            });
         });
         ui.add_space(4.);
     }
@@ -120,6 +128,9 @@ pub fn draw(
     ui.horizontal(|ui| {
         if ui.skf_button(loc(shared_ui, "add")).on_hover_text(loc(shared_ui, "add_desc")).clicked() {
             events.add_shape(bone.id, &loc(shared_ui, "new_name"));
+        }
+        if ui.skf_button(loc(shared_ui, "capture")).on_hover_text(loc(shared_ui, "capture_desc")).clicked() {
+            events.capture_shape(bone.id, &loc(shared_ui, "capture_name"));
         }
         if animating && frame < 0 {
             ui.label(egui::RichText::new(loc(shared_ui, "no_frame")).color(dim).size(11.));

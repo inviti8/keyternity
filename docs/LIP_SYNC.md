@@ -115,6 +115,28 @@ in bind space.
   takes the current skinned vertex positions back into rest-space deltas, so a
   bone-built mouth can become a reusable shape.
 
+**As built (phase 1):**
+- **Storage and channels:**
+  - Shapes live on the mesh bone (`Bone::shapes`), with offsets by vertex id, saved by
+    index in the mesh's visuals.
+  - Weights key as `ShapeWeight`, and a new `Keyframe::shape` (the shape's id, from 1)
+    gives each shape its own channel through layers, loops, flattening and retiming.
+- **Applying:** offsets apply in `renderer::construct_verts`, before binds, so every
+  posed-vertex path (view, onions, exports, camera fit, DragonBones sampling) shows
+  them.
+- **The bone panel's Shapes section:**
+  - weight sliders that key while animating (one undo step per drag), with a ◆/◇ key
+    button;
+  - rename, Duplicate, *Mirror to Other Side* (flipped across x = 0, with `_L`↔`_R`
+    names), Delete (with the shape's keys), *+ Add Shape* and *Capture Pose*.
+- **Sculpt:**
+  - Sculpting shows the shape alone at full weight and turns on vertex editing.
+  - Vertex drags, of one vertex or a selection, then edit its offsets. A **soft
+    radius** carries nearby unselected vertices along with a smooth falloff.
+- **Mesh edits:** Pen and New Vertex interpolate offsets, removals drop them, and
+  Trace and Reset prune them.
+- **Not yet:** the "Show others" sculpt toggle, shape groups and exclusivity (§6.3).
+
 ### 4.5 Export
 
 | target | shapes |
@@ -645,7 +667,7 @@ reviews and refines.
 | phase | contents | notes |
 |---|---|---|
 | **0. Timeline pass and layers** | [TIMELINE.md](TIMELINE.md): navigation, compact rows and keys, then animation layers | Its own feature, done first |
-| **1. Shapes** | Data, evaluation before skinning, ShapeWeight keys and timeline rows, Shapes panel, sculpt mode, mirror, capture from pose, remapping on topology edits, `.skf` and DragonBones (FFD) export, tests | Useful immediately: blinks, brows, squash. |
+| **1. Shapes** ✓ | Data, evaluation before skinning, ShapeWeight keys and timeline rows, Shapes panel, sculpt mode, mirror, capture from pose, remapping on topology edits, `.skf` and DragonBones (FFD) export, tests | Useful immediately: blinks, brows, squash. |
 | **1b. Standard face and face rig** | The standard shape list and aliases, *Add Standard Face Shapes*, the mapping table, *Set Up Face*, control helper bones and the driver table, the default layout generated from `FaceBot.FBX`, the rig overlay panel, Eye Look, driven weights baked on export | The FaceBot structure in 2D (§6.4–6.6) |
 | **1c. Generated faces** | Landmark map on the rig mask, *Set Up Face* (midline, one side, derived side: mirror for front views, cylinder model for three-quarter, profile mode), view suggestion, snapping to feature lines, mesh checks (lip and lid seams, mouth interior, density) with fixes, templates (JSON) with style presets and per-shape strength, helper-bone propagation with regions, *Generate Face*, generated + corrections and regenerate | After 1 and 1b. Makes the whole face a few minutes' setup. |
 | **2. Dialog audio** | Clips embedded in `.skf`, Symphonia decoding, rodio playback in sync, waveform, audio scrub, video export with audio | Desktop first |
