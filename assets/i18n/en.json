@@ -301,6 +301,17 @@
     "duplicate": "Duplicate",
     "delete": "Delete"
   },
+  "audio": {
+    "add": "+ Audio",
+    "add_desc": "Import dialog (wav, mp3, ogg, flac, m4a) onto this animation at the current frame. It's saved inside the .skf, plays along, and you can hear it while scrubbing.",
+    "clip_desc": "$name ($secs s). Drag to move it in time.",
+    "missing": "(audio missing)",
+    "mute": "Mute this clip",
+    "gain": "Volume: drag to change; double-click for 100%",
+    "remove": "Remove this clip",
+    "no_animation": "Select an animation to add audio to.",
+    "decode_failed": "Couldn't read the audio file: $err"
+  },
   "face_panel": {
     "title": "Face Rig",
     "hint": "Click a control to select it for Key and Reset. Left-drag moves, right-drag twists, middle-drag closes eyes or pushes lips and jaw in and out (Shift and Alt for right and middle on a trackpad).",

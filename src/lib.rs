@@ -56,6 +56,7 @@ pub const REPO_URL: &str = "https://github.com/inviti8/keyternity";
 
 pub mod agent;
 pub mod armature_window;
+pub mod audio;
 pub mod atlas_modal;
 pub mod auto_mesh;
 pub mod bind_pose;
@@ -854,6 +855,8 @@ impl BackendRenderer {
                 *shared.ui.file_type.lock().unwrap() = 1;
             } else if ext.contains("skf") {
                 *shared.ui.file_type.lock().unwrap() = 2;
+            } else if audio::EXTENSIONS.contains(&ext.as_str()) {
+                *shared.ui.file_type.lock().unwrap() = 3;
             }
             shared.ui.file_elapsed = None;
             shared.ui.dropped_file_path = vec![];
@@ -1538,7 +1541,18 @@ impl BackendRenderer {
                 _path_str = &armature.animations[a].name;
             }
             shared_ui.custom_error = if shared_ui.exporting_video_type == ExportVideoType::Mp4 {
-                Self::encode_video(bufs[buf_idx].clone(), fps, size, _path_str, &ffmpeg_bin)
+                // the animation's dialog, mixed down for ffmpeg to mux in
+                let secs = bufs[buf_idx].len() as f32 / fps.max(1) as f32;
+                let wav = audio::mix(armature, a, secs).map(|m| (m, base.with_extension("audio.wav")));
+                #[cfg(not(target_arch = "wasm32"))]
+                let wav = wav.filter(|(m, p)| std::fs::write(p, audio::wav_bytes(m, 2, audio::MIX_RATE)).is_ok()).map(|(_, p)| p);
+                #[cfg(target_arch = "wasm32")]
+                let wav: Option<PathBuf> = wav.and(None);
+                let err = Self::encode_video(bufs[buf_idx].clone(), fps, size, _path_str, &ffmpeg_bin, wav.as_ref());
+                if let Some(p) = &wav {
+                    let _ = std::fs::remove_file(p);
+                }
+                err
             } else {
                 Self::encode_gif(bufs[buf_idx].clone(), fps, size, _path_str, &ffmpeg_bin)
             };
@@ -1661,6 +1675,11 @@ impl BackendRenderer {
                 let atlas_name = format!("atlas{}{}", i.to_string(), atlas_ext);
                 zip.start_file(atlas_name, options.clone()).unwrap();
                 zip.write(&png_bufs[i]).unwrap();
+            }
+            // dialog audio, as imported
+            for a in utils::used_audio(&armature) {
+                zip.start_file(audio::file_name(a), options.clone()).unwrap();
+                zip.write(&a.bytes).unwrap();
             }
 
             zip.finish().unwrap();
@@ -1857,17 +1876,20 @@ impl BackendRenderer {
         window: Vec2,
         path: &String,
         _ffmpeg_bin: &String,
+        _audio: Option<&PathBuf>,
     ) -> String {
         #[cfg(not(target_arch = "wasm32"))]
         {
             #[rustfmt::skip]
+            let mut args: Vec<String> = ["-y", "-f", "rawvideo", "-pixel_format", "rgba", "-video_size", &format!("{}x{}", window.x, window.y),
+                "-framerate", &fps.to_string(), "-i", "pipe:0"].iter().map(|s| s.to_string()).collect();
+            // dialog audio, cut to the video's length
+            if let Some(wav) = _audio {
+                args.extend(["-i".to_string(), wav.to_string_lossy().to_string(), "-c:a".into(), "aac".into(), "-b:a".into(), "192k".into(), "-shortest".into()]);
+            }
+            args.extend(["-pix_fmt".to_string(), "yuv420p".into(), format!("{}.mp4", path)]);
             let mut child = Command::new(_ffmpeg_bin)
-                .args(["-y", "-f", "rawvideo", "-pixel_format", "rgba", "-video_size", &format!("{}x{}", window.x, window.y), 
-                    "-framerate", &fps.to_string(), "-i", "pipe:0", 
-                    // disabled: manual encoder codec - not needed for now
-                    // "-c:v", codec, 
-                    "-pix_fmt", "yuv420p",
-                    &format!("{}.mp4", path.to_string())])
+                .args(&args)
                 .stdin(Stdio::piped())
                 .spawn();
 

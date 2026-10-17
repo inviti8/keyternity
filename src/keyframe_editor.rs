@@ -343,6 +343,7 @@ fn timeline_editor(
 
             draw_ruler(ui, shared_ui, selections, armature, config, events, area.left());
             draw_layer_stack(ui, shared_ui, armature, config, selections, events, area.left());
+            draw_audio_lanes(ui, shared_ui, armature, config, selections, events, area.left());
 
             // The options bar has to be at the bottom, but it needs to be created first
             // so that the remaining height can be taken up by the rows.
@@ -764,6 +765,15 @@ pub fn draw_bottom_bar(
             });
             if button.inner.clicked() {
                 events.delete_bone_keyframes();
+            }
+
+            // dialog audio (docs/LIP_SYNC.md §5)
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                ui.add_space(5.);
+                if ui.skf_button(shared_ui.loc("audio.add")).on_hover_text(shared_ui.loc("audio.add_desc")).clicked() {
+                    utils::open_audio_dialog(&shared_ui.file_path, &shared_ui.file_type);
+                }
             }
         });
     });
@@ -1219,6 +1229,142 @@ fn draw_layer_stack(
         if resp.secondary_clicked() {
             shared_ui.context_menu.show(&context_id);
         }
+    }
+}
+
+/// an audio lane's height
+const AUDIO_H: f32 = 30.;
+
+/// The animation's dialog audio (docs/LIP_SYNC.md §5): a lane per clip with its
+/// waveform. Drag a clip to move it in time; mute, volume and remove are in its label.
+fn draw_audio_lanes(
+    ui: &mut egui::Ui,
+    shared_ui: &mut crate::Ui,
+    armature: &Armature,
+    config: &Config,
+    selections: &SelectionState,
+    events: &mut EventState,
+    labels_left: f32,
+) {
+    let anim = &armature.animations[selections.anim];
+    if !ui.input(|i| i.pointer.primary_down()) {
+        shared_ui.audio_drag = None;
+        shared_ui.audio_drag_stepped = false;
+    }
+    if anim.clips.is_empty() {
+        return;
+    }
+    let (gl, gw) = shared_ui.timeline_graph;
+    let view = shared_ui.timeline_view;
+    let fps = anim.fps.max(1) as f32;
+    let x_of = |frame: f32| view.frame_to_x(frame, gl, gw);
+    let text: egui::Color32 = config.colors.text.into();
+    let dark: egui::Color32 = config.colors.dark_accent.into();
+    let wave = egui::Color32::from_rgb(90, 170, 230);
+    let hand = egui::CursorIcon::PointingHand;
+
+    let n = anim.clips.len();
+    let top = ui.cursor().top();
+    let full = egui::Rect::from_min_size(egui::pos2(labels_left, top), egui::vec2(gl + gw - labels_left, n as f32 * AUDIO_H + 2.));
+    ui.allocate_rect(full, egui::Sense::hover());
+    let painter = ui.painter_at(full);
+    painter.rect_filled(full, egui::CornerRadius::ZERO, shade(dark, -10));
+
+    for (row, clip) in anim.clips.iter().enumerate() {
+        let r = egui::Rect::from_min_size(egui::pos2(labels_left, top + row as f32 * AUDIO_H), egui::vec2(full.width(), AUDIO_H));
+        let label = egui::Rect::from_x_y_ranges(labels_left..=gl - 1., r.y_range());
+        let lane = egui::Rect::from_x_y_ranges(gl..=gl + gw, r.shrink2(egui::vec2(0., 2.)).y_range());
+        let id = ui.id().with(("timeline_audio", clip.id));
+        let data = armature.audio.iter().find(|d| d.id == clip.audio);
+        let dim = |c: egui::Color32| if clip.muted { c.gamma_multiply(0.35) } else { c };
+
+        // the clip: its span and waveform
+        let secs = data.map_or(0., |d| d.duration());
+        let (x0, x1) = (x_of(clip.start_frame as f32), x_of(clip.start_frame as f32 + secs * fps));
+        let body = egui::Rect::from_x_y_ranges(x0..=x1.max(x0 + 2.), lane.y_range());
+        let gp = painter.with_clip_rect(lane);
+        gp.rect_filled(body, egui::CornerRadius::same(2), dim(shade(dark, 14)));
+        if let Some(d) = data {
+            let mid = body.center().y;
+            let half = body.height() / 2. - 2.;
+            let per_px = d.peaks.len() as f32 / (x1 - x0).max(1.);
+            for px in x0.max(lane.left()).floor() as i32..x1.min(lane.right()).ceil() as i32 {
+                let a = ((px as f32 - x0).max(0.) * per_px) as usize;
+                let b = (((px + 1) as f32 - x0).max(0.) * per_px).ceil() as usize;
+                let (lo, hi) = crate::audio::peak_span(&d.peaks, a, b);
+                let (lo, hi) = ((lo * clip.gain).max(-1.), (hi * clip.gain).min(1.));
+                gp.vline(px as f32 + 0.5, (mid - hi * half)..=(mid - lo * half + 1.), egui::Stroke::new(1., dim(wave)));
+            }
+        } else {
+            let font = egui::FontId::proportional(11.);
+            gp.text(body.left_center() + egui::vec2(4., 0.), egui::Align2::LEFT_CENTER, shared_ui.loc("audio.missing"), font, text.gamma_multiply(0.6));
+        }
+        gp.rect_stroke(body, egui::CornerRadius::same(2), egui::Stroke::new(1., dim(wave.gamma_multiply(0.7))), egui::StrokeKind::Inside);
+
+        // drag the clip in time, by whole frames, as one undo step
+        let tip = shared_ui.loc("audio.clip_desc").replace("$name", &clip.name).replace("$secs", &format!("{secs:.2}"));
+        let resp = ui
+            .interact(body.intersect(lane), id.with("body"), egui::Sense::click_and_drag())
+            .on_hover_cursor(egui::CursorIcon::Grab)
+            .on_hover_text(tip);
+        if resp.drag_started() {
+            let x = ui.input(|i| i.pointer.press_origin()).map_or(body.left(), |p| p.x);
+            shared_ui.audio_drag = Some((clip.id, clip.start_frame, x));
+        }
+        if let Some((_, start, origin)) = shared_ui.audio_drag.filter(|d| d.0 == clip.id) {
+            if let Some(p) = ui.input(|i| i.pointer.hover_pos()) {
+                let start_frame = start + ((p.x - origin) / view.px_per_frame(gw)).round() as i32;
+                if start_frame != clip.start_frame {
+                    let step = !shared_ui.audio_drag_stepped;
+                    shared_ui.audio_drag_stepped = true;
+                    events.set_clip(&crate::audio::AudioClip { start_frame, ..clip.clone() }, step);
+                }
+            }
+        }
+
+        // label: name, then volume, mute, remove (right to left)
+        let mut x = label.right() - 4.;
+        let button = |ui: &mut egui::Ui, x: &mut f32, s: &str, on: bool, tip: String, salt: &str| -> bool {
+            let b = egui::Rect::from_min_max(egui::pos2(*x - 15., r.center().y - 8.), egui::pos2(*x, r.center().y + 8.));
+            *x -= 17.;
+            let resp = ui.interact(b, id.with(salt), egui::Sense::click()).on_hover_cursor(hand).on_hover_text(tip);
+            let bg = if on { shade(dark, 50) } else { shade(dark, 8) };
+            painter.rect_filled(b, egui::CornerRadius::same(2), if resp.hovered() { shade(bg, 15) } else { bg });
+            let col = if on { text } else { text.gamma_multiply(0.6) };
+            painter.text(b.center(), egui::Align2::CENTER_CENTER, s, egui::FontId::proportional(11.), col);
+            resp.clicked()
+        };
+        if button(ui, &mut x, "✕", false, shared_ui.loc("audio.remove"), "remove") {
+            events.delete_clip(clip.id);
+        }
+        if button(ui, &mut x, "M", clip.muted, shared_ui.loc("audio.mute"), "mute") {
+            events.set_clip(&crate::audio::AudioClip { muted: !clip.muted, ..clip.clone() }, true);
+        }
+        // volume: drag to change, as one undo step; double-click for 100%
+        let w = egui::Rect::from_min_max(egui::pos2(x - 38., r.center().y - 8.), egui::pos2(x, r.center().y + 8.));
+        x -= 42.;
+        let g = ui
+            .interact(w, id.with("gain"), egui::Sense::click_and_drag())
+            .on_hover_cursor(egui::CursorIcon::ResizeHorizontal)
+            .on_hover_text(shared_ui.loc("audio.gain"));
+        painter.rect_filled(w, egui::CornerRadius::same(2), shade(dark, 8));
+        let fill = egui::Rect::from_min_size(w.min, egui::vec2(w.width() * (clip.gain / 2.).clamp(0., 1.), w.height()));
+        painter.rect_filled(fill, egui::CornerRadius::same(2), shade(dark, 40));
+        painter.text(w.center(), egui::Align2::CENTER_CENTER, format!("{:.0}%", clip.gain * 100.), egui::FontId::proportional(11.), text);
+        if g.dragged() || g.drag_started() {
+            let gain = (clip.gain + g.drag_delta().x / 100.).clamp(0., 2.);
+            events.set_clip(&crate::audio::AudioClip { gain, ..clip.clone() }, g.drag_started());
+        } else if g.double_clicked() {
+            events.set_clip(&crate::audio::AudioClip { gain: 1., ..clip.clone() }, true);
+        }
+        let name_rect = egui::Rect::from_x_y_ranges(label.left() + 6.0..=x.max(label.left() + 30.), r.y_range());
+        painter.with_clip_rect(name_rect).text(
+            egui::pos2(name_rect.left(), r.center().y),
+            egui::Align2::LEFT_CENTER,
+            format!("♪ {}", clip.name),
+            egui::FontId::proportional(12.5),
+            dim(text),
+        );
     }
 }
 

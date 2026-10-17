@@ -44,6 +44,8 @@ pub fn iterate_events(
             E::SetCamera if events.values[0] == 1. => undo_states.new_undo_cameras(&armature.cameras),
             E::SetLayer if events.values[0] == 1. => undo_states.new_undo_anim(armature.sel_anim(&selections).unwrap()),
             E::SetUpFace => undo_states.new_undo_bones(&armature.bones),
+            E::SetClip if events.values[0] == 1. => undo_states.new_undo_anim(armature.sel_anim(&selections).unwrap()),
+            E::DeleteClip => undo_states.new_undo_anim(armature.sel_anim(&selections).unwrap()),
             E::FaceLandmarks => {
                 if let Some(b) = armature.bones.iter().find(|b| b.id == events.values[0] as i32) {
                     undo_states.new_undo_bone(b);
@@ -376,10 +378,16 @@ pub fn iterate_events(
         let selected_anim = selections.anim;
         let selected_bone_idx = selections.bone_idx;
         let selected_bone_ids = selections.bone_ids.clone();
+        let prev_frame = selections.anim_frame;
         unselect_all(selections, edit_mode, ui);
         ui.last_selected = "keyframe".to_string();
         selections.anim = selected_anim;
         selections.anim_frame = events.values[0] as i32;
+        // scrubbing: hear the dialog under the new frame
+        let playing = armature.animations.iter().any(|a| a.elapsed.is_some());
+        if selections.anim_frame != prev_frame && !playing {
+            crate::audio::scrub(armature, selected_anim, selections.anim_frame as f32);
+        }
 
         // select all keyframes in this frame if requested
         if events.values[1] == 1. {
@@ -531,9 +539,16 @@ pub fn iterate_events(
         events.events.remove(0);
         events.values.drain(0..=1);
     } else if event == Events::ToggleAnimPlaying {
-        let anim = &mut armature.animations[events.values[0] as usize];
+        let a = events.values[0] as usize;
+        let anim = &mut armature.animations[a];
         let playing = events.values[1] == 1.;
         anim.elapsed = if playing { Some(Instant::now()) } else { None };
+        // dialog audio plays along, from the start like the animation
+        if playing {
+            crate::audio::play(armature, a, 0.);
+        } else {
+            crate::audio::stop();
+        }
         events.events.remove(0);
         events.values.drain(0..=1);
     } else if event == Events::DragBone {
@@ -676,6 +691,11 @@ pub fn simple_event(
             // rigs from before limits take the current layout
             face::upgrade(armature);
             ui.face_panel_open = true;
+        }
+        Events::SetClip | Events::DeleteClip => {
+            if let Some(anim) = armature.animations.get_mut(selections.anim) {
+                crate::audio::clip_event(event, value, &str_value, anim);
+            }
         }
         Events::AddLayer | Events::SelectLayer | Events::SetLayer | Events::DeleteLayer
         | Events::DuplicateLayer | Events::MergeLayerDown | Events::FlattenLayers
@@ -918,6 +938,7 @@ pub fn simple_event(
             for anim in &mut armature.animations {
                 anim.elapsed = None;
             }
+            crate::audio::stop();
         }
         Events::CancelPendingTexture => {
             _ = armature.sel_style_mut(&selections).unwrap().textures.pop()

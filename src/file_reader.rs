@@ -50,9 +50,47 @@ pub fn read(shared: &mut Shared, renderer: &Option<BackendRenderer>, context: &e
 
     func!(read_image_loaders);
     func!(read_import);
+    #[cfg(not(target_arch = "wasm32"))]
+    read_audio(shared);
     if shared.ui.done_pending {
         func!(add_pending_textures);
         shared.ui.done_pending = false;
+    }
+}
+
+/// Import dialog audio (docs/LIP_SYNC.md §5): each picked file becomes audio the rig
+/// carries, placed as a clip at the selected animation's current frame (or 0).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn read_audio(shared: &mut Shared) {
+    if *shared.ui.file_type.lock().unwrap() != 3 {
+        return;
+    }
+    *shared.ui.file_type.lock().unwrap() = 0;
+    let paths = shared.ui.file_path.lock().unwrap().clone();
+    let anim = shared.selections.anim;
+    if anim >= shared.armature.animations.len() {
+        shared.events.open_modal("audio.no_animation", false);
+        return;
+    }
+    shared.undo_states.new_undo_anim(&shared.armature.animations[anim]);
+    for path in paths {
+        let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("audio").to_string();
+        let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("wav").to_string();
+        let Ok(bytes) = fs::read(&path) else { continue };
+        let id = crate::audio::next_id(shared.armature.audio.iter().map(|a| a.id));
+        match crate::audio::decode(id, &name, &ext, bytes) {
+            Ok(data) => {
+                shared.armature.audio.push(data);
+                let a = &mut shared.armature.animations[anim];
+                let clip_id = crate::audio::next_id(a.clips.iter().map(|c| c.id));
+                let start_frame = shared.selections.anim_frame.max(0);
+                a.clips.push(crate::audio::AudioClip { id: clip_id, audio: id, name, start_frame, ..Default::default() });
+            }
+            Err(e) => {
+                shared.ui.custom_error = e;
+                shared.events.open_modal("audio.decode_failed", false);
+            }
+        }
     }
 }
 

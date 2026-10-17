@@ -1323,6 +1323,7 @@ pub fn import(ske_json: &str, atlases: &[DbAtlas]) -> Result<Imported, String> {
         tex_data,
         animated_bones: vec![],
         clock: None,
+        audio: vec![],
         cameras: vec![],
     };
     // bind-posed meshes get their helper bones

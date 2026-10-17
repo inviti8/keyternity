@@ -1,6 +1,6 @@
 # Shapes, dialog and auto lip sync
 
-Status: **research and scope.** Nothing is built. Decisions to confirm are in §11.
+Status: phases 1, 1b, 1c and 2 are built (§10). The rest is research and scope. Decisions to confirm are in §11.
 
 ## 1. Goal
 
@@ -161,6 +161,28 @@ in bind space.
 - **Video export** muxes the clip into the MP4. FFmpeg is already there.
 - **Exports:** the manifest/Phaser/Godot files can reference the clip with its start
   time, so a game can play the line in sync.
+
+**Built (phase 2, desktop):** `src/audio.rs`.
+- **Data:** each imported file becomes an `AudioData` on the armature. It holds the
+  original bytes, the decoded samples and a waveform at 200 peaks/s. Animations hold
+  `AudioClip { id, audio, name, start_frame, gain, muted }`. A clip may start before
+  frame 0.
+- **Saving:** `armature.json` lists `audio: [{ id, name, file }]`, and the zip holds
+  `audio/<id>_<name>.<ext>` unchanged. Only files a clip still uses are saved.
+- **Import:** *+ Audio* in the timeline's bottom bar (wav, mp3, ogg, flac, m4a), or
+  drop a file on the window. The clip goes on the selected animation at the current
+  frame.
+- **Timeline:** one lane per clip under the layer stack, showing its waveform (scaled
+  by volume). Drag a clip to move it by whole frames; the whole drag is one undo step.
+  Each lane's label has a volume control (0–200%, double-click for 100%), mute and
+  remove. These are `SetClip` and `DeleteClip` events, so they undo.
+- **Playback:** Play starts the clips from frame 0, and they restart when the
+  animation loops. Stop and closing the timeline silence them. Selecting a frame
+  while stopped plays a short slice (two frames, at least 70 ms).
+- **Video export:** an MP4 export mixes the unmuted clips to 48 kHz stereo and muxes
+  it as AAC, cut to the video's length. GIFs stay silent.
+- **Not yet:** web playback, audio references in the game exports, and playback
+  starting from the current frame (the animation clock always starts at 0).
 
 ## 6. Visemes, mouth rigs and the face rig
 
@@ -795,7 +817,7 @@ reviews and refines.
 | **1. Shapes** ✓ | Data, evaluation before skinning, ShapeWeight keys and timeline rows, Shapes panel, sculpt mode, mirror, capture from pose, remapping on topology edits, `.skf` and DragonBones (FFD) export, tests | Useful immediately: blinks, brows, squash. |
 | **1b. Standard face and face rig** ✓ | The standard shape list and aliases, *Add Standard Face Shapes*, the mapping table, *Set Up Face*, control helper bones and the driver table, the default layout generated from `FaceBot.FBX`, the rig overlay panel, Eye Look, driven weights baked on export | The FaceBot structure in 2D (§6.4–6.6) |
 | **1c. Generated faces** ✓ (first pass) | Landmark map on the rig mask, *Set Up Face* (midline, one side, derived side: mirror for front views, cylinder model for three-quarter, profile mode), view suggestion, snapping to feature lines, mesh checks (lip and lid seams, mouth interior, density) with fixes, templates (JSON) with style presets and per-shape strength, helper-bone propagation with regions, *Generate Face*, generated + corrections and regenerate | After 1 and 1b. Makes the whole face a few minutes' setup. |
-| **2. Dialog audio** | Clips embedded in `.skf`, Symphonia decoding, rodio playback in sync, waveform, audio scrub, video export with audio | Desktop first |
+| **2. Dialog audio** ✓ (desktop) | Clips embedded in `.skf`, Symphonia decoding, rodio playback in sync, waveform, audio scrub, video export with audio | Desktop first |
 | **3. Mouth rigs + lip sync** | The 17 sounds and the viseme-set mappings, mouth rig panel and auto-fill, the English text rules (ported from TalkingHead), typed transcripts with words spread over speech, lip-sync tracks and keyer, regenerate and bake, loudness fallback, drawn and morph mouths | The Facebot loop, end to end. No downloads. |
 | **3b. Transcription** | whisper.cpp through `whisper-rs`, model download, word timings, editable transcript; TalkingHead's other language modules | Imported recordings |
 | **4. Voice generation** | Provider interface, Kokoro local with timings, Dialog panel with takes; then ElevenLabs (opt-in) and Chatterbox (helper process) | |

@@ -651,7 +651,7 @@ pub struct Ui {
 
     pub file_path: Arc<Mutex<Vec<PathBuf>>>,
     pub dropped_file_path: Vec<PathBuf>,
-    pub file_type: Arc<Mutex<i32>>, // 1: image, 2: skf
+    pub file_type: Arc<Mutex<i32>>, // 1: image, 2: skf, 3: audio
     pub file_elapsed: Option<Instant>,
 
     pub saving: Arc<Mutex<Saving>>,
@@ -764,6 +764,10 @@ pub struct Ui {
     pub timeline_layers_folded: bool,
     /// the layer whose settings window is open
     pub layer_settings: Option<usize>,
+    /// an audio clip being dragged on the timeline: (clip id, its start frame, press x)
+    pub audio_drag: Option<(i32, i32, f32)>,
+    /// whether the current clip drag has made its undo step
+    pub audio_drag_stepped: bool,
     /// the bone panel's Shapes section is folded
     pub shapes_folded: bool,
     /// the Face Landmarks section is open
@@ -1576,6 +1580,9 @@ pub struct Armature {
     pub styles: Vec<Style>,
     #[serde(skip)]
     pub tex_data: Vec<TextureData>,
+    /// audio files the rig carries (decoded), for animations' dialog clips
+    #[serde(skip)]
+    pub audio: Vec<crate::audio::AudioData>,
     #[serde(skip)]
     pub animated_bones: Vec<Bone>,
     /// seconds on the editor's clock while playing, for free-running loops
@@ -1951,6 +1958,9 @@ pub struct Root {
     pub styles: Vec<Style>,
     pub visuals: Vec<Visuals>,
     pub physics: Vec<Physics>,
+    /// audio files in the zip (`audio/…`), for animations' clips
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub audio: Vec<crate::audio::AudioFile>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Default, PartialEq)]
@@ -2018,6 +2028,9 @@ pub struct Animation {
     /// Animation layers, bottom (Base) to top (docs/TIMELINE.md §5). Empty: just Base.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub layers: Vec<AnimLayer>,
+    /// dialog audio placed on this animation's timeline (docs/LIP_SYNC.md §5)
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub clips: Vec<crate::audio::AudioClip>,
     /// The layer being edited: its keys are in `keyframes`. Saved files have 0.
     #[serde(skip_serializing_if = "is_zero_usize")]
     pub active_layer: usize,
@@ -3113,6 +3126,8 @@ pub enum Events {
     SetFaceControl,
     FaceLandmarks,
     OpenFacePanel,
+    SetClip,
+    DeleteClip,
     SetSculptRadius,
     ResetVertices,
     SelectBind,
@@ -3320,6 +3335,21 @@ impl EventState {
     }
 
     /// Open the Face Rig panel.
+    /// Add or change an audio clip on the selected animation (matched by id).
+    /// `new_step` makes an undo step, so dragging a clip is one.
+    pub fn set_clip(&mut self, clip: &crate::audio::AudioClip, new_step: bool) {
+        self.events.push(E::SetClip);
+        self.values.push(if new_step { 1. } else { 0. });
+        self.str_values.push(serde_json::to_string(clip).unwrap());
+    }
+
+    /// Remove an audio clip from the selected animation.
+    pub fn delete_clip(&mut self, id: i32) {
+        self.events.push(E::DeleteClip);
+        self.values.push(id as f32);
+        self.str_values.push(String::new());
+    }
+
     pub fn open_face_panel(&mut self) {
         self.events.push(E::OpenFacePanel);
         self.values.push(0.);

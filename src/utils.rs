@@ -159,6 +159,20 @@ pub fn open_import_dialog(file_path: &Arc<Mutex<Vec<PathBuf>>>, file_type: &Arc<
     });
 }
 
+/// Pick dialog audio files to place on the selected animation (file type 3).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn open_audio_dialog(file_path: &Arc<Mutex<Vec<PathBuf>>>, file_type: &Arc<Mutex<i32>>) {
+    let filepath = Arc::clone(&file_path);
+    let filetype = Arc::clone(&file_type);
+    std::thread::spawn(move || {
+        let Some(files) = rfd::FileDialog::new().add_filter("Audio", crate::audio::EXTENSIONS).pick_files() else {
+            return;
+        };
+        *filepath.lock().unwrap() = files;
+        *filetype.lock().unwrap() = 3;
+    });
+}
+
 #[cfg(target_arch = "wasm32")]
 pub fn save_web(armature: &Armature, camera: &Camera, edit_mode: &EditMode, save_result: Saving) {
     let mut png_bufs = vec![];
@@ -956,6 +970,7 @@ pub fn prepare_files(
         atlases,
         visuals,
         physics,
+        audio: used_audio(armature).iter().map(|a| crate::audio::AudioFile { id: a.id, name: a.name.clone(), file: crate::audio::file_name(a) }).collect(),
     };
     let armatures_json = serde_json::to_string(&root).unwrap();
 
@@ -1010,6 +1025,7 @@ pub fn import<R: Read + std::io::Seek>(
         tex_data: vec![],
         animated_bones: vec![],
         clock: None,
+        audio: vec![],
         cameras: vec![],
     };
 
@@ -1176,6 +1192,20 @@ pub fn import<R: Read + std::io::Seek>(
                 #[rustfmt::skip]
                 temp_arm.tex_data.push(TextureData { id: data_id, image, bind_group, ui_img: Some(ui_img) });
             }
+        }
+    }
+
+    // dialog audio (desktop: decoded; the web build skips it for now)
+    #[cfg(not(target_arch = "wasm32"))]
+    for f in &root.audio {
+        let Ok(mut entry) = zip.as_mut().unwrap().by_name(&f.file) else { continue };
+        let mut bytes = vec![];
+        if entry.read_to_end(&mut bytes).is_err() {
+            continue;
+        }
+        let ext = f.file.rsplit('.').next().unwrap_or("wav").to_string();
+        if let Ok(data) = crate::audio::decode(f.id, &f.name, &ext, bytes) {
+            temp_arm.audio.push(data);
         }
     }
 
@@ -1540,7 +1570,11 @@ pub fn animate_bones(armature: &mut Armature, selection: &SelectionState, edit_m
             if anim.elapsed == None {
                 continue;
             }
+            let looped = anim.keyframes.len() > 0 && anim.get_frame() >= anim.last_frame();
             let frame = anim.set_frame();
+            if looped {
+                crate::audio::play(armature, a, 0.);
+            }
             let anim_bones = armature.animated_bones.clone();
             // free-running loops keep the editor's clock while playing
             armature.clock = Some(edit_mode.time);
@@ -1695,4 +1729,10 @@ pub fn solved_local_rot(world: &[Bone], bone_id: i32) -> f32 {
         Some(p) => bone.rot - p.rot,
         None => bone.rot,
     }
+}
+
+/// The audio files any animation's clips use (docs/LIP_SYNC.md §5): saved into the
+/// `.skf` as they were imported.
+pub fn used_audio(armature: &Armature) -> Vec<&crate::audio::AudioData> {
+    armature.audio.iter().filter(|a| armature.animations.iter().any(|an| an.clips.iter().any(|c| c.audio == a.id))).collect()
 }
