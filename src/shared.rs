@@ -773,6 +773,8 @@ pub struct Ui {
     pub face_panel_open: bool,
     pub face_panel_root: Option<i32>,
     pub face_panel_drag: Option<i32>,
+    /// where the dragged control started (position, rotation) and the press point
+    pub face_panel_drag_start: Option<(Vec2, f32, egui::Pos2)>,
     pub face_panel_menu: Option<i32>,
     /// picking a landmark: its name, and the vertex selection when picking started
     pub picking_landmark: Option<String>,

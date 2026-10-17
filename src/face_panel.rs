@@ -376,24 +376,34 @@ fn board(
     let anim_idx = if animating { selections.anim } else { usize::MAX };
     // without an animation frame, edits change the rest pose
     let frame = if animating { frame } else { -1 };
+    // A drag writes the control's position as where it started plus the pointer's
+    // whole movement since the press. The pose shown here is a frame behind the edits
+    // (the app draws, renders, then applies events), so adding each frame's movement
+    // to it would flip the control between two positions while held.
     if resp.drag_started() {
         shared_ui.face_panel_drag = hovered;
-        if let Some(idx) = hovered.and_then(|id| armature.bones.iter().position(|b| b.id == id)) {
-            events.save_edited_bone(idx);
+        shared_ui.face_panel_drag_start = None;
+        if let Some(id) = hovered {
+            if let (Some(idx), Some(pose)) = (armature.bones.iter().position(|b| b.id == id), posed.iter().find(|b| b.id == id)) {
+                events.save_edited_bone(idx);
+                let origin = ui.input(|i| i.pointer.press_origin()).unwrap_or(rect.center());
+                shared_ui.face_panel_drag_start = Some((pose.pos, pose.rot, origin));
+            }
         }
     }
-    if let Some(id) = shared_ui.face_panel_drag {
-        if resp.dragged() {
-            let (Some(bone), Some(pose)) = (bone_of(id), posed.iter().find(|b| b.id == id)) else { return };
+    if let (Some(id), Some((start_pos, start_rot, origin))) = (shared_ui.face_panel_drag, shared_ui.face_panel_drag_start) {
+        let now = ui.input(|i| i.pointer.interact_pos());
+        if let (true, Some(now)) = (resp.dragged(), now) {
+            let Some(bone) = bone_of(id) else { return };
             let fc = bone.face_control.as_ref().unwrap();
             let s = fc.range / face::RANGE;
-            let d = resp.drag_delta();
+            let d = now - origin;
             let twisting = ui.input(|i| i.modifiers.shift);
             let has = |a: ControlAxis| fc.slots.iter().any(|sl| sl.axis == a);
             if twisting {
                 let lo = if has(ControlAxis::TwistCw) { -1.5 } else { 0. } * std::f32::consts::FRAC_PI_4;
                 let hi = if has(ControlAxis::TwistCcw) { 1.5 } else { 0. } * std::f32::consts::FRAC_PI_4;
-                let rot = (pose.rot - fc.rest_rot - d.x * 0.01).clamp(lo, hi) + fc.rest_rot;
+                let rot = (start_rot - fc.rest_rot - d.x * 0.01).clamp(lo, hi) + fc.rest_rot;
                 events.edit_bone(id, &AnimElement::Rotation, rot, "", anim_idx, frame);
             } else {
                 let lim = |neg: ControlAxis, pos: ControlAxis| {
@@ -401,7 +411,7 @@ fn board(
                 };
                 let (xl, xh) = lim(ControlAxis::Left, ControlAxis::Right);
                 let (yl, yh) = lim(ControlAxis::Down, ControlAxis::Up);
-                let off = pose.pos - fc.rest + Vec2::new(d.x / scale * s, -d.y / scale * s);
+                let off = start_pos - fc.rest + Vec2::new(d.x / scale * s, -d.y / scale * s);
                 let x = fc.rest.x + off.x.clamp(xl, xh);
                 let y = fc.rest.y + off.y.clamp(yl, yh);
                 events.edit_bone(id, &AnimElement::PositionX, x, "", anim_idx, frame);
@@ -410,6 +420,7 @@ fn board(
         }
         if resp.drag_stopped() || !ui.input(|i| i.pointer.primary_down()) {
             shared_ui.face_panel_drag = None;
+            shared_ui.face_panel_drag_start = None;
         }
     }
 
