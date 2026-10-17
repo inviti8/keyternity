@@ -1,0 +1,352 @@
+{
+ "model": {
+  "type": "tiny",
+  "multilingual": false,
+  "vocab": 51864,
+  "audio": {
+   "ctx": 1500,
+   "state": 384,
+   "head": 6,
+   "layer": 4
+  },
+  "text": {
+   "ctx": 448,
+   "state": 384,
+   "head": 6,
+   "layer": 4
+  },
+  "mels": 80,
+  "ftype": 1
+ },
+ "params": {
+  "model": "ggml-tiny.en.bin",
+  "language": "en",
+  "translate": false
+ },
+ "result": {
+  "language": "en"
+ },
+ "transcription": [
+  {
+   "timestamps": {
+    "from": "00:00:00,000",
+    "to": "00:00:07,000"
+   },
+   "offsets": {
+    "from": 0,
+    "to": 7000
+   },
+   "text": " Hello there. Peter Piper picked a peck of pickled peppers. Would you like some water?",
+   "tokens": [
+    {
+     "text": "[_BEG_]",
+     "timestamps": {
+      "from": "00:00:00,000",
+      "to": "00:00:00,000"
+     },
+     "offsets": {
+      "from": 0,
+      "to": 0
+     },
+     "id": 50363,
+     "p": 0.984446,
+     "t_dtw": -1
+    },
+    {
+     "text": " Hello",
+     "timestamps": {
+      "from": "00:00:00,150",
+      "to": "00:00:00,730"
+     },
+     "offsets": {
+      "from": 150,
+      "to": 730
+     },
+     "id": 18435,
+     "p": 0.917382,
+     "t_dtw": 42
+    },
+    {
+     "text": " there",
+     "timestamps": {
+      "from": "00:00:01,600",
+      "to": "00:00:01,600"
+     },
+     "offsets": {
+      "from": 1600,
+      "to": 1600
+     },
+     "id": 612,
+     "p": 0.958534,
+     "t_dtw": 134
+    },
+    {
+     "text": ".",
+     "timestamps": {
+      "from": "00:00:01,760",
+      "to": "00:00:01,760"
+     },
+     "offsets": {
+      "from": 1760,
+      "to": 1760
+     },
+     "id": 13,
+     "p": 0.590487,
+     "t_dtw": 188
+    },
+    {
+     "text": " Peter",
+     "timestamps": {
+      "from": "00:00:01,790",
+      "to": "00:00:02,040"
+     },
+     "offsets": {
+      "from": 1790,
+      "to": 2040
+     },
+     "id": 5613,
+     "p": 0.388068,
+     "t_dtw": 210
+    },
+    {
+     "text": " Piper",
+     "timestamps": {
+      "from": "00:00:02,110",
+      "to": "00:00:02,370"
+     },
+     "offsets": {
+      "from": 2110,
+      "to": 2370
+     },
+     "id": 33503,
+     "p": 0.943769,
+     "t_dtw": 248
+    },
+    {
+     "text": " picked",
+     "timestamps": {
+      "from": "00:00:02,370",
+      "to": "00:00:02,710"
+     },
+     "offsets": {
+      "from": 2370,
+      "to": 2710
+     },
+     "id": 6497,
+     "p": 0.852237,
+     "t_dtw": 276
+    },
+    {
+     "text": " a",
+     "timestamps": {
+      "from": "00:00:02,720",
+      "to": "00:00:02,780"
+     },
+     "offsets": {
+      "from": 2720,
+      "to": 2780
+     },
+     "id": 257,
+     "p": 0.962549,
+     "t_dtw": 300
+    },
+    {
+     "text": " pe",
+     "timestamps": {
+      "from": "00:00:02,780",
+      "to": "00:00:02,900"
+     },
+     "offsets": {
+      "from": 2780,
+      "to": 2900
+     },
+     "id": 613,
+     "p": 0.791175,
+     "t_dtw": 308
+    },
+    {
+     "text": "ck",
+     "timestamps": {
+      "from": "00:00:02,900",
+      "to": "00:00:03,000"
+     },
+     "offsets": {
+      "from": 2900,
+      "to": 3000
+     },
+     "id": 694,
+     "p": 0.21367,
+     "t_dtw": 310
+    },
+    {
+     "text": " of",
+     "timestamps": {
+      "from": "00:00:03,040",
+      "to": "00:00:03,130"
+     },
+     "offsets": {
+      "from": 3040,
+      "to": 3130
+     },
+     "id": 286,
+     "p": 0.988003,
+     "t_dtw": 328
+    },
+    {
+     "text": " pick",
+     "timestamps": {
+      "from": "00:00:03,130",
+      "to": "00:00:03,330"
+     },
+     "offsets": {
+      "from": 3130,
+      "to": 3330
+     },
+     "id": 2298,
+     "p": 0.984814,
+     "t_dtw": 344
+    },
+    {
+     "text": "led",
+     "timestamps": {
+      "from": "00:00:03,380",
+      "to": "00:00:03,530"
+     },
+     "offsets": {
+      "from": 3380,
+      "to": 3530
+     },
+     "id": 992,
+     "p": 0.99863,
+     "t_dtw": 362
+    },
+    {
+     "text": " peppers",
+     "timestamps": {
+      "from": "00:00:03,530",
+      "to": "00:00:04,000"
+     },
+     "offsets": {
+      "from": 3530,
+      "to": 4000
+     },
+     "id": 31804,
+     "p": 0.989691,
+     "t_dtw": 406
+    },
+    {
+     "text": ".",
+     "timestamps": {
+      "from": "00:00:04,000",
+      "to": "00:00:04,070"
+     },
+     "offsets": {
+      "from": 4000,
+      "to": 4070
+     },
+     "id": 13,
+     "p": 0.961867,
+     "t_dtw": 502
+    },
+    {
+     "text": " Would",
+     "timestamps": {
+      "from": "00:00:04,980",
+      "to": "00:00:05,320"
+     },
+     "offsets": {
+      "from": 4980,
+      "to": 5320
+     },
+     "id": 10928,
+     "p": 0.649862,
+     "t_dtw": 522
+    },
+    {
+     "text": " you",
+     "timestamps": {
+      "from": "00:00:05,320",
+      "to": "00:00:05,580"
+     },
+     "offsets": {
+      "from": 5320,
+      "to": 5580
+     },
+     "id": 345,
+     "p": 0.990524,
+     "t_dtw": 540
+    },
+    {
+     "text": " like",
+     "timestamps": {
+      "from": "00:00:05,580",
+      "to": "00:00:05,930"
+     },
+     "offsets": {
+      "from": 5580,
+      "to": 5930
+     },
+     "id": 588,
+     "p": 0.99347,
+     "t_dtw": 560
+    },
+    {
+     "text": " some",
+     "timestamps": {
+      "from": "00:00:05,930",
+      "to": "00:00:06,130"
+     },
+     "offsets": {
+      "from": 5930,
+      "to": 6130
+     },
+     "id": 617,
+     "p": 0.996419,
+     "t_dtw": 588
+    },
+    {
+     "text": " water",
+     "timestamps": {
+      "from": "00:00:06,720",
+      "to": "00:00:06,720"
+     },
+     "offsets": {
+      "from": 6720,
+      "to": 6720
+     },
+     "id": 1660,
+     "p": 0.997341,
+     "t_dtw": 668
+    },
+    {
+     "text": "?",
+     "timestamps": {
+      "from": "00:00:06,720",
+      "to": "00:00:06,920"
+     },
+     "offsets": {
+      "from": 6720,
+      "to": 6920
+     },
+     "id": 30,
+     "p": 0.980264,
+     "t_dtw": 690
+    },
+    {
+     "text": "[_TT_350]",
+     "timestamps": {
+      "from": "00:00:07,000",
+      "to": "00:00:07,000"
+     },
+     "offsets": {
+      "from": 7000,
+      "to": 7000
+     },
+     "id": 50713,
+     "p": 0.0781622,
+     "t_dtw": -1
+    }
+   ]
+  }
+ ]
+}

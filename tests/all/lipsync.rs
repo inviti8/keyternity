@@ -64,7 +64,7 @@ fn numbers_and_symbols_are_spelled_out() {
 
 #[test]
 fn transcript_words_keep_their_pauses() {
-    let w = words_of("Hello, world. Bye!");
+    let w = words_of("Hello, world. Bye!", Language::English);
     assert_eq!(w, vec![("Hello".to_string(), 3.), ("world".to_string(), 4.), ("Bye".to_string(), 4.)]);
 }
 
@@ -92,8 +92,8 @@ fn speech_is_found_between_silences() {
 
 #[test]
 fn words_spread_over_the_spans_without_crossing_gaps() {
-    let words = words_of("one two three four");
-    let timed = spread(&words, &[(0.5, 1.4), (1.9, 2.6)]);
+    let words = words_of("one two three four", Language::English);
+    let timed = spread(&words, &[(0.5, 1.4), (1.9, 2.6)], Language::English);
     assert_eq!(timed.len(), 4);
     for w in &timed {
         let inside = |a: f32, b: f32| w.start >= a - 1e-4 && w.end <= b + 1e-4;
@@ -110,7 +110,7 @@ fn cues_rest_in_silences_only() {
         TimedWord { text: "map".into(), start: 0.55, end: 0.8 },
         TimedWord { text: "map".into(), start: 1.5, end: 1.8 },
     ];
-    let cues = cues_from_words(&words, 0.2);
+    let cues = cues_from_words(&words, 0.2, Language::English);
     let sils: Vec<f32> = cues.iter().filter(|c| c.1 == "sil").map(|c| c.0).collect();
     assert_eq!(sils, vec![0., 0.8, 1.8], "at the start, the long gap and the end");
     let sounds: Vec<&str> = cues.iter().take(4).map(|c| c.1).collect();

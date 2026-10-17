@@ -2,7 +2,7 @@
 //! words, the keyer's settings and the mouth rig. Edits stay in a draft until
 //! Generate, which saves the track and makes its keys as one undo step.
 
-use crate::lipsync::{self, KeyerSettings, LipSyncTrack, MouthRig, Smoothing, TrackSource, VisemeSet};
+use crate::lipsync::{self, KeyerSettings, Language, LipSyncTrack, MouthRig, Smoothing, TrackSource, VisemeSet};
 use crate::*;
 
 fn loc(shared_ui: &crate::Ui, key: &str) -> String {
@@ -100,8 +100,20 @@ pub fn window(egui_ctx: &egui::Context, shared_ui: &mut crate::Ui, armature: &Ar
 
             if draft.source == TrackSource::Text {
                 ui.add_space(4.);
-                ui.label(loc(shared_ui, "words"));
+                ui.horizontal(|ui| {
+                    ui.label(loc(shared_ui, "words"));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        egui::ComboBox::from_id_salt("lipsync_language").selected_text(draft.language.label()).show_ui(ui, |ui| {
+                            for l in Language::ALL {
+                                ui.selectable_value(&mut draft.language, l, l.label());
+                            }
+                        });
+                        ui.label(loc(shared_ui, "language")).on_hover_text(loc(shared_ui, "language_desc"));
+                    });
+                });
                 ui.add(egui::TextEdit::multiline(&mut draft.text).desired_rows(3).desired_width(f32::INFINITY).hint_text(loc(shared_ui, "words_hint")));
+                #[cfg(not(target_arch = "wasm32"))]
+                transcribe_row(ui, shared_ui, armature, clip, &mut draft);
             }
 
             ui.add_space(4.);
@@ -135,7 +147,7 @@ pub fn window(egui_ctx: &egui::Context, shared_ui: &mut crate::Ui, armature: &Ar
                     }
                 }
             });
-            if existing.is_some_and(|t| *t != draft && (t.text != draft.text || t.mouth != draft.mouth || t.source != draft.source || t.settings != draft.settings)) {
+            if existing.is_some_and(|t| t.text != draft.text || t.mouth != draft.mouth || t.source != draft.source || t.settings != draft.settings || t.language != draft.language || t.heard != draft.heard) {
                 ui.label(egui::RichText::new(loc(shared_ui, "changed")).small().italics());
             }
         });
@@ -145,6 +157,94 @@ pub fn window(egui_ctx: &egui::Context, shared_ui: &mut crate::Ui, armature: &Ar
     } else {
         shared_ui.lipsync_clip = None;
         shared_ui.lipsync_draft = None;
+    }
+}
+
+/// Transcribe: what was said, and roughly when, from Whisper (downloaded on first use).
+/// The words fill an empty transcript; their times guide the timing either way.
+#[cfg(not(target_arch = "wasm32"))]
+fn transcribe_row(ui: &mut egui::Ui, shared_ui: &mut crate::Ui, armature: &Armature, clip: &crate::audio::AudioClip, draft: &mut LipSyncTrack) {
+    use crate::transcribe::{self, Job, MODELS};
+    match transcribe::take_result(clip.id) {
+        Some(Ok(words)) => {
+            if draft.text.trim().is_empty() {
+                draft.text = words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>().join(" ");
+            }
+            draft.heard = words;
+            shared_ui.lipsync_error = None;
+        }
+        Some(Err(e)) => shared_ui.lipsync_error = Some(e),
+        None => {}
+    }
+    let data = armature.audio.iter().find(|d| d.id == clip.audio);
+    let model = shared_ui.whisper_model.unwrap_or(transcribe::DEFAULT_MODEL).min(MODELS.len() - 1);
+    let job = transcribe::job();
+    let busy = transcribe::busy();
+
+    ui.horizontal(|ui| {
+        let mut tip = loc(shared_ui, "transcribe_desc");
+        if transcribe::whisper_cli().is_none() {
+            tip += "\n\n";
+            tip += &if transcribe::CAN_DOWNLOAD_TOOL {
+                #[cfg(target_os = "windows")]
+                let mb = transcribe::WHISPER_ZIP_MB;
+                #[cfg(not(target_os = "windows"))]
+                let mb = 0;
+                loc(shared_ui, "download_tool").replace("$mb", &mb.to_string())
+            } else {
+                loc(shared_ui, "install_tool")
+            };
+        }
+        if !transcribe::has_model(&MODELS[model]) {
+            tip += "\n\n";
+            tip += &loc(shared_ui, "download_model").replace("$name", MODELS[model].name).replace("$mb", &MODELS[model].mb.to_string());
+        }
+        let resp = ui.add_enabled(!busy && data.is_some(), egui::Button::new(loc(shared_ui, "transcribe"))).on_hover_text(tip);
+        if resp.clicked() {
+            let ctx = ui.ctx().clone();
+            shared_ui.lipsync_error = None;
+            transcribe::start(clip.id, data.unwrap().clone(), model, draft.language, move || ctx.request_repaint());
+        }
+        let name = |i: usize| {
+            let m = &MODELS[i];
+            let have = if transcribe::has_model(m) { " ✓" } else { "" };
+            format!("{} ({} MB){have}", m.name, m.mb)
+        };
+        let mut pick = model;
+        egui::ComboBox::from_id_salt("whisper_model").selected_text(name(model)).show_ui(ui, |ui| {
+            for i in 0..MODELS.len() {
+                ui.selectable_value(&mut pick, i, name(i));
+            }
+        }).response.on_hover_text(loc(shared_ui, "model_desc"));
+        shared_ui.whisper_model = Some(pick);
+    });
+
+    let status = match &job {
+        Job::Downloading(what, bytes, mb) => {
+            Some(loc(shared_ui, "downloading").replace("$what", what).replace("$done", &format!("{:.0}", *bytes as f64 / 1048576.)).replace("$mb", &mb.to_string()))
+        }
+        Job::Transcribing => Some(loc(shared_ui, "listening")),
+        _ => None,
+    };
+    if let Some(s) = status {
+        ui.label(egui::RichText::new(s).small());
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
+    }
+    if let Some(e) = &shared_ui.lipsync_error {
+        ui.label(egui::RichText::new(e).small().color(egui::Color32::from_rgb(230, 110, 100)));
+    }
+    if !draft.heard.is_empty() {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(egui::RichText::new(loc(shared_ui, "heard").replace("$n", &draft.heard.len().to_string())).small())
+                .on_hover_text(draft.heard.iter().map(|w| format!("{} {:.2}s", w.text, w.start)).collect::<Vec<_>>().join("  "));
+            let heard_text = draft.heard.iter().map(|w| w.text.as_str()).collect::<Vec<_>>().join(" ");
+            if heard_text != draft.text && ui.small_button(loc(shared_ui, "use_heard")).on_hover_text(loc(shared_ui, "use_heard_desc")).clicked() {
+                draft.text = heard_text;
+            }
+            if ui.small_button(loc(shared_ui, "forget_heard")).on_hover_text(loc(shared_ui, "forget_heard_desc")).clicked() {
+                draft.heard.clear();
+            }
+        });
     }
 }
 

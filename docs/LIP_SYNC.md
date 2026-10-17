@@ -1,6 +1,6 @@
 # Shapes, dialog and auto lip sync
 
-Status: phases 1, 1b, 1c, 2 and 3 are built (§10). The rest is research and scope. Decisions to confirm are in §11.
+Status: phases 1, 1b, 1c, 2, 3 and 3b are built (§10). The rest is research and scope. Decisions to confirm are in §11.
 
 ## 1. Goal
 
@@ -824,6 +824,61 @@ window in `src/lipsync_ui.rs`.
 - **Playback:** an animation whose keys are all in layers (only a Lip Sync layer, say)
   now plays.
 
+### 7.6 As built (phase 3b)
+
+- **The tool:**
+  - whisper.cpp's command-line tool runs as a separate process, as FFmpeg does.
+  - On Windows its official build (release b5454, 9 MB) is downloaded on first use
+    and checked against its SHA-256. Elsewhere, the system's `whisper-cli` is used
+    (macOS: `brew install whisper-cpp`).
+  - `whisper-rs` was set aside: it compiles whisper.cpp into every build, which
+    needs CMake and libclang everywhere and adds a heavy C++ compile.
+- **Models:**
+  - tiny, base and small, each in English-only and multilingual versions.
+  - Downloaded from Hugging Face at a pinned revision, checked, and kept in the data
+    folder. `base.en` is the default.
+- **Running it:**
+  - **Transcribe** is in the Lip Sync window. It runs on a thread, showing download
+    progress and then "Listening…".
+  - The words fill an empty transcript. **Use heard text** replaces it, and
+    **Forget** drops what was heard.
+  - Whisper runs with flash attention off (`-nfa`), which made its timestamps much
+    better.
+- **Timing, measured:** five lines from Windows' speech voice, scored against the
+  voice's own word positions:
+
+  | Method | Mean error | Median | 90th percentile |
+  |---|---|---|---|
+  | Whisper token times | 173 ms | 90 ms | 420 ms |
+  | Whisper DTW | 384 ms | 340 ms | 605 ms |
+  | Words spread over the detected speech | 50 ms | 43 ms | 98 ms |
+
+  So the timing is a hybrid:
+  - Words are split between the stretches of speech by a dynamic program. It keeps
+    the speaking rate even, prefers sentence ends at gaps, leaves no long stretch
+    without words, and treats where Whisper heard each word as a light hint for close
+    calls.
+  - Within each stretch, words are spread by their sound lengths.
+  - A typed transcript is matched to what was heard in order, allowing one-letter
+    slips ("pec" for "peck").
+- **Languages:**
+  - TalkingHead's German, French, Brazilian Portuguese, Finnish and Lithuanian
+    modules are ported, alongside English.
+  - German and French rule tables are generated verbatim from the originals, so
+    they can't drift from the source.
+  - Each language is checked against the original modules' output, word by word and
+    sentence by sentence (`tests/data/lipsync_*_reference.tsv`).
+  - **Bugs fixed from the originals:**
+    - French rules match only at the current letter. The original's unanchored
+      expressions read "bonjour" as `PP U SS U RR`.
+    - Lithuanian keeps its carons (š, ž, č), which the original stripped.
+    - Lithuanian reads 11–19 as one word.
+    - Finnish reads 20; the original produced nothing for it.
+  - A track's **Language** picks its rules and what Whisper listens for.
+- **Desktop only.** On the web, typed lines are timed from loudness alone.
+- **Opt-in test:** `cargo test --test all -- transcribe:: --ignored` downloads the
+  tool and the tiny model, and transcribes.
+
 ## 8. Voice generation (dialog from text)
 
 A **provider** interface:
@@ -875,7 +930,7 @@ reviews and refines.
 | **1c. Generated faces** ✓ (first pass) | Landmark map on the rig mask, *Set Up Face* (midline, one side, derived side: mirror for front views, cylinder model for three-quarter, profile mode), view suggestion, snapping to feature lines, mesh checks (lip and lid seams, mouth interior, density) with fixes, templates (JSON) with style presets and per-shape strength, helper-bone propagation with regions, *Generate Face*, generated + corrections and regenerate | After 1 and 1b. Makes the whole face a few minutes' setup. |
 | **2. Dialog audio** ✓ (desktop) | Clips embedded in `.skf`, Symphonia decoding, rodio playback in sync, waveform, audio scrub, video export with audio | Desktop first |
 | **3. Mouth rigs + lip sync** ✓ (first pass, §7.5) | The 17 sounds and the viseme-set mappings, mouth rig panel and auto-fill, the English text rules (ported from TalkingHead), typed transcripts with words spread over speech, lip-sync tracks and keyer, regenerate and bake, loudness fallback, drawn and morph mouths | The Facebot loop, end to end. No downloads. |
-| **3b. Transcription** | whisper.cpp through `whisper-rs`, model download, word timings, editable transcript; TalkingHead's other language modules | Imported recordings |
+| **3b. Transcription** ✓ (§7.6) | whisper.cpp through `whisper-rs`, model download, word timings, editable transcript; TalkingHead's other language modules | Imported recordings |
 | **4. Voice generation** | Provider interface, Kokoro local with timings, Dialog panel with takes; then ElevenLabs (opt-in) and Chatterbox (helper process) | |
 | **5. Agent** | MCP tools; optional audio-recognition engines (Rhubarb, ONNX phonemes) only if transcripts prove too coarse | |
 

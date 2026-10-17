@@ -171,6 +171,70 @@ impl Default for KeyerSettings {
     }
 }
 
+/// The language a line is spoken in: its text rules (TalkingHead's modules, §7.3) and
+/// the language transcription listens for.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq, Eq, Default, Debug)]
+pub enum Language {
+    #[default]
+    English,
+    German,
+    French,
+    PortugueseBr,
+    Finnish,
+    Lithuanian,
+}
+
+impl Language {
+    pub const ALL: [Language; 6] = [Language::English, Language::German, Language::French, Language::PortugueseBr, Language::Finnish, Language::Lithuanian];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Language::English => "English",
+            Language::German => "Deutsch",
+            Language::French => "Français",
+            Language::PortugueseBr => "Português (Brasil)",
+            Language::Finnish => "Suomi",
+            Language::Lithuanian => "Lietuvių",
+        }
+    }
+
+    /// Its ISO 639-1 code, as Whisper takes it.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Language::English => "en",
+            Language::German => "de",
+            Language::French => "fr",
+            Language::PortugueseBr => "pt",
+            Language::Finnish => "fi",
+            Language::Lithuanian => "lt",
+        }
+    }
+
+    /// Text with numbers and symbols spelled out, ready for `sounds`.
+    pub fn preprocess(&self, text: &str) -> String {
+        match self {
+            Language::English => lipsync_en::preprocess(text),
+            Language::German => crate::lipsync_de::preprocess(text),
+            Language::French => crate::lipsync_fr::preprocess(text),
+            Language::PortugueseBr => crate::lipsync_pt::preprocess(text),
+            Language::Finnish => crate::lipsync_fi::fi_preprocess(text),
+            Language::Lithuanian => crate::lipsync_fi::lt_preprocess(text),
+        }
+    }
+
+    /// A word's sounds, with relative starts and lengths.
+    pub fn sounds(&self, word: &str) -> Vec<crate::lipsync_rules::Sound> {
+        match self {
+            Language::English => lipsync_en::word_sounds(word),
+            Language::German => crate::lipsync_de::word_sounds(word),
+            Language::French => crate::lipsync_fr::word_sounds(word),
+            Language::PortugueseBr => crate::lipsync_pt::word_sounds(word),
+            Language::Finnish => crate::lipsync_fi::fi_word_sounds(word),
+            Language::Lithuanian => crate::lipsync_fi::lt_word_sounds(word),
+        }
+    }
+}
+
 /// Where a track's timing comes from.
 #[derive(serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum TrackSource {
@@ -201,6 +265,10 @@ pub struct LipSyncTrack {
     pub mouth: i32,
     pub text: String,
     pub source: TrackSource,
+    pub language: Language,
+    /// what transcription heard (words and times), guiding the timing of `text`
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub heard: Vec<TimedWord>,
     /// as last generated
     pub words: Vec<TimedWord>,
     pub settings: KeyerSettings,
@@ -210,11 +278,11 @@ pub struct LipSyncTrack {
 
 /// A transcript's words, each with the pause after it (relative units: a comma 3, the
 /// end of a sentence 4).
-pub fn words_of(text: &str) -> Vec<(String, f32)> {
-    let text = lipsync_en::preprocess(text);
+pub fn words_of(text: &str, lang: Language) -> Vec<(String, f32)> {
+    let text = lang.preprocess(text);
     let mut out: Vec<(String, f32)> = vec![];
     for raw in text.split_whitespace() {
-        let word: String = raw.chars().filter(|c| c.is_ascii_alphabetic() || *c == '\'').collect();
+        let word: String = raw.chars().filter(|c| c.is_alphabetic() || *c == '\'').collect();
         let pause = if raw.ends_with([',', ';', ':', '-']) {
             3.
         } else if raw.ends_with(['.', '!', '?']) {
@@ -234,8 +302,8 @@ pub fn words_of(text: &str) -> Vec<(String, f32)> {
 }
 
 /// A word's length in relative units.
-fn weight(word: &str) -> f32 {
-    lipsync_en::word_sounds(word).iter().map(|s| s.2).sum::<f32>().max(0.6)
+fn weight(word: &str, lang: Language) -> f32 {
+    lang.sounds(word).iter().map(|s| s.2).sum::<f32>().max(0.6)
 }
 
 /// Where speech is in audio (interleaved samples): spans in seconds, from a 10 ms
@@ -283,15 +351,90 @@ pub fn envelope(samples: &[f32], channels: u16, rate: u32, window: f32) -> Vec<f
         .collect()
 }
 
-/// Spread words over speech spans, by their lengths (§7.4's fallback for typed
-/// transcripts): a word falling across a gap goes to the side holding most of it.
-/// Pauses count only when there's one span to spread over.
-pub fn spread(words: &[(String, f32)], spans: &[(f32, f32)]) -> Vec<TimedWord> {
+/// Spread words over speech spans (§7.4's fallback for typed transcripts): the words
+/// are split between the spans (`partition`), then spread over each by their lengths.
+pub fn spread(words: &[(String, f32)], spans: &[(f32, f32)], lang: Language) -> Vec<TimedWord> {
+    spread_parts(words, spans, &partition(words, spans, None, lang), lang)
+}
+
+/// Spread each span's words (`assigned[k]` is word k's span) over it.
+fn spread_parts(words: &[(String, f32)], spans: &[(f32, f32)], assigned: &[usize], lang: Language) -> Vec<TimedWord> {
+    let mut out = vec![];
+    for (s, span) in spans.iter().enumerate() {
+        let group: Vec<(String, f32)> = words.iter().zip(assigned).filter(|(_, a)| **a == s).map(|(w, _)| w.clone()).collect();
+        out.extend(spread_even(&group, &[*span], lang));
+    }
+    out
+}
+
+/// Split words between speech spans, in order (each word's span): the split that keeps
+/// the speaking rate most even, prefers sentence ends at gaps, leaves no long span
+/// wordless, and, given `heard` (each word's span as a recogniser placed it), agrees
+/// with it where it can. A dynamic program over where each span's words end.
+pub fn partition(words: &[(String, f32)], spans: &[(f32, f32)], heard: Option<&[Option<usize>]>, lang: Language) -> Vec<usize> {
+    let (n, m) = (words.len(), spans.len());
+    if m <= 1 || n == 0 {
+        return vec![0; n];
+    }
+    let w: Vec<f32> = words.iter().map(|(x, _)| weight(x, lang)).collect();
+    let rate = w.iter().sum::<f32>() / spans.iter().map(|(a, b)| b - a).sum::<f32>().max(1e-3);
+    // the cost of span `s` holding words i..j
+    let cost = |s: usize, i: usize, j: usize| -> f32 {
+        let d = spans[s].1 - spans[s].0;
+        if i == j {
+            return 4. * d;
+        }
+        let g: f32 = w[i..j].iter().sum();
+        let mut c = (d * rate / g).ln().powi(2);
+        // a sentence or clause ending where the speech stops
+        if words[j - 1].1 > 0. {
+            c -= 0.3;
+        }
+        c += 0.15 * words[i..j - 1].iter().filter(|(_, p)| *p >= 3.).count() as f32;
+        if let Some(h) = heard {
+            c += 0.12 * h[i..j].iter().filter(|a| a.is_some_and(|a| a != s)).count() as f32;
+        }
+        c
+    };
+    // best[s][j]: the least cost of spans 0..s holding words 0..j
+    let mut best = vec![vec![f32::INFINITY; n + 1]; m + 1];
+    let mut from = vec![vec![0usize; n + 1]; m + 1];
+    best[0][0] = 0.;
+    for s in 0..m {
+        for i in 0..=n {
+            if !best[s][i].is_finite() {
+                continue;
+            }
+            for j in i..=n {
+                let c = best[s][i] + cost(s, i, j);
+                if c < best[s + 1][j] {
+                    best[s + 1][j] = c;
+                    from[s + 1][j] = i;
+                }
+            }
+        }
+    }
+    let mut out = vec![0; n];
+    let mut j = n;
+    for s in (1..=m).rev() {
+        let i = from[s][j];
+        for k in i..j {
+            out[k] = s - 1;
+        }
+        j = i;
+    }
+    out
+}
+
+/// Spread words evenly by their lengths over spans laid end to end: a word falling
+/// across a gap goes to the side holding most of it. Pauses count only when there's
+/// one span to spread over.
+fn spread_even(words: &[(String, f32)], spans: &[(f32, f32)], lang: Language) -> Vec<TimedWord> {
     if words.is_empty() || spans.is_empty() {
         return vec![];
     }
     let use_pauses = spans.len() == 1;
-    let weights: Vec<(f32, f32)> = words.iter().map(|(w, p)| (weight(w), if use_pauses { *p } else { 0. })).collect();
+    let weights: Vec<(f32, f32)> = words.iter().map(|(w, p)| (weight(w, lang), if use_pauses { *p } else { 0. })).collect();
     // the last word's pause doesn't take time
     let total_w: f32 = weights.iter().enumerate().map(|(i, (w, p))| w + if i + 1 < weights.len() { *p } else { 0. }).sum();
     let total_t: f32 = spans.iter().map(|(a, b)| b - a).sum();
@@ -323,12 +466,107 @@ pub fn spread(words: &[(String, f32)], spans: &[(f32, f32)]) -> Vec<TimedWord> {
     out
 }
 
+/// A word as compared between a transcript and what was heard: letters only, lower case.
+fn plain(w: &str) -> String {
+    w.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect()
+}
+
+/// Whether two plain words are the same word, allowing a slip of one letter in longer
+/// ones ("pec" for "peck").
+fn same_word(a: &str, b: &str) -> bool {
+    if a == b {
+        return true;
+    }
+    if a.chars().count().min(b.chars().count()) < 3 {
+        return false;
+    }
+    // edit distance ≤ 1
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    let (s, l) = if a.len() <= b.len() { (&a, &b) } else { (&b, &a) };
+    if l.len() - s.len() > 1 {
+        return false;
+    }
+    let (mut i, mut j, mut edits) = (0, 0, 0);
+    while i < s.len() && j < l.len() {
+        if s[i] == l[j] {
+            i += 1;
+            j += 1;
+            continue;
+        }
+        edits += 1;
+        if edits > 1 {
+            return false;
+        }
+        if s.len() == l.len() {
+            i += 1;
+        }
+        j += 1;
+    }
+    edits + (l.len() - j) + (s.len() - i) <= 1
+}
+
+/// Match a transcript's words to heard words, in order (the longest common run of
+/// same words): for each transcript word, the heard word it is, if any.
+pub fn align_words(typed: &[(String, f32)], heard: &[TimedWord]) -> Vec<Option<usize>> {
+    let a: Vec<String> = typed.iter().map(|(w, _)| plain(w)).collect();
+    let b: Vec<String> = heard.iter().map(|w| plain(&w.text)).collect();
+    let (n, m) = (a.len(), b.len());
+    let mut dp = vec![vec![0u32; m + 1]; n + 1];
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            dp[i][j] = if same_word(&a[i], &b[j]) { dp[i + 1][j + 1] + 1 } else { dp[i + 1][j].max(dp[i][j + 1]) };
+        }
+    }
+    let mut out = vec![None; n];
+    let (mut i, mut j) = (0, 0);
+    while i < n && j < m {
+        if same_word(&a[i], &b[j]) && dp[i][j] == dp[i + 1][j + 1] + 1 {
+            out[i] = Some(j);
+            i += 1;
+            j += 1;
+        } else if dp[i + 1][j] >= dp[i][j + 1] {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+    out
+}
+
+/// Spread words over speech spans with what was heard as a guide (§7.4): where a
+/// recogniser heard each word decides, with the speaking rate and punctuation, which
+/// span it's in; then each span's words are spread over it by their lengths.
+/// Recognisers place words roughly, while a span's edges are exact, so this keeps the
+/// best of each.
+pub fn spread_heard(words: &[(String, f32)], spans: &[(f32, f32)], heard: &[TimedWord], lang: Language) -> Vec<TimedWord> {
+    if words.is_empty() {
+        return vec![];
+    }
+    let matched = align_words(words, heard);
+    if spans.is_empty() || matched.iter().all(Option::is_none) {
+        return spread(words, spans, lang);
+    }
+    // the span each heard word is in, or nearest
+    let span_at = |t: f32| -> usize {
+        spans
+            .iter()
+            .enumerate()
+            .min_by(|(_, a), (_, b)| {
+                let d = |s: &(f32, f32)| if t < s.0 { s.0 - t } else if t > s.1 { t - s.1 } else { 0. };
+                d(a).total_cmp(&d(b))
+            })
+            .map_or(0, |(i, _)| i)
+    };
+    let anchored: Vec<Option<usize>> = matched.iter().map(|m| m.map(|j| span_at((heard[j].start + heard[j].end) / 2.))).collect();
+    spread_parts(words, spans, &partition(words, spans, Some(&anchored), lang), lang)
+}
+
 /// Cues (seconds, sound) from timed words: each word's sounds stretched over it, and
 /// the mouth at rest before, after, and in silences of at least `rest_gap`.
-pub fn cues_from_words(words: &[TimedWord], rest_gap: f32) -> Vec<(f32, &'static str)> {
+pub fn cues_from_words(words: &[TimedWord], rest_gap: f32, lang: Language) -> Vec<(f32, &'static str)> {
     let mut cues: Vec<(f32, &'static str)> = vec![(0., "sil")];
     for (k, w) in words.iter().enumerate() {
-        let sounds = lipsync_en::word_sounds(&w.text);
+        let sounds = lang.sounds(&w.text);
         let len = sounds.last().map_or(0., |s| s.1 + s.2).max(1e-3);
         for s in &sounds {
             cues.push((w.start + s.1 / len * (w.end - w.start), s.0));
@@ -737,7 +975,7 @@ pub fn generate(armature: &mut Armature, anim: usize, track_id: i32) -> Result<u
 
     let (cues, words) = match track.source {
         TrackSource::Text => {
-            let words = words_of(&track.text);
+            let words = words_of(&track.text, track.language);
             if words.is_empty() {
                 return Err("type the line's words first".into());
             }
@@ -749,8 +987,8 @@ pub fn generate(armature: &mut Armature, anim: usize, track_id: i32) -> Result<u
                 // no audio to listen to: an even pace
                 None => vec![(0., words.len() as f32 * 0.35)],
             };
-            let timed = spread(&words, &spans);
-            (cues_from_words(&timed, track.settings.rest_gap), timed)
+            let timed = if track.heard.is_empty() { spread(&words, &spans, track.language) } else { spread_heard(&words, &spans, &track.heard, track.language) };
+            (cues_from_words(&timed, track.settings.rest_gap, track.language), timed)
         }
         TrackSource::Loudness => {
             let d = data.ok_or("the clip's audio isn't loaded")?;

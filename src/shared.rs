@@ -771,6 +771,10 @@ pub struct Ui {
     /// the Lip Sync window: the clip it's for, and the track being edited there
     pub lipsync_clip: Option<i32>,
     pub lipsync_draft: Option<crate::lipsync::LipSyncTrack>,
+    /// the Whisper model chosen for transcribing (`transcribe::MODELS`), and the last
+    /// transcription error
+    pub whisper_model: Option<usize>,
+    pub lipsync_error: Option<String>,
     /// the bone panel's Shapes section is folded
     pub shapes_folded: bool,
     /// the Face Landmarks section is open

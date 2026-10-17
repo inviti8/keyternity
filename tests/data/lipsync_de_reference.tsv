@@ -1,0 +1,61 @@
+P	Guten Morgen! Ich habe heute keine Zeit, aber morgen vielleicht.	guten morgen! ich habe heute keine zeit, aber morgen vielleicht.
+W	guten	kk U DD E nn	0.000 1.250 2.250 3.350 4.200	1.250 1.000 1.100 0.850 0.850
+W	morgen!	PP aa RR kk E nn	0.000 1.150 2.150 3.050 4.300 5.150	1.150 1.000 0.900 1.250 0.850 0.850
+W	ich	I kk	0.000 0.900	0.900 1.250
+W	habe	aa PP E	0.000 1.000 2.150	1.000 1.150 0.850
+W	heute	I O DD aa	0.000 0.900 1.950 3.050	0.900 1.050 1.100 1.000
+W	keine	kk aa I nn E	0.000 1.250 2.250 3.150 4.000	1.250 1.000 0.900 0.850 0.850
+W	zeit,	DD SS aa I DD	0.000 1.100 2.300 3.300 4.200	1.100 1.200 1.000 0.900 1.100
+W	aber	aa PP E RR	0.000 1.000 2.150 3.000	1.000 1.150 0.850 0.900
+W	morgen	PP aa RR kk E nn	0.000 1.150 2.150 3.050 4.300 5.150	1.150 1.000 0.900 1.250 0.850 0.850
+W	vielleicht.	FF I nn aa I kk DD	0.000 1.050 1.950 3.395 4.395 5.295 6.545	1.050 0.900 1.445 1.000 0.900 1.250 1.100
+P	Die Straße ist lang und die Bäume sind grün. Über den Brücken fliegen Vögel.	die straße ist lang und die bäume sind grün. über den brücken fliegen vögel.
+W	die	DD I	0.000 1.100	1.100 0.900
+W	straße	SS DD RR aa SS E	0.000 1.200 2.300 3.200 4.200 5.400	1.200 1.100 0.900 1.000 1.200 0.850
+W	ist	I SS DD	0.000 0.900 2.100	0.900 1.200 1.100
+W	lang	nn aa nn kk	0.000 0.850 1.850 2.700	0.850 1.000 0.850 1.250
+W	und	U nn DD	0.000 1.000 1.850	1.000 0.850 1.100
+W	bäume	PP O PP E	0.000 1.150 2.200 3.350	1.150 1.050 1.150 0.850
+W	sind	SS I nn DD	0.000 1.200 2.100 2.950	1.200 0.900 0.850 1.100
+W	grün.	kk RR I U nn	0.000 1.250 2.150 3.050 4.050	1.250 0.900 0.900 1.000 0.850
+W	über	I U PP E RR	0.000 0.900 1.900 3.050 3.900	0.900 1.000 1.150 0.850 0.900
+W	den	DD E nn	0.000 1.100 1.950	1.100 0.850 0.850
+W	brücken	PP RR I U kk E nn	0.000 1.150 2.050 2.950 3.950 5.200 6.050	1.150 0.900 0.900 1.000 1.250 0.850 0.850
+W	fliegen	FF nn I kk E nn	0.000 1.050 1.900 2.800 4.050 4.900	1.050 0.850 0.900 1.250 0.850 0.850
+W	vögel.	FF E kk E nn	0.000 1.050 1.900 3.150 4.000	1.050 0.850 1.250 0.850 0.850
+P	Wir haben 3 Katzen und 21 Hunde, das kostet 1250 Euro & mehr als 7,5 Prozent.	wir haben drei katzen und einundzwanzig hunde, das kostet eintausendzweihundertfünfzig euro und mehr als sieben komma fünf prozent.
+W	wir	FF I RR	0.000 1.050 1.950	1.050 0.900 0.900
+W	haben	I aa PP aa nn	0.000 0.900 1.900 3.050 4.050	0.900 1.000 1.150 1.000 0.850
+W	drei	DD RR aa I	0.000 1.100 2.000 3.000	1.100 0.900 1.000 0.900
+W	katzen	kk aa DD SS E nn	0.000 1.250 2.250 3.350 4.550 5.400	1.250 1.000 1.100 1.200 0.850 0.850
+W	einundzwanzig	aa I nn U nn DD SS FF aa nn DD SS I kk	0.000 1.000 1.900 2.750 3.750 4.600 6.470 7.670 8.720 9.720 10.570 11.670 12.870 13.770	1.000 0.900 0.850 1.000 0.850 1.870 1.200 1.050 1.000 0.850 1.100 1.200 0.900 1.250
+W	hunde,	U nn DD E	0.000 1.000 1.850 2.950	1.000 0.850 1.100 0.850
+W	das	DD aa SS	0.000 1.100 2.100	1.100 1.000 1.200
+W	kostet	kk aa SS DD E DD	0.000 1.250 2.250 3.450 4.550 5.400	1.250 1.000 1.200 1.100 0.850 1.100
+W	eintausendzweihundertfünfzig	aa I nn DD aa U SS E nn DD SS FF aa I U nn DD E RR DD FF I U nn FF DD SS I kk	0.000 1.000 1.900 2.750 3.850 4.850 5.850 7.050 7.900 8.750 10.620 11.820 12.870 13.870 14.770 15.770 16.620 17.720 18.570 19.470 20.570 21.620 22.520 23.520 24.370 25.420 26.520 27.720 28.620	1.000 0.900 0.850 1.100 1.000 1.000 1.200 0.850 0.850 1.870 1.200 1.050 1.000 0.900 1.000 0.850 1.100 0.850 0.900 1.100 1.050 0.900 1.000 0.850 1.050 1.100 1.200 0.900 1.250
+W	euro	O RR aa	0.000 1.050 1.950	1.050 0.900 1.000
+W	mehr	PP E RR	0.000 1.150 2.000	1.150 0.850 0.900
+W	als	aa nn SS	0.000 1.000 1.850	1.000 0.850 1.200
+W	sieben	SS I PP E nn	0.000 1.200 2.100 3.250 4.100	1.200 0.900 1.150 0.850 0.850
+W	komma	kk aa PP aa	0.000 1.250 2.250 4.205	1.250 1.000 1.955 1.000
+W	fünf	FF I U nn FF	0.000 1.050 1.950 2.950 3.800	1.050 0.900 1.000 0.850 1.050
+W	prozent.	PP RR aa DD SS E nn DD	0.000 1.150 2.050 3.050 4.150 5.350 6.200 7.050	1.150 0.900 1.000 1.100 1.200 0.850 0.850 1.100
+P	Schöne Grüße aus München, sagte der Bürgermeister zum Schauspieler.	schöne grüße aus münchen, sagte der bürgermeister zum schauspieler.
+W	schöne	SS E nn E	0.000 1.200 2.050 2.900	1.200 0.850 0.850 0.850
+W	grüße	kk RR I U SS E	0.000 1.250 2.150 3.050 4.050 5.250	1.250 0.900 0.900 1.000 1.200 0.850
+W	aus	aa U SS	0.000 1.000 2.000	1.000 1.000 1.200
+W	münchen,	PP I U nn kk E nn	0.000 1.150 2.050 3.050 3.900 5.150 6.000	1.150 0.900 1.000 0.850 1.250 0.850 0.850
+W	sagte	SS aa kk DD E	0.000 1.200 2.200 3.450 4.550	1.200 1.000 1.250 1.100 0.850
+W	der	DD E RR	0.000 1.100 1.950	1.100 0.850 0.900
+W	bürgermeister	PP I U RR kk E RR PP aa I SS DD E RR	0.000 1.150 2.050 3.050 3.950 5.200 6.050 6.950 8.100 9.100 10.000 11.200 12.300 13.150	1.150 0.900 1.000 0.900 1.250 0.850 0.900 1.150 1.000 0.900 1.200 1.100 0.850 0.900
+W	zum	DD SS U PP	0.000 1.100 2.300 3.300	1.100 1.200 1.000 1.150
+W	schauspieler.	SS aa U SS PP I nn E RR	0.000 1.200 2.200 3.200 4.400 5.550 6.450 7.300 8.150	1.200 1.000 1.000 1.200 1.150 0.900 0.850 0.850 0.900
+P	Pfeffer, Qualität, Zeitung, Häuser, Feuer, Eichhörnchen, Spaß, Mädchen.	pfeffer, qualität, zeitung, häuser, feuer, eichhörnchen, spaß, mädchen.
+W	pfeffer,	FF E FF E RR	0.000 1.785 2.635 4.420 5.270	1.785 0.850 1.785 0.850 0.900
+W	qualität,	kk FF aa nn I DD E DD	0.000 1.250 2.300 3.300 4.150 5.050 6.150 7.000	1.250 1.050 1.000 0.850 0.900 1.100 0.850 1.100
+W	zeitung,	DD SS aa I DD U nn kk	0.000 1.100 2.300 3.300 4.200 5.300 6.300 7.150	1.100 1.200 1.000 0.900 1.100 1.000 0.850 1.250
+W	häuser,	O SS E RR	0.000 1.050 2.250 3.100	1.050 1.200 0.850 0.900
+W	feuer,	FF O E RR	0.000 1.050 2.100 2.950	1.050 1.050 0.850 0.900
+W	eichhörnchen,	aa I kk E RR nn kk E nn	0.000 1.000 1.900 3.150 4.000 4.900 5.750 7.000 7.850	1.000 0.900 1.250 0.850 0.900 0.850 1.250 0.850 0.850
+W	spaß,	SS PP aa SS	0.000 1.200 2.350 3.350	1.200 1.150 1.000 1.200
+W	mädchen.	PP E DD kk E nn	0.000 1.150 2.000 3.100 4.350 5.200	1.150 0.850 1.100 1.250 0.850 0.850

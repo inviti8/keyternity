@@ -1,0 +1,74 @@
+P	Bom dia! Eu gostaria de um café com leite, por favor.	Bom dia! Eu gostaria de um café com leite, por favor.
+W	Bom	PP O	0.000 1.080	1.080 0.960
+W	dia!	CH I aa	0.000 1.150 2.070	1.150 0.920 0.950
+W	Eu	E U	0.000 0.900	0.900 0.950
+W	gostaria	kk O SS DD aa RR I aa	0.000 1.210 2.170 3.400 4.450 5.400 6.280 7.200	1.210 0.960 1.230 1.050 0.950 0.880 0.920 0.950
+W	de	CH I	0.000 1.150	1.150 0.920
+W	um	U	0.000	0.950
+W	café	kk aa FF E	0.000 1.210 2.160 3.160	1.210 0.950 1.000 0.900
+W	com	kk O	0.000 1.210	1.210 0.960
+W	leite,	nn E I CH I	0.000 0.880 1.780 2.700 3.850	0.880 0.900 0.920 1.150 0.920
+W	por	PP O RR	0.000 1.080 2.040	1.080 0.960 0.880
+W	favor.	FF aa FF O RR	0.000 1.000 1.950 2.950 3.910	1.000 0.950 1.000 0.960 0.880
+P	As crianças brincam no jardim enquanto os pais conversam.	As crianças brincam no jardim enquanto os pais conversam.
+W	As	aa SS	0.000 0.950	0.950 1.230
+W	crianças	kk RR I aa SS aa SS	0.000 1.210 2.090 3.010 3.960 5.190 6.140	1.210 0.880 0.920 0.950 1.230 0.950 1.230
+W	brincam	PP RR I kk aa U	0.000 1.080 1.960 2.880 4.090 5.040	1.080 0.880 0.920 1.210 0.950 0.950
+W	no	nn U	0.000 0.880	0.880 0.950
+W	jardim	CH aa RR CH I	0.000 1.150 2.100 2.980 4.130	1.150 0.950 0.880 1.150 0.920
+W	enquanto	E kk U aa DD U	0.000 0.900 2.110 3.060 4.010 5.060	0.900 1.210 0.950 0.950 1.050 0.950
+W	os	U SS	0.000 0.950	0.950 1.230
+W	pais	PP aa I SS	0.000 1.080 2.030 2.950	1.080 0.950 0.920 1.230
+W	conversam.	kk O FF E RR SS aa U	0.000 1.210 2.170 3.170 4.070 4.950 6.180 7.130	1.210 0.960 1.000 0.900 0.880 1.230 0.950 0.950
+P	Tenho 3 gatos e 21 cachorros, custa R$ 1.250,50 e mais 7% de desconto.	Tenho três gatos e vinte e um cachorros, custa mil duzentos e cinquenta vírgula cinquenta reais e mais sete por cento de desconto.
+W	Tenho	DD E nn U	0.000 1.050 1.950 2.830	1.050 0.900 0.880 0.950
+W	três	DD RR E SS	0.000 1.050 1.930 2.830	1.050 0.880 0.900 1.230
+W	gatos	kk aa DD U SS	0.000 1.210 2.160 3.210 4.160	1.210 0.950 1.050 0.950 1.230
+W	e	I	0.000	0.920
+W	vinte	FF I CH I	0.000 1.000 1.920 3.070	1.000 0.920 1.150 0.920
+W	cachorros,	kk aa CH O RR U SS	0.000 1.210 2.160 3.310 4.270 5.150 6.100	1.210 0.950 1.150 0.960 0.880 0.950 1.230
+W	custa	kk U SS DD aa	0.000 1.210 2.160 3.390 4.440	1.210 0.950 1.230 1.050 0.950
+W	mil	PP I U	0.000 1.080 2.000	1.080 0.920 0.950
+W	duzentos	DD U SS E DD U SS	0.000 1.050 2.000 3.230 4.130 5.180 6.130	1.050 0.950 1.230 0.900 1.050 0.950 1.230
+W	cinquenta	SS I kk E DD aa	0.000 1.230 2.150 3.360 4.260 5.310	1.230 0.920 1.210 0.900 1.050 0.950
+W	vírgula	FF I RR kk U nn aa	0.000 1.000 1.920 2.800 4.010 4.960 5.840	1.000 0.920 0.880 1.210 0.950 0.880 0.950
+W	reais	RR E aa I SS	0.000 0.880 1.780 2.730 3.650	0.880 0.900 0.950 0.920 1.230
+W	mais	PP aa I SS	0.000 1.080 2.030 2.950	1.080 0.950 0.920 1.230
+W	sete	SS E CH I	0.000 1.230 2.130 3.280	1.230 0.900 1.150 0.920
+W	cento	SS E DD U	0.000 1.230 2.130 3.180	1.230 0.900 1.050 0.950
+W	desconto.	DD E SS kk O DD U	0.000 1.050 1.950 3.180 4.390 5.350 6.400	1.050 0.900 1.230 1.210 0.960 1.050 0.950
+P	Onde fica a estação? Fica ao lado do hotel, perto da cidade.	Onde fica a estação? Fica ao lado do hotel, perto da cidade.
+W	Onde	O CH I	0.000 0.960 2.110	0.960 1.150 0.920
+W	fica	FF I kk aa	0.000 1.000 1.920 3.130	1.000 0.920 1.210 0.950
+W	a	aa	0.000	0.950
+W	estação?	E SS DD aa SS aa U	0.000 0.900 2.130 3.180 4.130 5.360 6.310	0.900 1.230 1.050 0.950 1.230 0.950 0.950
+W	Fica	FF I kk aa	0.000 1.000 1.920 3.130	1.000 0.920 1.210 0.950
+W	ao	aa U	0.000 0.950	0.950 0.950
+W	lado	nn aa DD U	0.000 0.880 1.830 2.880	0.880 0.950 1.050 0.950
+W	do	DD U	0.000 1.050	1.050 0.950
+W	hotel,	O DD E U	0.000 0.960 2.010 2.910	0.960 1.050 0.900 0.950
+W	perto	PP E RR DD U	0.000 1.080 1.980 2.860 3.910	1.080 0.900 0.880 1.050 0.950
+W	da	DD aa	0.000 1.050	1.050 0.950
+W	cidade.	SS I DD aa CH I	0.000 1.230 2.150 3.200 4.150 5.300	1.230 0.920 1.050 0.950 1.150 0.920
+P	Chave, filho, ninho, carro, passo, nascer, quero, guitarra, gelo, hoje, texto, exame, caixa, tarde, Brasil, campo, não, falam, também, parabéns, pouco.	Chave, filho, ninho, carro, passo, nascer, quero, guitarra, gelo, hoje, texto, exame, caixa, tarde, Brasil, campo, não, falam, também, parabéns, pouco.
+W	Chave,	CH aa FF I	0.000 1.150 2.100 3.100	1.150 0.950 1.000 0.920
+W	filho,	FF I nn U	0.000 1.000 1.920 2.800	1.000 0.920 0.880 0.950
+W	ninho,	nn I nn U	0.000 0.880 1.800 2.680	0.880 0.920 0.880 0.950
+W	carro,	kk aa RR U	0.000 1.210 2.160 3.040	1.210 0.950 0.880 0.950
+W	passo,	PP aa SS U	0.000 1.080 2.030 3.260	1.080 0.950 1.230 0.950
+W	nascer,	nn aa SS E RR	0.000 0.880 1.830 3.060 3.960	0.880 0.950 1.230 0.900 0.880
+W	quero,	kk E RR U	0.000 1.210 2.110 2.990	1.210 0.900 0.880 0.950
+W	guitarra,	kk I DD aa RR aa	0.000 1.210 2.130 3.180 4.130 5.010	1.210 0.920 1.050 0.950 0.880 0.950
+W	gelo,	CH E nn U	0.000 1.150 2.050 2.930	1.150 0.900 0.880 0.950
+W	hoje,	O CH I	0.000 0.960 2.110	0.960 1.150 0.920
+W	texto,	DD E SS DD U	0.000 1.050 1.950 3.180 4.230	1.050 0.900 1.230 1.050 0.950
+W	exame,	E SS aa PP I	0.000 0.900 2.130 3.080 4.160	0.900 1.230 0.950 1.080 0.920
+W	caixa,	kk aa I CH aa	0.000 1.210 2.160 3.080 4.230	1.210 0.950 0.920 1.150 0.950
+W	tarde,	DD aa RR CH I	0.000 1.050 2.000 2.880 4.030	1.050 0.950 0.880 1.150 0.920
+W	Brasil,	PP RR aa SS I U	0.000 1.080 1.960 2.910 4.140 5.060	1.080 0.880 0.950 1.230 0.920 0.950
+W	campo,	kk aa PP U	0.000 1.210 2.160 3.240	1.210 0.950 1.080 0.950
+W	não,	nn aa U	0.000 0.880 1.830	0.880 0.950 0.950
+W	falam,	FF aa nn aa U	0.000 1.000 1.950 2.830 3.780	1.000 0.950 0.880 0.950 0.950
+W	também,	DD aa PP E I	0.000 1.050 2.000 3.080 3.980	1.050 0.950 1.080 0.900 0.920
+W	parabéns,	PP aa RR aa PP E I SS	0.000 1.080 2.030 2.910 3.860 4.940 5.840 6.760	1.080 0.950 0.880 0.950 1.080 0.900 0.920 1.230
+W	pouco.	PP O kk U	0.000 1.080 2.040 3.250	1.080 0.960 1.210 0.950

@@ -92,12 +92,25 @@ Modifications (GPLv3 section 5a)
     src/lipsync.rs, src/lipsync_en.rs, src/lipsync_ui.rs,
     src/keyframe_editor.rs, src/editor.rs, src/shared.rs, tests/all/lipsync.rs,
     tests/data/lipsync_en_reference.tsv, docs/LIP_SYNC.md
+  Transcription (whisper.cpp, downloaded on first use like FFmpeg; not
+  included here), lip-sync languages (German, French, Brazilian Portuguese,
+  Finnish, Lithuanian), timing guided by what was heard
+    src/transcribe.rs, src/lipsync_rules.rs, src/lipsync_text.rs,
+    src/lipsync_de.rs, src/lipsync_fr.rs, src/lipsync_pt.rs,
+    src/lipsync_fi.rs, src/lipsync.rs, src/lipsync_ui.rs,
+    tests/all/lipsync_langs.rs, tests/all/transcribe.rs, tests/data/
 
 The user-facing strings for all of the above are in assets/i18n/en.json.
 
 
 Third-party components
 ----------------------
+
+whisper.cpp (MIT, https://github.com/ggml-org/whisper.cpp) and its models
+are not included either: on Windows the app downloads the official build
+(release b5454) and the chosen model (Hugging Face ggerganov/whisper.cpp,
+pinned revision), each checked against its published SHA-256; elsewhere it
+uses the system's whisper-cli. See src/transcribe.rs.
 
 FFmpeg is not included in this repository or its builds. The Windows
 installer and the app download official builds from their publishers, and
@@ -109,10 +122,14 @@ against a separately obtained DragonBonesCPP checkout
 (https://github.com/DragonBones/DragonBonesCPP); none of its code is
 included here.
 
-src/lipsync_en.rs is ported from TalkingHead's modules/lipsync-en.mjs
-(https://github.com/met4citizen/TalkingHead), and
-tests/data/lipsync_en_reference.tsv is that module's output, used under
-its license:
+The lip-sync language modules are ported from TalkingHead's
+(https://github.com/met4citizen/TalkingHead) modules/lipsync-*.mjs:
+src/lipsync_en.rs and src/lipsync_fi.rs (English, Finnish and Lithuanian,
+by Mika Suominen), src/lipsync_de.rs and src/lipsync_fr.rs (German and
+French, by Stephan Wald), and src/lipsync_pt.rs (Brazilian Portuguese, by
+Lucas Boemeke), with src/lipsync_rules.rs as their rule engine. The files
+tests/data/lipsync_*_reference.tsv are those modules' output. All are used
+under TalkingHead's license:
 
   MIT License
 

@@ -1,0 +1,66 @@
+P	Bonjour! Je voudrais un café et un croissant, s'il vous plaît.	Bonjour! Je voudrais un café et un croissant, s'il vous plaît.
+W	Bonjour!	PP U SS U RR	0.000 1.100 2.050 3.300 4.250	1.100 0.950 1.250 0.950 1.150
+W	Je	SS	0.000	1.250
+W	voudrais	FF U DD RR E	0.000 1.000 1.950 3.000 4.150	1.000 0.950 1.050 1.150 0.950
+W	un	U nn	0.000 0.950	0.950 0.880
+W	café	kk aa FF E	0.000 1.200 2.200 3.200	1.200 1.000 1.000 0.950
+W	et	E	0.000	0.950
+W	croissant,	kk RR FF aa SS aa nn	0.000 1.200 2.350 3.350 4.350 5.600 6.600	1.200 1.150 1.000 1.000 1.250 1.000 0.880
+W	s'il	SS I nn	0.000 1.550 2.450	1.250 0.900 0.880
+W	vous	FF U	0.000 1.000	1.000 0.950
+W	plaît.	PP nn aa I	0.000 1.100 1.980 2.980	1.100 0.880 1.000 0.900
+P	Les enfants jouent dans le jardin pendant que leurs parents parlent.	Les enfants jouent dans le jardin pendant que leurs parents parlent.
+W	Les	nn	0.000	0.880
+W	enfants	E nn FF aa nn DD	0.000 0.950 1.830 2.830 3.830 4.710	0.950 0.880 1.000 1.000 0.880 1.050
+W	jouent	SS U aa nn	0.000 1.250 2.200 3.200	1.250 0.950 1.000 0.880
+W	dans	DD aa nn	0.000 1.050 2.050	1.050 1.000 0.880
+W	le	nn	0.000	0.880
+W	jardin	SS aa RR DD E nn	0.000 1.250 2.250 3.400 4.450 5.400	1.250 1.000 1.150 1.050 0.950 0.880
+W	pendant	PP aa nn DD aa nn	0.000 1.100 2.100 2.980 4.030 5.030	1.100 1.000 0.880 1.050 1.000 0.880
+W	que	kk	0.000	1.200
+W	leurs	nn U RR	0.000 0.880 1.830	0.880 0.950 1.150
+W	parents	PP aa RR aa nn DD	0.000 1.100 2.100 3.250 4.250 5.130	1.100 1.000 1.150 1.000 0.880 1.050
+W	parlent.	PP aa RR nn aa nn	0.000 1.100 2.100 3.250 4.130 5.130	1.100 1.000 1.150 0.880 1.000 0.880
+P	Il y a 3 chats et 21 chiens, cela coûte 1250 euros & 7,5 pour cent de plus.	Il y a trois chats et vingt et un chiens, cela coûte mille deux cent cinquante euros et sept virgule cinq pour cent de plus.
+W	Il	I nn	0.000 0.900	0.900 0.880
+W	y	I	0.000	0.900
+W	a	aa	0.000	1.000
+W	trois	DD RR FF aa	0.000 1.050 2.200 3.200	1.050 1.150 1.000 1.000
+W	chats	SS aa DD	0.000 1.250 2.250	1.250 1.000 1.050
+W	vingt	FF I nn kk	0.000 1.000 1.900 2.780	1.000 0.900 0.880 1.200
+W	chiens,	SS I E nn	0.000 1.250 2.150 3.100	1.250 0.900 0.950 0.880
+W	cela	SS E nn aa	0.000 1.250 2.200 3.080	1.250 0.950 0.880 1.000
+W	coûte	kk U DD	0.000 1.200 2.150	1.200 0.950 1.050
+W	mille	PP I	0.000 1.100	1.100 0.900
+W	deux	DD U	0.000 1.050	1.050 0.950
+W	cent	SS aa nn	0.000 1.250 2.250	1.250 1.000 0.880
+W	cinquante	SS I nn kk aa nn DD	0.000 1.250 2.150 3.030 4.230 5.230 6.110	1.250 0.900 0.880 1.200 1.000 0.880 1.050
+W	euros	U RR O	0.000 0.950 2.100	0.950 1.150 1.050
+W	sept	SS E PP	0.000 1.250 2.200	1.250 0.950 1.100
+W	virgule	FF I RR kk I U nn	0.000 1.000 1.900 3.050 4.250 5.150 6.100	1.000 0.900 1.150 1.200 0.900 0.950 0.880
+W	cinq	SS I nn kk	0.000 1.250 2.150 3.030	1.250 0.900 0.880 1.200
+W	pour	PP U RR	0.000 1.100 2.050	1.100 0.950 1.150
+W	de	DD	0.000	1.050
+W	plus.	PP nn I U	0.000 1.100 1.980 2.880	1.100 0.880 0.900 0.950
+P	Où est la gare? Elle est à côté de l'hôtel, près du château.	Où est la gare? Elle est à côté de l'hôtel, près du château.
+W	Où	U	0.000	0.950
+W	est	E SS	0.000 0.950	0.950 1.250
+W	la	nn aa	0.000 0.880	0.880 1.000
+W	gare?	kk aa RR	0.000 1.200 2.200	1.200 1.000 1.150
+W	Elle			
+W	à	aa	0.000	1.000
+W	côté	kk O E	0.000 1.200 2.250	1.200 1.050 0.950
+W	l'hôtel,	nn O DD E nn	0.000 1.180 2.230 3.280 4.230	0.880 1.050 1.050 0.950 0.880
+W	près	PP RR E SS	0.000 1.100 2.250 3.200	1.100 1.150 0.950 1.250
+W	du	DD I U	0.000 1.050 1.950	1.050 0.900 0.950
+W	château.	SS aa DD O	0.000 1.250 2.250 3.300	1.250 1.000 1.050 1.050
+P	Champagne, oiseau, beaucoup, maison, question, garçon, fenêtre, voilà, noël.	Champagne, oiseau, beaucoup, maison, question, garçon, fenêtre, voilà, noël.
+W	Champagne,	SS aa nn PP aa nn	0.000 1.250 2.250 3.130 4.230 5.230	1.250 1.000 0.880 1.100 1.000 1.496
+W	oiseau,	FF aa SS O	0.000 1.000 2.000 3.250	1.000 1.000 1.250 1.050
+W	beaucoup,	PP O kk U PP	0.000 1.100 2.150 3.350 4.300	1.100 1.050 1.200 0.950 1.100
+W	maison,	PP E SS O nn	0.000 1.100 2.050 3.300 4.350	1.100 0.950 1.250 1.050 0.880
+W	question,	kk E SS I O nn	0.000 1.200 2.150 4.275 5.175 6.960	1.200 0.950 2.125 0.900 1.785 0.880
+W	garçon,	kk aa RR SS O nn	0.000 1.200 2.200 3.350 4.600 5.650	1.200 1.000 1.150 1.250 1.050 0.880
+W	fenêtre,	FF aa nn E DD RR aa nn	0.000 1.000 2.000 2.880 3.830 4.880 6.030 7.030	1.000 1.000 0.880 0.950 1.050 1.150 1.000 0.880
+W	voilà,	FF aa nn aa	0.000 1.700 2.700 3.580	1.700 1.000 0.880 1.000
+W	noël.	nn O E nn	0.000 0.880 1.930 2.880	0.880 1.050 0.950 0.880

@@ -58,8 +58,16 @@ pub mod agent;
 pub mod armature_window;
 pub mod audio;
 pub mod lipsync;
+pub mod lipsync_de;
 pub mod lipsync_en;
+pub mod lipsync_fi;
+pub mod lipsync_fr;
+pub mod lipsync_pt;
+pub mod lipsync_rules;
+pub mod lipsync_text;
 pub mod lipsync_ui;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod transcribe;
 pub mod atlas_modal;
 pub mod auto_mesh;
 pub mod bind_pose;

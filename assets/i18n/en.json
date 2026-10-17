@@ -354,7 +354,22 @@
     "bake_desc": "Make the Lip Sync layer an ordinary layer you can edit. It won't regenerate after this.",
     "remove": "Remove",
     "remove_desc": "Remove the lip sync and its layer.",
-    "changed": "Changed since generating: Regenerate to apply."
+    "changed": "Changed since generating: Regenerate to apply.",
+    "language": "Language",
+    "language_desc": "The language the line is spoken in: its spelling rules give each word's sounds, and transcription listens for it. English-only Whisper models always listen for English.",
+    "transcribe": "Transcribe",
+    "transcribe_desc": "Listen to the clip with Whisper (whisper.cpp, on this computer): the words fill an empty transcript, and where it heard them guides the timing. Check and correct the words, then Generate.",
+    "download_tool": "The first time, this downloads whisper.cpp's official build ($mb MB, checked against its published checksum).",
+    "install_tool": "Needs whisper.cpp's whisper-cli on your PATH (macOS: brew install whisper-cpp).",
+    "download_model": "The first time, this downloads the $name model ($mb MB, checked against its published checksum).",
+    "model_desc": "The Whisper model: bigger hears better but is slower and a larger download. The .en models are English only, and better at it. ✓: downloaded.",
+    "downloading": "Downloading $what: $done of $mb MB…",
+    "listening": "Listening…",
+    "heard": "Timing follows what Whisper heard ($n words).",
+    "use_heard": "Use heard text",
+    "use_heard_desc": "Replace the transcript with what Whisper heard.",
+    "forget_heard": "Forget",
+    "forget_heard_desc": "Time the words from the clip's loudness alone, ignoring what Whisper heard."
   },
   "audio": {
     "add": "+ Audio",
