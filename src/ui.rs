@@ -1879,6 +1879,10 @@ fn menu_view_button(
             events.add_camera();
             ui.close();
         }
+        if tpb!(&shared_ui.loc("top_bar.view.face_rig"), None).clicked() {
+            events.open_face_panel();
+            ui.close();
+        }
     });
 }
 

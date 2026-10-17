@@ -96,8 +96,20 @@ pub fn draw(
         return;
     }
     let all = rigs(armature);
+    let loc = |shared_ui: &crate::Ui, k: &str| shared_ui.loc(&format!("face_panel.{k}"));
     if all.is_empty() {
-        shared_ui.face_panel_open = false;
+        // no rig yet (or Set Up Face is still being applied this frame): say how to make one
+        let mut open = true;
+        egui::Window::new(loc(shared_ui, "title"))
+            .id(egui::Id::new("face_rig_panel"))
+            .open(&mut open)
+            .default_size([340., 120.])
+            .show(ctx, |ui| {
+                ui.label(loc(shared_ui, "none"));
+            });
+        if !open {
+            shared_ui.face_panel_open = false;
+        }
         return;
     }
     // the rig: the chosen one, else the selection's, else the first
@@ -111,7 +123,6 @@ pub fn draw(
         })
         .unwrap_or(all[0].0);
     let controls = all.iter().find(|(r, _)| *r == root).map(|(_, c)| c.clone()).unwrap_or_default();
-    let loc = |shared_ui: &crate::Ui, k: &str| shared_ui.loc(&format!("face_panel.{k}"));
     let mut open = true;
     let title = loc(shared_ui, "title");
     egui::Window::new(title)

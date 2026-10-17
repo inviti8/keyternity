@@ -415,6 +415,12 @@ pub fn draw(
     if bone.face_control.is_some() {
         crate::face_ui::panel(ui, &bone, shared_ui, config, armature, events);
         ui.add_space(20.);
+    } else if crate::face_panel::rigs(armature).iter().any(|(root, _)| *root == bone.id) {
+        ui.label(shared_ui.loc("face_panel.root_note"));
+        if ui.button(shared_ui.loc("bone_panel.face.open_panel")).clicked() {
+            shared_ui.face_panel_open = true;
+        }
+        ui.add_space(20.);
     }
 
     if children.len() > 0 || parents.len() > 0 {

@@ -668,6 +668,7 @@ pub fn simple_event(
         Events::ToggleShowAllEnvelopes => edit_mode.show_all_envelopes = !edit_mode.show_all_envelopes,
         Events::ToggleShowCameras => edit_mode.show_cameras = !edit_mode.show_cameras,
         Events::SetSculptRadius => edit_mode.sculpt_radius = value.max(0.),
+        Events::OpenFacePanel => ui.face_panel_open = true,
         Events::AddLayer | Events::SelectLayer | Events::SetLayer | Events::DeleteLayer
         | Events::DuplicateLayer | Events::MergeLayerDown | Events::FlattenLayers
         | Events::CloseLoop | Events::BakeGenerator | Events::MoveLayer => {

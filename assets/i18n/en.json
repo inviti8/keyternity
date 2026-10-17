@@ -88,6 +88,7 @@
       "zoom_out": "Zoom Out",
       "show_cameras": "Show Render Cameras",
       "hide_cameras": "Hide Render Cameras",
+      "face_rig": "Face Rig Panel",
       "add_camera": "Add Render Camera"
     },
     "settings": "Settings",
@@ -305,7 +306,9 @@
     "hint": "Drag a control to pose; Shift-drag twists. Double-click resets; right-click to key or select.",
     "reset": "Reset",
     "key": "Key",
-    "select": "Select Control Bone"
+    "select": "Select Control Bone",
+    "none": "No face rig yet. Select a face mesh, then in its Shapes section use Set Up Face.",
+    "root_note": "This is a face rig: its controls are worked from the Face Rig panel."
   },
   "bone_panel": {
     "landmarks": {

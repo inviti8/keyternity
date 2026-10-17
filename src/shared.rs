@@ -3080,6 +3080,7 @@ pub enum Events {
     AddStandardShapes,
     SetFaceControl,
     FaceLandmarks,
+    OpenFacePanel,
     SetSculptRadius,
     ResetVertices,
     SelectBind,
@@ -3284,6 +3285,13 @@ impl EventState {
         self.events.push(E::FaceLandmarks);
         self.values.push(mesh_id as f32);
         self.str_values.push(op.to_string());
+    }
+
+    /// Open the Face Rig panel.
+    pub fn open_face_panel(&mut self) {
+        self.events.push(E::OpenFacePanel);
+        self.values.push(0.);
+        self.str_values.push(String::new());
     }
 
     /// Add a face rig for a mesh (docs/LIP_SYNC.md §6.5).
