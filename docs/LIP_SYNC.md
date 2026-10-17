@@ -1,6 +1,6 @@
 # Shapes, dialog and auto lip sync
 
-Status: phases 1, 1b, 1c, 2, 3, 3b and 4 are built (§10). The rest is research and scope. Decisions to confirm are in §11.
+Status: all phases are built (§10); the rest of this document is the design they follow. The rest is research and scope. Decisions to confirm are in §11.
 
 ## 1. Goal
 
@@ -972,6 +972,49 @@ The review page (`review_page`) can show a lip-synced animation as a frame strip
 the transcript. That lets an agent block out a scene's dialog, which the artist then
 reviews and refines.
 
+### 9.1 As built (phase 5)
+
+`src/agent/dialog_tools.rs`, served by the same MCP server as the skinning tools.
+
+- **Shapes:**
+  - `list_shapes`: meshes and their shapes, plus face rigs and their controls.
+  - `set_shape_weight`: a shape's setup weight.
+  - `key_shapes`: ShapeWeight keys on a frame of the layer being edited. It refuses a
+    locked layer.
+- **Mouths:**
+  - `list_mouth_rigs`: each possible mouth, its kind, whether its rig is saved or
+    automatic, and what each viseme uses.
+  - `auto_fill_mouth_rig`: fills a mouth's rig in a chosen viseme set and saves it on
+    the mouth's bone.
+- **Dialog:**
+  - `get_dialog`: every animation's clips, dialog lines with takes, and lip-sync
+    tracks with their word times, plus the voices on offer and whether Kokoro is
+    installed.
+  - `add_dialog`: speaks a line (Kokoro, a system voice, or ElevenLabs), places it at
+    a frame, and lip-syncs it. It returns the clip, its length and the words' times.
+    The first Kokoro download isn't done from a tool call, which would freeze the
+    editor: the agent is told to ask the artist to generate one line in the Dialog
+    window instead.
+  - `import_audio`: places an audio file from a path.
+- **Lip sync:** `lip_sync` lip-syncs a clip.
+  - It takes a transcript, a mouth, a language, words or loudness, and keyer
+    settings.
+  - `transcribe: true` has Whisper listen first, if a model is installed.
+  - It regenerates the clip's Lip Sync layer if one exists.
+- **Undo:** each editing tool is one undo step, of the bones (shapes, mouth rigs) or
+  of the named animation (keys, dialog, lip sync). A tool that fails leaves no step
+  behind. Read-only mode refuses the editing tools.
+- **`review_page`:**
+  - New `lipsync` option: per line, a frame strip (every nth frame, optionally
+    framed on the face mesh). Each frame is labelled with its number, time, viseme
+    and word, under the transcript; hovering a word shows its times.
+  - `poses` is now optional, so a page can be lip sync only.
+- **Prompt:** `lip_sync_dialog` walks an agent through blocking out a scene's dialog.
+  The server's instructions mention the dialog tools.
+- **Not built:** the optional audio-recognition engines (Rhubarb, ONNX phonemes).
+  The plan was to add them only if transcripts proved too coarse, and so far the
+  transcript timing has measured well (§7.6).
+
 ## 10. Phases
 
 | phase | contents | notes |
@@ -984,7 +1027,7 @@ reviews and refines.
 | **3. Mouth rigs + lip sync** ✓ (first pass, §7.5) | The 17 sounds and the viseme-set mappings, mouth rig panel and auto-fill, the English text rules (ported from TalkingHead), typed transcripts with words spread over speech, lip-sync tracks and keyer, regenerate and bake, loudness fallback, drawn and morph mouths | The Facebot loop, end to end. No downloads. |
 | **3b. Transcription** ✓ (§7.6) | whisper.cpp through `whisper-rs`, model download, word timings, editable transcript; TalkingHead's other language modules | Imported recordings |
 | **4. Voice generation** ✓ (§8.1) | Provider interface, Kokoro local with timings, Dialog panel with takes; then ElevenLabs (opt-in) and Chatterbox (helper process) | |
-| **5. Agent** | MCP tools; optional audio-recognition engines (Rhubarb, ONNX phonemes) only if transcripts prove too coarse | |
+| **5. Agent** ✓ (§9.1) | MCP tools; optional audio-recognition engines (Rhubarb, ONNX phonemes) only if transcripts prove too coarse | |
 
 ## 11. Decisions to confirm
 

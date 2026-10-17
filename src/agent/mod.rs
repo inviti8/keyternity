@@ -5,6 +5,7 @@
 //! Handlers run on the main thread between frames, like events. Every editing tool
 //! leaves Pose Mode, pushes an undo step, and locks the vertices it weights.
 
+pub mod dialog_tools;
 pub mod render;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod server;
@@ -45,6 +46,18 @@ pub struct Tool {
     pub schema: Value,
     /// changes the rig (refused in read-only mode)
     pub edits: bool,
+    /// the undo step an edit makes
+    pub undo: Undo,
+}
+
+/// What an editing tool's undo step holds.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Undo {
+    None,
+    /// the bones (skinning, shapes, mouth rigs)
+    Bones,
+    /// the animation named by the `animation` argument (dialog, lip sync, keys)
+    Anim,
 }
 
 /// State kept between calls.
@@ -65,6 +78,7 @@ pub struct AgentState {
 pub const INSTRUCTIONS: &str = "Keyternity is a 2D skeletal animation editor. These tools skin the open rig: they let you see the character art, meshes and bones, and set how strongly each bone moves each mesh vertex.\n\
 Coordinates are world units at rest (the setup pose), y up. A vertex's weights are shares that always sum to 1 across bones; setting one bone's share scales the others.\n\
 Work by regions, not single vertices: decide which drawn part follows which bone from the pictures, then call assign_parts with outlines. Check with pose_test, fix seams with blend_joint or smooth, and use set_weights only for touch-ups.\n\
+They also do dialog and lip sync: speak lines with a voice (add_dialog), place audio (import_audio), lip-sync it on the rig's mouth (lip_sync), key shapes, and show the result as frame strips with the transcript (review_page with lipsync). The lip_sync_dialog prompt walks through it.\n\
 You may change envelopes and bone lengths. Don't try to add bones or change meshes: suggest that in your report instead. If the art or the bone hierarchy isn't clear, ask the artist rather than guessing. Every edit can be undone; the artist reviews your work and saves the file.";
 
 pub const WORKFLOW: &str = "Skin this character:\n\
@@ -99,12 +113,14 @@ pub fn tools() -> Vec<Tool> {
             description: "The open rig: every bone (id, name, parent, head and tail at rest, length, envelope, whether it deforms or is an IK target) and every mesh (id, name, bounds at rest, vertex and triangle counts, whether it's skinned, its skin bones). Start here.",
             schema: schema(json!({}), &[]),
             edits: false,
+            undo: Undo::None,
         },
         Tool {
             name: "get_mesh",
             description: "A mesh's vertices (id, rest position, shares per bone, locked) and triangles, paged.",
             schema: schema(json!({ "mesh": mesh, "offset": { "type": "integer" }, "limit": { "type": "integer" } }), &["mesh"]),
             edits: false,
+            undo: Undo::None,
         },
         Tool {
             name: "render",
@@ -123,6 +139,7 @@ pub fn tools() -> Vec<Tool> {
                 &[],
             ),
             edits: false,
+            undo: Undo::None,
         },
         Tool {
             name: "pose_test",
@@ -140,12 +157,14 @@ pub fn tools() -> Vec<Tool> {
                 &[],
             ),
             edits: false,
+            undo: Undo::None,
         },
         Tool {
             name: "bind_to_skeleton",
             description: "Skin a mesh to the skeleton in one step from the bones' envelopes (turns on Bind Pose). Vertices weighted by hand keep their weights. Use it for a baseline, or again after changing envelopes or lengths.",
             schema: schema(json!({ "mesh": mesh }), &["mesh"]),
             edits: true,
+            undo: Undo::Bones,
         },
         Tool {
             name: "set_envelope",
@@ -162,12 +181,14 @@ pub fn tools() -> Vec<Tool> {
                 &["bone"],
             ),
             edits: true,
+            undo: Undo::Bones,
         },
         Tool {
             name: "set_bone_length",
             description: "Set a bone's length (world units). Its tail, and so its envelope, follow.",
             schema: schema(json!({ "bone": bone, "length": { "type": "number" } }), &["bone", "length"]),
             edits: true,
+            undo: Undo::Bones,
         },
         Tool {
             name: "assign_parts",
@@ -181,6 +202,7 @@ pub fn tools() -> Vec<Tool> {
                 &["mesh", "parts", "blend"],
             ),
             edits: true,
+            undo: Undo::Bones,
         },
         Tool {
             name: "set_region",
@@ -190,6 +212,7 @@ pub fn tools() -> Vec<Tool> {
                 &["mesh", "outline", "bone", "share"],
             ),
             edits: true,
+            undo: Undo::Bones,
         },
         Tool {
             name: "smooth",
@@ -199,12 +222,14 @@ pub fn tools() -> Vec<Tool> {
                 &["mesh"],
             ),
             edits: true,
+            undo: Undo::Bones,
         },
         Tool {
             name: "blend_joint",
             description: "Re-blend the seam between a parent bone and its child over `width` world units centred on the child's head, easing each vertex from the parent to the child along the child's direction. Fixes pinched or hard joints.",
             schema: schema(json!({ "mesh": mesh, "parent": bone, "child": bone, "width": { "type": "number" } }), &["mesh", "parent", "child", "width"]),
             edits: true,
+            undo: Undo::Bones,
         },
         Tool {
             name: "set_weights",
@@ -214,12 +239,14 @@ pub fn tools() -> Vec<Tool> {
                 &["mesh", "weights"],
             ),
             edits: true,
+            undo: Undo::Bones,
         },
         Tool {
             name: "unlock",
             description: "Return vertices (or the whole mesh) to their envelope weights, discarding hand and agent weighting.",
             schema: schema(json!({ "mesh": mesh, "vertices": { "type": "array", "items": { "type": "integer" } } }), &["mesh"]),
             edits: true,
+            undo: Undo::Bones,
         },
         Tool {
             name: "review_page",
@@ -238,25 +265,39 @@ pub fn tools() -> Vec<Tool> {
                     }), &["name"]) },
                     "weights_bones": { "type": "array", "items": { "type": "integer" }, "description": "bones to show weight views of" },
                     "size": { "type": "integer", "description": "picture size, longest side px (default 700)" },
+                    "lipsync": { "type": "array", "description": "lip-synced lines to show as frame strips with their transcript", "items": schema(json!({
+                        "animation": { "description": "index or name" },
+                        "clip": { "type": "integer", "description": "default: the animation's first lip-synced clip" },
+                        "every": { "type": "integer", "description": "show every nth frame (default 2)" },
+                        "from": { "type": "integer" },
+                        "to": { "type": "integer" },
+                        "frame_mesh": { "type": "integer", "description": "frame the strip on this mesh (the face)" }
+                    }), &["animation"]) },
                     "open": { "type": "boolean", "description": "open the page in the browser (default true)" }
                 }),
-                &["poses"],
+                &[],
             ),
             edits: false,
+            undo: Undo::None,
         },
         Tool {
             name: "checkpoint",
             description: "Remember the rig's current state under a name, to try something and go back with revert.",
             schema: schema(json!({ "name": { "type": "string" } }), &["name"]),
             edits: false,
+            undo: Undo::None,
         },
         Tool {
             name: "revert",
             description: "Go back to a checkpoint.",
             schema: schema(json!({ "name": { "type": "string" } }), &["name"]),
             edits: true,
+            undo: Undo::Bones,
         },
     ]
+    .into_iter()
+    .chain(dialog_tools::tools())
+    .collect()
 }
 
 fn r1(x: f32) -> f32 {
@@ -336,14 +377,21 @@ pub fn call(shared: &mut Shared, name: &str, args: &Value) -> ToolResult {
     if tool.edits {
         // skinning is set up at rest: leave Pose Mode, and make this one undo step
         editor::exit_pose_mode(&mut shared.armature, &mut shared.edit_mode, &mut shared.undo_states);
-        shared.undo_states.new_undo_bones(&shared.armature.bones);
+        match tool.undo {
+            Undo::Bones => shared.undo_states.new_undo_bones(&shared.armature.bones),
+            Undo::Anim => match dialog_tools::anim_index(&shared.armature, args) {
+                Ok(i) => shared.undo_states.new_undo_anim(&shared.armature.animations[i]),
+                Err(e) => return ToolResult::error(e),
+            },
+            Undo::None => {}
+        }
     }
     let result = run(shared, name, args);
     match result {
         Ok(r) => r,
         Err(e) => {
             // nothing changed: drop the undo step
-            if tool.edits {
+            if tool.edits && tool.undo != Undo::None {
                 shared.undo_states.undo_actions.pop();
             }
             ToolResult::error(e)
@@ -352,6 +400,9 @@ pub fn call(shared: &mut Shared, name: &str, args: &Value) -> ToolResult {
 }
 
 fn run(shared: &mut Shared, name: &str, args: &Value) -> Result<ToolResult, String> {
+    if let Some(r) = dialog_tools::run(shared, name, args) {
+        return r;
+    }
     let armature = &mut shared.armature;
     match name {
         "get_rig" => Ok(ToolResult::json(rig_json(armature))),
@@ -578,6 +629,10 @@ fn review_page(armature: &Armature, args: &Value, rig_path: Option<std::path::Pa
     // rest pose, then each pose
     let rest = posed_picture(armature, &json!({ "size": size }))?;
     card("Rest pose", "", &render::png(&rest.0.image), &[]);
+    let lipsync = match args.get("lipsync").and_then(|v| v.as_array()) {
+        Some(specs) => dialog_tools::review_section(armature, specs, (size as u32 / 3).clamp(120, 400))?,
+        None => String::new(),
+    };
     let poses = args.get("poses").and_then(|v| v.as_array()).cloned().unwrap_or_default();
     for pose in &poses {
         let mut a = pose.clone();
@@ -616,12 +671,15 @@ fn review_page(armature: &Armature, args: &Value, rig_path: Option<std::path::Pa
         figure{{margin:0;background:var(--card);border-radius:8px;overflow:hidden}}\
         img{{display:block;width:100%;height:auto;background:#2e3036;cursor:zoom-in}}img.big{{position:fixed;inset:0;margin:auto;width:auto;max-width:96vw;max-height:96vh;z-index:9;cursor:zoom-out;box-shadow:0 0 0 100vmax rgba(0,0,0,.8)}}\
         figcaption{{padding:10px 14px}}h2{{font-size:16px;margin:0 0 4px}}.issues{{color:var(--warn);margin:4px 0;padding-left:18px}}.ok{{color:var(--ok);margin:4px 0}}\
-        </style></head><body><main><h1>{t}</h1><p class=sub>{rig}{count} poses, made by the skinning agent in Keyternity. Click a picture to enlarge it.</p>{n}<div class=grid>{cards}</div></main>\
+        .lipsync{{background:var(--card);border-radius:8px;padding:12px 14px;margin-bottom:24px}}.transcript span{{border-bottom:1px dotted var(--dim)}}\
+        .strip{{display:flex;flex-wrap:wrap;gap:6px}}.tile{{width:150px;background:#1b1d22}}.tile figcaption{{padding:4px 6px;font-size:12px}}\
+        </style></head><body><main><h1>{t}</h1><p class=sub>{rig}{count} poses, made by an agent in Keyternity. Click a picture to enlarge it.</p>{n}{lipsync}<div class=grid>{cards}</div></main>\
         <script>document.querySelectorAll('img').forEach(i=>i.onclick=()=>i.classList.toggle('big'))</script></body></html>",
         t = esc(&title),
         rig = if rig.is_empty() { String::new() } else { format!("{} · ", esc(&rig)) },
         count = poses.len(),
         n = if notes.is_empty() { String::new() } else { format!("<section class=notes>{notes}</section>") },
+        lipsync = lipsync,
         cards = cards
     );
 

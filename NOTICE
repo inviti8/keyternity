@@ -103,6 +103,10 @@ Modifications (GPLv3 section 5a)
   Chatterbox) and dialog lines with takes
     src/voice.rs, src/dialog.rs, src/dialog_ui.rs, src/settings_modal.rs,
     src/audio.rs, tools/voice/chatterbox_tts.py, tests/all/dialog.rs
+  Agent tools for shapes, mouth rigs, dialog and lip sync; lip-sync strips
+  on the review page; the lip_sync_dialog prompt
+    src/agent/dialog_tools.rs, src/agent/mod.rs, src/agent/server.rs,
+    tests/all/agent_dialog.rs
 
 The user-facing strings for all of the above are in assets/i18n/en.json.
 

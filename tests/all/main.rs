@@ -4,6 +4,7 @@
 //! `cargo test --test all -- topology:: pen::`.
 
 mod agent;
+mod agent_dialog;
 mod anim_end;
 mod audio;
 mod auto_mesh;

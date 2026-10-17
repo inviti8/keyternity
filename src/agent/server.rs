@@ -300,12 +300,18 @@ fn handle(request: &Request, jobs: &Sender<Job>, token: &str) -> (u16, Option<Va
             "name": "skin_character",
             "description": "Skin the rig open in Keyternity: bind, assign drawn parts to bones, test poses, fix, report.",
             "arguments": [{ "name": "notes", "description": "anything the agent should know (e.g. keep the bag rigid)", "required": false }]
+        }, {
+            "name": "lip_sync_dialog",
+            "description": "Block out a scene's dialog in Keyternity: speak or place the lines, lip-sync them on the rig's mouth, and make a review page.",
+            "arguments": [{ "name": "notes", "description": "the lines, who says them, and how (e.g. the script)", "required": false }]
         }]})),
         "prompts/get" => {
             let notes = params.pointer("/arguments/notes").and_then(|n| n.as_str()).unwrap_or("");
-            let text = if notes.is_empty() { WORKFLOW.to_string() } else { format!("{WORKFLOW}\n\nArtist's notes: {notes}") };
+            let dialog = params.get("name").and_then(|n| n.as_str()) == Some("lip_sync_dialog");
+            let (workflow, what) = if dialog { (super::dialog_tools::WORKFLOW, "Block out the dialog") } else { (WORKFLOW, "Skin the open rig") };
+            let text = if notes.is_empty() { workflow.to_string() } else { format!("{workflow}\n\nArtist's notes: {notes}") };
             Ok(json!({
-                "description": "Skin the open rig",
+                "description": what,
                 "messages": [{ "role": "user", "content": { "type": "text", "text": text } }]
             }))
         }
