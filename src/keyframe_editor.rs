@@ -135,6 +135,10 @@ pub fn draw(
         &egui_ctx,
         &camera,
     );
+
+    if selections.anim != usize::MAX {
+        layer_settings(egui_ctx, shared_ui, armature, selections, events);
+    }
 }
 
 fn draw_animations_list(
@@ -764,6 +768,201 @@ pub fn draw_bottom_bar(
     });
 }
 
+/// The layer settings window (docs/TIMELINE.md §5.7–5.8): play mode, link, and
+/// generators. Every change is a `set_layer`, so it undoes; dragging a value is one
+/// step.
+fn layer_settings(
+    egui_ctx: &egui::Context,
+    shared_ui: &mut crate::Ui,
+    armature: &Armature,
+    selections: &SelectionState,
+    events: &mut EventState,
+) {
+    let Some(i) = shared_ui.layer_settings else { return };
+    let Some(anim) = armature.animations.get(selections.anim) else {
+        shared_ui.layer_settings = None;
+        return;
+    };
+    let Some(layer) = anim.layers.get(i).filter(|_| i > 0) else {
+        shared_ui.layer_settings = None;
+        return;
+    };
+    let loc = |k: &str| shared_ui.loc(&format!("keyframe_editor.layer_settings.{k}"));
+    let mut open = true;
+    let mut new = layer.clone();
+    let mut step = false;
+    let mut edited = false;
+    // a drag is one undo step; a click or typed value is its own
+    let track = |resp: &egui::Response, step: &mut bool, edited: &mut bool| {
+        if resp.changed() {
+            *edited = true;
+            *step |= !resp.dragged();
+        }
+        *step |= resp.drag_started();
+    };
+
+    egui::Window::new(format!("{}: {}", loc("title"), layer.name))
+        .id(egui::Id::new("timeline_layer_settings"))
+        .open(&mut open)
+        .resizable(false)
+        .collapsible(false)
+        .default_width(330.)
+        .show(egui_ctx, |ui| {
+            // play mode
+            ui.horizontal(|ui| {
+                ui.label(loc("play")).on_hover_text(loc("play_desc"));
+                let looped = matches!(new.play, PlayMode::Looped { .. });
+                if ui.radio(!looped, loc("linear")).clicked() && looped {
+                    new.play = PlayMode::Linear;
+                    (step, edited) = (true, true);
+                }
+                if ui.radio(looped, loc("looped")).clicked() && !looped {
+                    let secs = (anim.last_frame() as f32 / anim.fps.max(1) as f32).max(1.);
+                    new.play = PlayMode::Looped { length: secs.min(3.), speed: 1., phase: 0., free_running: false };
+                    (step, edited) = (true, true);
+                }
+            });
+            if let PlayMode::Looped { length, speed, phase, free_running } = &mut new.play {
+                egui::Grid::new("layer_loop").num_columns(2).show(ui, |ui| {
+                    ui.label(loc("length")).on_hover_text(loc("length_desc"));
+                    let r = ui.add(egui::DragValue::new(length).range(0.05..=600.).speed(0.02).suffix(" s").max_decimals(2));
+                    track(&r, &mut step, &mut edited);
+                    ui.end_row();
+                    ui.label(loc("speed"));
+                    let r = ui.add(egui::DragValue::new(speed).range(-10.0..=10.).speed(0.01).prefix("×").max_decimals(2));
+                    track(&r, &mut step, &mut edited);
+                    ui.end_row();
+                    ui.label(loc("phase")).on_hover_text(loc("phase_desc"));
+                    let r = ui.add(egui::DragValue::new(phase).speed(0.01).suffix(" s").max_decimals(2));
+                    track(&r, &mut step, &mut edited);
+                    ui.end_row();
+                });
+                let r = ui.checkbox(free_running, loc("free_running")).on_hover_text(loc("free_running_desc"));
+                track(&r, &mut step, &mut edited);
+                if new.link.is_none() && ui.button(loc("close_loop")).on_hover_text(loc("close_loop_desc")).clicked() {
+                    events.close_loop(i);
+                }
+                // baked into the animation (exports), a loop that doesn't fit shows a seam
+                let secs = anim.last_frame() as f32 / anim.fps.max(1) as f32;
+                let per = *length / speed.abs().max(1e-3);
+                let n = secs / per;
+                if secs > 0. && (n - n.round()).abs() > 0.02 {
+                    let text = loc("seam").replace("$loop", &format!("{per:.2}")).replace("$anim", &format!("{secs:.2}"));
+                    ui.colored_label(egui::Color32::from_rgb(230, 180, 80), text);
+                }
+            }
+
+            // link: play another animation
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label(loc("link")).on_hover_text(loc("link_desc"));
+                let name = |id: Option<i32>| {
+                    id.and_then(|id| armature.animations.iter().find(|a| a.id == id)).map_or(loc("none"), |a| a.name.clone())
+                };
+                egui::ComboBox::from_id_salt("layer_link").selected_text(name(new.link)).show_ui(ui, |ui| {
+                    if ui.selectable_label(new.link.is_none(), loc("none")).clicked() && new.link.is_some() {
+                        new.link = None;
+                        (step, edited) = (true, true);
+                    }
+                    for a in armature.animations.iter().filter(|a| a.id != anim.id) {
+                        if ui.selectable_label(new.link == Some(a.id), &a.name).clicked() && new.link != Some(a.id) {
+                            new.link = Some(a.id);
+                            (step, edited) = (true, true);
+                        }
+                    }
+                });
+            });
+
+            // generators
+            ui.separator();
+            ui.label(loc("generators")).on_hover_text(loc("generators_desc"));
+            let mut remove = None;
+            for (g, gen) in new.generators.iter_mut().enumerate() {
+                let bone = armature.bones.iter().find(|b| b.id == gen.bone_id).map_or("?".to_string(), |b| b.name.clone());
+                let el = shared_ui.loc(&format!("keyframe_editor.elements.{}", gen.element.to_string()));
+                ui.push_id(("generator", g), |ui| {
+                    egui::Frame::group(ui.style()).show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.strong(format!("{bone}: {el}"));
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if ui.small_button("✕").on_hover_text(loc("remove")).clicked() {
+                                    remove = Some(g);
+                                }
+                                if ui.small_button(loc("bake")).on_hover_text(loc("bake_desc")).clicked() {
+                                    events.bake_generator(i, g);
+                                }
+                            });
+                        });
+                        egui::Grid::new("gen").num_columns(4).show(ui, |ui| {
+                            ui.label(loc("wave"));
+                            let waves = [(Wave::Sine, "sine"), (Wave::Triangle, "triangle"), (Wave::Square, "square"), (Wave::Noise, "noise")];
+                            let current = waves.iter().find(|w| w.0 == gen.wave).map_or("sine", |w| w.1);
+                            egui::ComboBox::from_id_salt("wave").selected_text(loc(current)).show_ui(ui, |ui| {
+                                for (w, k) in waves {
+                                    if ui.selectable_label(gen.wave == w, loc(k)).clicked() && gen.wave != w {
+                                        gen.wave = w;
+                                        (step, edited) = (true, true);
+                                    }
+                                }
+                            });
+                            ui.label(loc("amplitude"));
+                            let r = ui.add(egui::DragValue::new(&mut gen.amplitude).speed(0.005).max_decimals(3));
+                            track(&r, &mut step, &mut edited);
+                            ui.end_row();
+                            ui.label(loc("period")).on_hover_text(loc("period_desc"));
+                            let r = ui.add(egui::DragValue::new(&mut gen.period).range(0.02..=600.).speed(0.01).suffix(" s").max_decimals(2));
+                            track(&r, &mut step, &mut edited);
+                            ui.label(loc("phase"));
+                            let r = ui.add(egui::DragValue::new(&mut gen.phase).speed(0.01).suffix(" s").max_decimals(2));
+                            track(&r, &mut step, &mut edited);
+                            ui.end_row();
+                            ui.label(loc("offset"));
+                            let r = ui.add(egui::DragValue::new(&mut gen.offset).speed(0.005).max_decimals(3));
+                            track(&r, &mut step, &mut edited);
+                            if gen.wave == Wave::Noise {
+                                ui.label(loc("octaves"));
+                                let r = ui.add(egui::DragValue::new(&mut gen.octaves).range(1..=6));
+                                track(&r, &mut step, &mut edited);
+                                ui.end_row();
+                                ui.label(loc("seed"));
+                                let r = ui.add(egui::DragValue::new(&mut gen.seed));
+                                track(&r, &mut step, &mut edited);
+                            }
+                            ui.end_row();
+                        });
+                    });
+                });
+            }
+            if let Some(g) = remove {
+                new.generators.remove(g);
+                (step, edited) = (true, true);
+            }
+
+            // add one on the selected bone
+            ui.horizontal(|ui| match armature.bones.get(selections.bone_idx) {
+                Some(bone) => {
+                    ui.label(loc("add_to").replace("$bone", &bone.name));
+                    for el in [AnimElement::Rotation, AnimElement::PositionX, AnimElement::PositionY, AnimElement::ScaleX, AnimElement::ScaleY] {
+                        let name = shared_ui.loc(&format!("keyframe_editor.elements.{}", el.to_string()));
+                        if ui.small_button(name).clicked() {
+                            new.generators.push(Generator { bone_id: bone.id, element: el, ..Default::default() });
+                            (step, edited) = (true, true);
+                        }
+                    }
+                }
+                None => {
+                    ui.weak(loc("select_bone"));
+                }
+            });
+        });
+    if edited {
+        events.set_layer(i, &new, step);
+    }
+    if !open {
+        shared_ui.layer_settings = None;
+    }
+}
+
 /// Above the labels: "+ Layer", and once there are layers, a fold arrow for the stack.
 fn draw_layer_header(
     ui: &mut egui::Ui,
@@ -886,6 +1085,10 @@ fn draw_layer_stack(
                 painter.text(b.center(), egui::Align2::CENTER_CENTER, s, egui::FontId::proportional(11.), col);
                 resp.clicked()
             };
+            let open = shared_ui.layer_settings == Some(i);
+            if toggle(ui, &mut x, "⚙", open, shared_ui.loc("keyframe_editor.layer_settings_desc"), "settings") {
+                shared_ui.layer_settings = if open { None } else { Some(i) };
+            }
             if toggle(ui, &mut x, "L", layer.locked, shared_ui.loc("keyframe_editor.layer_lock"), "lock") {
                 changed = Some((AnimLayer { locked: !layer.locked, ..layer.clone() }, true));
             }
@@ -939,7 +1142,19 @@ fn draw_layer_stack(
         }
         let resp = ui.interact(name_rect, id.with("name"), egui::Sense::click()).on_hover_cursor(hand);
         let col = if active { text } else if playing { text.gamma_multiply(0.75) } else { text.gamma_multiply(0.4) };
-        let name = if layer.locked { format!("{} 🔒", layer.name) } else { layer.name.clone() };
+        let mut name = layer.name.clone();
+        if let Some(linked) = layer.link.and_then(|id| armature.animations.iter().find(|a| a.id == id)) {
+            name += &format!(" → {}", linked.name);
+        }
+        if layers::loop_length(layer).is_some() {
+            name += " ⟲";
+        }
+        if !layer.generators.is_empty() {
+            name += " ~";
+        }
+        if layer.locked {
+            name += " 🔒";
+        }
         painter.with_clip_rect(name_rect).text(
             egui::pos2(name_rect.left(), r.center().y),
             egui::Align2::LEFT_CENTER,
@@ -1282,6 +1497,29 @@ fn draw_rows(
             }
         }
         shared_ui.timeline_hover_column = hovered_column;
+
+        // a Looped layer being edited: its keys are in the loop's own time; show where it
+        // repeats, and the repeats (docs/TIMELINE.md §5.7)
+        if let Some(len) = anim.layers.get(anim.active_layer).filter(|_| anim.active_layer > 0).and_then(|l| layers::loop_frames(anim, l)) {
+            let amber = egui::Color32::from_rgb(240, 190, 80);
+            let mut k = ((view.start / len as f32).floor() as i32).max(1);
+            while (k * len) as f32 <= view.end + 1. {
+                gp.vline(x_of(k * len), graph.y_range(), egui::Stroke::new(1.5, amber.gamma_multiply(0.6)));
+                k += 1;
+            }
+            for i in shown.clone() {
+                let r = row_rect(i);
+                for f in timeline_rows::row_frames(anim, &rows[i]).into_iter().filter(|f| *f < len) {
+                    let mut k = 1;
+                    while ((f + k * len) as f32) <= view.end + 1. {
+                        if visible(f + k * len) {
+                            draw_mark(&gp, egui::pos2(x_of(f + k * len), r.center().y), false, 3.5, text.gamma_multiply(0.28), egui::Stroke::NONE);
+                        }
+                        k += 1;
+                    }
+                }
+            }
+        }
 
         // the other playing layers' keys on these rows, faintly (docs/TIMELINE.md §5.3)
         for j in (0..anim.layers.len()).filter(|j| *j != anim.active_layer && layers::enabled(anim, *j)) {

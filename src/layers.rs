@@ -158,8 +158,149 @@ pub fn enabled(anim: &Animation, i: usize) -> bool {
     !layer.muted && (!any_solo || layer.solo)
 }
 
+/// What evaluating a layer can need beyond its animation: the other animations (for
+/// linked layers) and, while the editor plays, its clock (for free-running loops).
+#[derive(Clone, Copy)]
+pub struct Ctx<'a> {
+    pub anims: &'a [Animation],
+    pub clock: Option<f32>,
+}
+
+impl Ctx<'_> {
+    pub const NONE: Ctx<'static> = Ctx { anims: &[], clock: None };
+}
+
+/// A Looped layer's length in seconds, if it loops.
+pub fn loop_length(layer: &AnimLayer) -> Option<f32> {
+    match layer.play {
+        PlayMode::Looped { length, .. } if length > 0. => Some(length),
+        _ => None,
+    }
+}
+
+/// The layer's own time (seconds) when its animation is at `t` seconds
+/// (docs/TIMELINE.md §5.7): `(t × speed + phase) mod length` for a loop, with `t` from
+/// the editor's clock instead when it's free-running and the editor is playing.
+pub fn local_time(layer: &AnimLayer, t: f32, clock: Option<f32>) -> f32 {
+    match layer.play {
+        PlayMode::Looped { length, speed, phase, free_running } if length > 0. => {
+            let t = if free_running { clock.unwrap_or(t) } else { t };
+            (t * speed + phase).rem_euclid(length)
+        }
+        _ => t,
+    }
+}
+
+/// The frame (in its keys' time) a layer is on at its animation's `frame`: where
+/// editing it keys (docs/TIMELINE.md §5.7). Without a loop, the same frame.
+pub fn layer_frame(anim: &Animation, layer: &AnimLayer, frame: i32) -> i32 {
+    if loop_length(layer).is_none() {
+        return frame;
+    }
+    let fps = anim.fps.max(1) as f32;
+    let f = (local_time(layer, frame as f32 / fps, None) * fps).round() as i32;
+    // the loop's last frame is its first
+    let len = loop_frames(anim, layer).unwrap_or(i32::MAX);
+    if f >= len { 0 } else { f }
+}
+
+/// A Looped layer's length in its animation's frames.
+pub fn loop_frames(anim: &Animation, layer: &AnimLayer) -> Option<i32> {
+    loop_length(layer).map(|l| (l * anim.fps.max(1) as f32).round().max(1.) as i32)
+}
+
+/// A channel's value at a fractional `frame` (layers playing at another speed land
+/// between frames).
+fn channel_at(keys: &[Keyframe], bone_id: i32, el: &AnimElement, frame: f32) -> Option<f32> {
+    let whole = frame.floor() as i32;
+    if (frame - whole as f32).abs() < 1e-4 {
+        return channel(keys, bone_id, el, whole);
+    }
+    let matches = |kf: &&Keyframe| kf.bone_id == bone_id && kf.element == *el;
+    let prev = keys.iter().filter(matches).filter(|kf| kf.frame as f32 <= frame).last();
+    let next = keys.iter().filter(matches).find(|kf| kf.frame as f32 > frame);
+    let (prev, next) = match (prev, next) {
+        (None, None) => return None,
+        (Some(p), None) => (p, p),
+        (None, Some(n)) => (n, n),
+        (Some(p), Some(n)) => (p, n),
+    };
+    // `interp` takes whole steps: measure in thousandths of a frame
+    let span = ((next.frame - prev.frame) * 1000).max(0);
+    let at = ((frame - prev.frame as f32) * 1000.).round() as i32;
+    Some(utils::interp(at, span, prev.value, next.value, next.start_handle, next.end_handle))
+}
+
+/// A generator's value at the layer's time `t` (seconds). On a loop of `loop_len`
+/// seconds a wave's period snaps to a whole fraction of it, and noise repeats over it,
+/// so the result always loops (docs/TIMELINE.md §5.8).
+pub fn generator_value(g: &Generator, t: f32, loop_len: Option<f32>) -> f32 {
+    let mut period = g.period.max(1e-3);
+    let mut cells: Option<i64> = None;
+    if let Some(len) = loop_len {
+        let n = (len / period).round().max(1.);
+        period = len / n;
+        cells = Some(n as i64);
+    }
+    let x = (t + g.phase) / period;
+    let wave = match g.wave {
+        Wave::Sine => (x * std::f32::consts::TAU).sin(),
+        Wave::Triangle => 4. * ((x - 0.25).rem_euclid(1.) - 0.5).abs() - 1.,
+        Wave::Square => {
+            if x.rem_euclid(1.) < 0.5 {
+                1.
+            } else {
+                -1.
+            }
+        }
+        Wave::Noise => noise(x, g.octaves.max(1), g.seed, cells),
+    };
+    g.offset + g.amplitude * wave
+}
+
+/// Smooth 1D value noise in -1..1, with `octaves` layers; with `wrap`, it repeats every
+/// `wrap` units.
+fn noise(x: f32, octaves: u32, seed: u32, wrap: Option<i64>) -> f32 {
+    let hash = |i: i64, o: u32| -> f32 {
+        let mut h = (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ ((seed as u64) << 32) ^ (o as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
+        h ^= h >> 31;
+        h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        h ^= h >> 29;
+        (h & 0xFFFF) as f32 / 32767.5 - 1.
+    };
+    let (mut sum, mut norm, mut amp, mut freq) = (0., 0., 1., 1.);
+    for o in 0..octaves.min(6) {
+        let p = x * freq;
+        let i = p.floor() as i64;
+        let f = p - i as f32;
+        let w = wrap.map(|w| w * freq as i64);
+        let cell = |i: i64| w.map_or(i, |w| i.rem_euclid(w.max(1)));
+        let s = f * f * (3. - 2. * f);
+        sum += amp * (hash(cell(i), o) * (1. - s) + hash(cell(i + 1), o) * s);
+        norm += amp;
+        amp *= 0.5;
+        freq *= 2.;
+    }
+    sum / norm
+}
+
+/// The keys and frame rate a layer plays: its own, or the Base keys of the animation
+/// it links (never itself).
+fn layer_source<'a>(anim: &'a Animation, ctx: &Ctx<'a>, i: usize) -> (&'a [Keyframe], i32, &'a [Generator]) {
+    let layer = &anim.layers[i];
+    if let Some(linked) = layer.link.filter(|id| *id != anim.id).and_then(|id| ctx.anims.iter().find(|a| a.id == id)) {
+        let gens: &[Generator] = linked.layers.first().map_or(&[], |b| b.generators.as_slice());
+        return (linked.layer_keys(0), linked.fps, gens);
+    }
+    (anim.layer_keys(i), anim.fps, &[])
+}
+
 /// The pose at `frame`: `setup` with Base applied, then each layer `include` allows.
 pub fn evaluate(anim: &Animation, setup: &[Bone], frame: i32, include: &dyn Fn(usize) -> bool) -> Vec<Bone> {
+    evaluate_in(anim, &Ctx::NONE, setup, frame, include)
+}
+
+pub fn evaluate_in(anim: &Animation, ctx: &Ctx, setup: &[Bone], frame: i32, include: &dyn Fn(usize) -> bool) -> Vec<Bone> {
     let mut bones = setup.to_vec();
     let base = anim.layer_keys(0);
     for b in &mut bones {
@@ -174,25 +315,34 @@ pub fn evaluate(anim: &Animation, setup: &[Bone], frame: i32, include: &dyn Fn(u
             }
         }
     }
+    let t = frame as f32 / anim.fps.max(1) as f32;
     for i in 1..anim.layers.len() {
         if !include(i) {
             continue;
         }
         let layer = &anim.layers[i];
-        let keys = anim.layer_keys(i);
-        if keys.is_empty() {
+        let (keys, fps, linked_gens) = layer_source(anim, ctx, i);
+        if keys.is_empty() && layer.generators.is_empty() && linked_gens.is_empty() {
             continue;
         }
+        let lt = local_time(layer, t, ctx.clock);
+        let lf = lt * fps.max(1) as f32;
+        let loop_len = loop_length(layer);
         for (b, rest) in bones.iter_mut().zip(setup) {
             for el in NUMERIC.iter() {
-                if let Some(k) = channel(keys, b.id, el, frame) {
-                    let v = blend(get(b, el), k, get(rest, el), &layer.mode, layer.weight, el);
-                    set(b, el, v);
+                let key = channel_at(keys, b.id, el, lf);
+                let mut gens = layer.generators.iter().chain(linked_gens).filter(|g| g.bone_id == b.id && g.element == *el).peekable();
+                if key.is_none() && gens.peek().is_none() {
+                    continue;
                 }
+                // generators add to the keys, or to the setup value without any
+                let k = key.unwrap_or(get(rest, el)) + gens.map(|g| generator_value(g, lt, loop_len)).sum::<f32>();
+                let v = blend(get(b, el), k, get(rest, el), &layer.mode, layer.weight, el);
+                set(b, el, v);
             }
             if layer.weight >= 0.5 {
                 for el in DISCRETE.iter() {
-                    if let Some(kf) = step(keys, b.id, el, frame) {
+                    if let Some(kf) = step(keys, b.id, el, lf.floor() as i32) {
                         set_step(b, &kf.clone());
                     }
                 }
@@ -204,33 +354,58 @@ pub fn evaluate(anim: &Animation, setup: &[Bone], frame: i32, include: &dyn Fn(u
 
 /// The pose as the animation plays it (muted and solo layers respected).
 pub fn pose(anim: &Animation, setup: &[Bone], frame: i32) -> Vec<Bone> {
-    evaluate(anim, setup, frame, &|i| enabled(anim, i))
+    pose_in(anim, &Ctx::NONE, setup, frame)
+}
+
+pub fn pose_in(anim: &Animation, ctx: &Ctx, setup: &[Bone], frame: i32) -> Vec<Bone> {
+    evaluate_in(anim, ctx, setup, frame, &|i| enabled(anim, i))
 }
 
 /// The value a key on the active layer needs for `bone_id`'s channel to show `target`
 /// at `frame` (docs/TIMELINE.md §5.3): the playing layers without the active one give
-/// what's below, and the active layer's mode and weight are inverted over it.
+/// what's below, and the active layer's mode and weight are inverted over it (and its
+/// generators taken away).
 pub fn key_on_active(anim: &Animation, setup: &[Bone], bone_id: i32, el: &AnimElement, frame: i32, target: f32) -> f32 {
+    key_on_active_in(anim, &Ctx::NONE, setup, bone_id, el, frame, target)
+}
+
+pub fn key_on_active_in(anim: &Animation, ctx: &Ctx, setup: &[Bone], bone_id: i32, el: &AnimElement, frame: i32, target: f32) -> f32 {
     let active = anim.active_layer;
     let Some(layer) = anim.layers.get(active).filter(|_| active > 0) else { return target };
     if !NUMERIC.contains(el) {
         return target;
     }
-    let below = evaluate(anim, setup, frame, &|i| i != active && enabled(anim, i));
+    let below = evaluate_in(anim, ctx, setup, frame, &|i| i != active && enabled(anim, i));
     let (Some(b), Some(rest)) = (below.iter().find(|b| b.id == bone_id), setup.iter().find(|b| b.id == bone_id)) else {
         return target;
     };
-    key_for(target, get(b, el), get(rest, el), &layer.mode, layer.weight, el)
+    let lt = local_time(layer, frame as f32 / anim.fps.max(1) as f32, None);
+    let gens: f32 = layer
+        .generators
+        .iter()
+        .filter(|g| g.bone_id == bone_id && g.element == *el)
+        .map(|g| generator_value(g, lt, loop_length(layer)))
+        .sum();
+    key_for(target, get(b, el), get(rest, el), &layer.mode, layer.weight, el) - gens
 }
 
-/// The channels (bone, element) layers `from..` have keys on.
-fn touched(anim: &Animation, layers: impl Iterator<Item = usize>) -> Vec<(i32, AnimElement)> {
+/// The channels (bone, element) layers `layers` drive: their keys, generators and
+/// linked animations.
+fn touched(anim: &Animation, ctx: &Ctx, layers: impl Iterator<Item = usize>) -> Vec<(i32, AnimElement)> {
     let mut out: Vec<(i32, AnimElement)> = vec![];
+    let mut add = |b: i32, e: &AnimElement| {
+        if !out.iter().any(|(ob, oe)| *ob == b && oe == e) {
+            out.push((b, e.clone()));
+        }
+    };
     for i in layers {
-        for kf in anim.layer_keys(i) {
-            if !out.iter().any(|(b, e)| *b == kf.bone_id && *e == kf.element) {
-                out.push((kf.bone_id, kf.element.clone()));
-            }
+        let (keys, _, linked_gens) = if i == 0 { (anim.layer_keys(0), anim.fps, &[][..]) } else { layer_source(anim, ctx, i) };
+        for kf in keys {
+            add(kf.bone_id, &kf.element);
+        }
+        let own: &[Generator] = anim.layers.get(i).map_or(&[], |l| l.generators.as_slice());
+        for g in own.iter().chain(linked_gens) {
+            add(g.bone_id, &g.element);
         }
     }
     out
@@ -266,8 +441,8 @@ fn sampled(bone_id: i32, el: &AnimElement, values: &[(i32, f32)]) -> Vec<Keyfram
 /// Bake layers `0..=top` into one set of keys, for the channels the layers above Base
 /// touch (Base's other keys are kept as they are). Sampled per frame, which is exact:
 /// the editor and runtimes play whole frames.
-fn bake(anim: &Animation, setup: &[Bone], top: usize) -> Vec<Keyframe> {
-    let channels = touched(anim, (1..=top).filter(|i| enabled(anim, *i)));
+fn bake(anim: &Animation, ctx: &Ctx, setup: &[Bone], top: usize) -> Vec<Keyframe> {
+    let channels = touched(anim, ctx, (1..=top).filter(|i| enabled(anim, *i)));
     let mut keys: Vec<Keyframe> = anim
         .layer_keys(0)
         .iter()
@@ -275,7 +450,7 @@ fn bake(anim: &Animation, setup: &[Bone], top: usize) -> Vec<Keyframe> {
         .cloned()
         .collect();
     let last = anim.last_frame();
-    let poses: Vec<Vec<Bone>> = (0..=last).map(|f| evaluate(anim, setup, f, &|i| i <= top && enabled(anim, i))).collect();
+    let poses: Vec<Vec<Bone>> = (0..=last).map(|f| evaluate_in(anim, ctx, setup, f, &|i| i <= top && enabled(anim, i))).collect();
     for (bone_id, el) in channels {
         let at = |f: usize| poses[f].iter().find(|b| b.id == bone_id);
         if NUMERIC.contains(&el) {
@@ -303,11 +478,17 @@ fn bake(anim: &Animation, setup: &[Bone], top: usize) -> Vec<Keyframe> {
 }
 
 /// The animation with every playing layer baked into Base, and no layers: what
-/// runtimes without layer support get (docs/TIMELINE.md §5.5).
+/// runtimes without layer support get (docs/TIMELINE.md §5.5). Loops are baked in the
+/// animation's own time: they restart with it.
 pub fn flatten(anim: &Animation, setup: &[Bone]) -> Animation {
+    flatten_in(anim, &Ctx::NONE, setup)
+}
+
+pub fn flatten_in(anim: &Animation, ctx: &Ctx, setup: &[Bone]) -> Animation {
     let mut flat = anim.normalized();
     if flat.layers.len() > 1 {
-        flat.keyframes = bake(&flat, setup, flat.layers.len() - 1);
+        let ctx = Ctx { clock: None, ..*ctx };
+        flat.keyframes = bake(&flat, &ctx, setup, flat.layers.len() - 1);
     }
     flat.layers = vec![];
     flat.active_layer = 0;
@@ -316,14 +497,24 @@ pub fn flatten(anim: &Animation, setup: &[Bone]) -> Animation {
 
 /// Merge layer `i` into the one below it, which then plays as the two did together.
 /// Merging into Base bakes; merging into another layer keys it through its own mode
-/// and weight (`key_for`). Returns false if there's nothing below to merge into.
+/// and weight (`key_for`). Returns false if there's nothing it can merge into: a
+/// Looped or linked layer below only takes keys in its own time.
 pub fn merge_down(anim: &mut Animation, setup: &[Bone], i: usize) -> bool {
+    merge_down_in(anim, &Ctx::NONE, setup, i)
+}
+
+pub fn merge_down_in(anim: &mut Animation, ctx: &Ctx, setup: &[Bone], i: usize) -> bool {
     if i == 0 || i >= anim.layers.len() {
         return false;
     }
+    let below = i - 1;
+    let simple = |l: &AnimLayer| l.play == PlayMode::Linear && l.link.is_none() && l.generators.is_empty();
+    if below > 0 && !simple(&anim.layers[below]) {
+        return false;
+    }
+    let ctx = Ctx { clock: None, ..*ctx };
     let active = anim.active_layer;
     anim.set_active_layer(0);
-    let below = i - 1;
     if below == 0 {
         // bake Base and this layer (only), keeping the other layers
         let mut two = anim.clone();
@@ -332,9 +523,9 @@ pub fn merge_down(anim: &mut Animation, setup: &[Bone], i: usize) -> bool {
             l.solo = false;
         }
         two.layers[i].muted = false;
-        anim.keyframes = bake(&two, setup, i);
+        anim.keyframes = bake(&two, &ctx, setup, i);
     } else {
-        let channels = touched(anim, std::iter::once(i));
+        let channels = touched(anim, &ctx, std::iter::once(i));
         let last = anim.last_frame();
         let (mode, w) = (anim.layers[below].mode.clone(), anim.layers[below].weight);
         let mut keys: Vec<Keyframe> = anim.layers[below]
@@ -351,8 +542,8 @@ pub fn merge_down(anim: &mut Animation, setup: &[Bone], i: usize) -> bool {
             }
             let mut values = vec![];
             for f in 0..=last {
-                let target = evaluate(anim, setup, f, &|j| j <= i && enabled(anim, j) || j == i);
-                let under = evaluate(anim, setup, f, &|j| j < below && enabled(anim, j));
+                let target = evaluate_in(anim, &ctx, setup, f, &|j| j <= i && enabled(anim, j) || j == i);
+                let under = evaluate_in(anim, &ctx, setup, f, &|j| j < below && enabled(anim, j));
                 let (Some(t), Some(u)) = (target.iter().find(|b| b.id == bone_id), under.iter().find(|b| b.id == bone_id)) else { continue };
                 values.push((f, key_for(get(t, &el), get(u, &el), get(rest, &el), &mode, w, &el)));
             }
@@ -370,8 +561,80 @@ pub fn merge_down(anim: &mut Animation, setup: &[Bone], i: usize) -> bool {
     true
 }
 
+/// Close Loop: copy each channel's first key to the loop's end, so it loops without a
+/// pop. Keys of layer `i` only; returns how many keys it set.
+pub fn close_loop(anim: &mut Animation, i: usize) -> usize {
+    let Some(len) = anim.layers.get(i).and_then(|l| loop_frames(anim, l)) else { return 0 };
+    let active = anim.active_layer;
+    anim.set_active_layer(i);
+    let mut firsts: Vec<Keyframe> = vec![];
+    for kf in &anim.keyframes {
+        match firsts.iter_mut().find(|f| f.bone_id == kf.bone_id && f.element == kf.element) {
+            Some(f) if kf.frame < f.frame => *f = kf.clone(),
+            Some(_) => {}
+            None => firsts.push(kf.clone()),
+        }
+    }
+    for first in &firsts {
+        anim.keyframes.retain(|k| !(k.bone_id == first.bone_id && k.element == first.element && k.frame == len));
+        anim.keyframes.push(Keyframe { frame: len, ..first.clone() });
+    }
+    anim.sort_keyframes();
+    anim.set_active_layer(active);
+    firsts.len()
+}
+
+/// Bake generator `g` of layer `i` into its keys (sampled every `step` frames, over
+/// the loop or the animation), and remove it.
+pub fn bake_generator(anim: &mut Animation, i: usize, g: usize, step: i32) {
+    let Some(layer) = anim.layers.get(i) else { return };
+    let Some(gen) = layer.generators.get(g).cloned() else { return };
+    let loop_len = loop_length(layer);
+    let fps = anim.fps.max(1) as f32;
+    let end = loop_frames(anim, layer).unwrap_or(anim.last_frame().max(1));
+    let active = anim.active_layer;
+    anim.set_active_layer(i);
+    let mut values: Vec<(i32, f32)> = vec![];
+    let mut f = 0;
+    while f <= end {
+        let base = channel(&anim.keyframes, gen.bone_id, &gen.element, f);
+        values.push((f, base.unwrap_or(0.) + generator_value(&gen, f as f32 / fps, loop_len)));
+        f += step.max(1);
+    }
+    if values.last().map(|v| v.0) != Some(end) {
+        let base = channel(&anim.keyframes, gen.bone_id, &gen.element, end);
+        values.push((end, base.unwrap_or(0.) + generator_value(&gen, end as f32 / fps, loop_len)));
+    }
+    let had_keys = anim.keyframes.iter().any(|k| k.bone_id == gen.bone_id && k.element == gen.element);
+    anim.keyframes.retain(|k| !(k.bone_id == gen.bone_id && k.element == gen.element));
+    let (start, end_h) = utils::interp_preset(HandlePreset::SineInOut);
+    for (frame, value) in values {
+        anim.keyframes.push(Keyframe { frame, bone_id: gen.bone_id, element: gen.element.clone(), value, start_handle: start, end_handle: end_h, ..Default::default() });
+    }
+    anim.sort_keyframes();
+    anim.layers[i].generators.remove(g);
+    let _ = had_keys;
+    anim.set_active_layer(active);
+}
+
+/// Loops that won't line up when baked into their animation (docs/TIMELINE.md §5.7):
+/// (layer name, loop seconds, animation seconds) where the animation isn't a whole
+/// number of loops long.
+pub fn seams(anim: &Animation) -> Vec<(String, f32, f32)> {
+    let secs = anim.last_frame() as f32 / anim.fps.max(1) as f32;
+    anim.layers
+        .iter()
+        .filter_map(|l| {
+            let (PlayMode::Looped { speed, .. }, Some(len)) = (&l.play, loop_length(l)) else { return None };
+            let per = len / speed.abs().max(1e-3);
+            let n = secs / per;
+            ((n - n.round()).abs() > 0.02 && secs > 0.).then(|| (l.name.clone(), per, secs))
+        })
+        .collect()
+}
+
 /// Apply a layer event (`Events::AddLayer` etc) to `anim`.
-pub fn layer_event(event: &Events, value: f32, str_value: &str, anim: &mut Animation, setup: &[Bone]) {
+pub fn layer_event(event: &Events, value: f32, str_value: &str, anim: &mut Animation, ctx: &Ctx, setup: &[Bone]) {
     let i = value as usize;
     match event {
         Events::AddLayer => {
@@ -383,9 +646,12 @@ pub fn layer_event(event: &Events, value: f32, str_value: &str, anim: &mut Anima
         Events::SelectLayer => anim.set_active_layer(i),
         Events::SetLayer => {
             let Ok((i, settings)) = serde_json::from_str::<(usize, AnimLayer)>(str_value) else { return };
+            let anim_id = anim.id;
             if let Some(layer) = anim.layers.get_mut(i) {
                 let keyframes = std::mem::take(&mut layer.keyframes);
-                *layer = AnimLayer { keyframes, weight: settings.weight.clamp(0., 1.), ..settings };
+                // a layer can't link its own animation
+                let link = settings.link.filter(|id| *id != anim_id);
+                *layer = AnimLayer { id: layer.id, keyframes, link, weight: settings.weight.clamp(0., 1.), ..settings };
             }
         }
         Events::DeleteLayer if i > 0 && i < anim.layers.len() => {
@@ -406,17 +672,24 @@ pub fn layer_event(event: &Events, value: f32, str_value: &str, anim: &mut Anima
             copy.name = format!("{} copy", copy.name);
             copy.solo = false;
             copy.generated = None;
-            let active = anim.active_layer;
             anim.set_active_layer(0);
             anim.layers.insert(i + 1, copy);
-            anim.set_active_layer(if active > i { active + 1 } else { active });
             anim.set_active_layer(i + 1);
         }
         Events::MergeLayerDown => {
-            merge_down(anim, setup, i);
+            merge_down_in(anim, ctx, setup, i);
         }
         Events::FlattenLayers => {
-            *anim = flatten(anim, setup);
+            *anim = flatten_in(anim, ctx, setup);
+        }
+        Events::CloseLoop => {
+            close_loop(anim, i);
+        }
+        Events::BakeGenerator => {
+            // value: layer; str: the generator's index
+            if let Ok(g) = str_value.parse::<usize>() {
+                bake_generator(anim, i, g, 2);
+            }
         }
         _ => {}
     }

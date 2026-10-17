@@ -410,6 +410,32 @@ free-running layer.
 Later: an **Expression** generator (a small formula over `t`), and a **Random event**
 generator for blinks (play a short clip at random intervals between a min and max).
 
+**As built (§5.7–5.8):**
+- **Settings:** a layer's ⚙ (or *Play & Generators…* in its menu) opens its settings:
+  play mode (Linear or Looped, with length, speed, phase and Free-running), link, and
+  generators. Every change undoes, and dragging a value is one step.
+- **Editing a Looped layer:** the timeline shows the loop in its own time, with keys
+  from frame 0, amber lines where it repeats, and the repeats shown faintly. Keying
+  at any frame writes the loop's frame for it, so every repeat shows the change.
+- **Free-running** follows the editor's clock while playing. Scrubbing, and every
+  export, use the animation's own time, so renders are repeatable.
+- **Linked layers** play the linked animation's Base keys and its Base generators, at
+  that animation's frame rate. They can't be edited in place (edit the linked
+  animation), and an animation can't link itself.
+- **Generators:**
+  - *Add Wave Generator* on a row's menu puts one on the active layer, or on a new
+    additive "Procedural" layer when Base is active.
+  - In the settings, *Add to (bone)* adds one for the selected bone.
+  - Their values are offsets, added to the layer's keys (or to the setup value when
+    the channel has no keys).
+  - *Bake* samples one into keys every 2 frames over the loop, or over the animation.
+- **Merge Down** into a Looped or linked layer, or into one with generators, isn't
+  offered (it would need keys in that layer's own time). Merge into Base, or flatten.
+- **Flatten and export** bake loops, links and generators frame by frame. A loop that
+  doesn't fit its animation shows a seam warning in the settings.
+- **Not yet:** keyable amplitude, Expression and Random event generators, and runtime
+  track support for free-running loops (follow-up T10).
+
 ## 6. Phases
 
 | phase | contents |
@@ -418,7 +444,7 @@ generator for blinks (play a short clip at random intervals between a min and ma
 | **2. Rows and keys** ✓ | Compact rows, grouped channels with disclosure, small marks (diamond/square), colour per property group, summary rows (folded bones show keys), column highlight, box select, scaling keys around the playhead (§3.5), 🗑 moved to the context menu |
 | *2, later* | Pinned bone headers while scrolling; the typed *Scale Keys…* factor (`S`-drag with Ctrl snapping covers most uses); alternating frame shading |
 | **3. Layers** ✓ | §5.1–5.5: data, evaluation, the layer stack, Merge Down/Bake, flattening for export (`.skfe` and DragonBones exports flatten; `.skf` keeps layers) |
-| **4. Play modes and generators** | §5.7–5.8: Linear/Looped layers (length, speed, phase, free-running clock), linked layers, Close Loop, Wave and Noise generators, Bake to Keys, seam warnings on export |
+| **4. Play modes and generators** ✓ | §5.7–5.8: Linear/Looped layers (length, speed, phase, free-running clock), linked layers, Close Loop, Wave and Noise generators, Bake to Keys, seam warnings on export |
 
 Phases 1 and 2 change only the timeline UI: no file format changes, and nothing for
 runtimes. Phase 3 adds layers to the `.skf` (§5.5). Phase 4 adds play modes, links and

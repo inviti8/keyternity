@@ -45,7 +45,8 @@ pub fn iterate_events(
             E::SetLayer if events.values[0] == 1. => undo_states.new_undo_anim(armature.sel_anim(&selections).unwrap()),
             E::RenameStyle => if !ui.just_made_style { undo_states.new_undo_style(&armature.sel_style(&selections).unwrap()); ui.just_made_style = false }
             E::DeleteSelectedKeyframes | E::DeleteKeyframeLine | E::PasteKeyframesOnFrame | E::InsertKeyframe | E::InsertKeyframeAll | E::DeleteBoneKeyframes | E::SetAnimEnd | E::DeleteKeyframeGroup | E::ScaleSelectedKeyframes
-            | E::AddLayer | E::DeleteLayer | E::DuplicateLayer | E::MergeLayerDown | E::FlattenLayers => {
+            | E::AddLayer | E::DeleteLayer | E::DuplicateLayer | E::MergeLayerDown | E::FlattenLayers
+            | E::CloseLoop | E::BakeGenerator => {
                 undo_states.new_undo_anim(armature.sel_anim(&selections).unwrap())
             }
             E::ResetVertices | E::CenterBoneVerts | E::DeleteVertex | E::TraceBoneVerts | E::NewVertex | E::DeleteTriangle | E::RetriangulateVerts | E::PenApply => {
@@ -491,10 +492,13 @@ pub fn simple_event(
         Events::ToggleShowAllEnvelopes => edit_mode.show_all_envelopes = !edit_mode.show_all_envelopes,
         Events::ToggleShowCameras => edit_mode.show_cameras = !edit_mode.show_cameras,
         Events::AddLayer | Events::SelectLayer | Events::SetLayer | Events::DeleteLayer
-        | Events::DuplicateLayer | Events::MergeLayerDown | Events::FlattenLayers => {
+        | Events::DuplicateLayer | Events::MergeLayerDown | Events::FlattenLayers
+        | Events::CloseLoop | Events::BakeGenerator => {
             let bones = armature.bones.clone();
+            let anims = armature.animations.clone();
             if let Some(anim) = armature.animations.get_mut(selections.anim) {
-                layers::layer_event(event, value, &str_value, anim, &bones);
+                let ctx = layers::Ctx { anims: &anims, clock: None };
+                layers::layer_event(event, value, &str_value, anim, &ctx, &bones);
             }
             // keys selected on the old layer aren't on the new one
             ui.selected_keyframes = vec![];
@@ -1671,9 +1675,11 @@ pub fn insert_keyframes(armature: &mut Armature, anim: usize, frame: i32, bone_i
     let shown = armature.animate(anim, frame, None);
     let a = &armature.animations[anim];
     let layer = a.layers.get(a.active_layer).filter(|_| a.active_layer > 0).cloned();
-    if layer.as_ref().is_some_and(|l| l.locked) {
+    if layer.as_ref().is_some_and(|l| l.locked || l.link.is_some()) {
         return;
     }
+    // a Looped layer keys in its own time
+    let key_frame = layer.as_ref().map_or(frame, |l| layers::layer_frame(a, l, frame));
     for id in bone_ids {
         let Some(setup) = armature.bones.iter().find(|b| b.id == *id).cloned() else { continue };
         let Some(now) = shown.iter().find(|b| b.id == *id) else { continue };
@@ -1686,7 +1692,10 @@ pub fn insert_keyframes(armature: &mut Armature, anim: usize, frame: i32, bone_i
             .iter()
             .zip(values(now))
             .map(|(el, v)| match &layer {
-                Some(_) => layers::key_on_active(&armature.animations[anim], &armature.bones, *id, el, frame, v),
+                Some(_) => {
+                    let ctx = layers::Ctx { anims: &armature.animations, clock: None };
+                    layers::key_on_active_in(&armature.animations[anim], &ctx, &armature.bones, *id, el, frame, v)
+                }
                 None => v,
             })
             .collect();
@@ -1694,11 +1703,11 @@ pub fn insert_keyframes(armature: &mut Armature, anim: usize, frame: i32, bone_i
         let first_key = layer.as_ref().map_or(true, |l| l.mode != LayerMode::Override);
         for ((el, value), setup_value) in KEYED.iter().zip(shown_values).zip(values(&setup)) {
             let has_first = a.keyframes.iter().any(|k| k.bone_id == *id && k.element == *el && k.frame == 0);
-            if frame != 0 && !has_first && first_key {
+            if key_frame != 0 && !has_first && first_key {
                 let (_, i) = a.check_if_in_keyframe(*id, 0, el.clone());
                 a.keyframes[i].value = setup_value;
             }
-            let (_, i) = a.check_if_in_keyframe(*id, frame, el.clone());
+            let (_, i) = a.check_if_in_keyframe(*id, key_frame, el.clone());
             a.keyframes[i].value = value;
         }
     }
@@ -2205,10 +2214,19 @@ fn edit_bone(
     let (value, layer_mode) = {
         let anim = &armature.animations[anim_id];
         match anim.layers.get(anim.active_layer).filter(|_| anim.active_layer > 0) {
-            Some(layer) if layer.locked => return,
-            Some(layer) => (layers::key_on_active(anim, &armature.bones, bone_id, &element, anim_frame, value), Some(layer.mode.clone())),
+            Some(layer) if layer.locked || layer.link.is_some() => return,
+            Some(layer) => {
+                let ctx = layers::Ctx { anims: &armature.animations, clock: None };
+                let v = layers::key_on_active_in(anim, &ctx, &armature.bones, bone_id, &element, anim_frame, value);
+                (v, Some(layer.mode.clone()))
+            }
             None => (value, None),
         }
+    };
+    // a Looped layer keys in its own time (docs/TIMELINE.md §5.7)
+    let anim_frame = {
+        let anim = &armature.animations[anim_id];
+        anim.layers.get(anim.active_layer).filter(|_| anim.active_layer > 0).map_or(anim_frame, |l| layers::layer_frame(anim, l, anim_frame))
     };
 
     macro_rules! check_kf {

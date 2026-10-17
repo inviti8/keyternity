@@ -122,3 +122,25 @@ fn saving_keeps_layers_and_exporting_flattens_them() {
         assert!((arm.animate(0, f, None)[0].rot - shown[f as usize]).abs() < 1e-3, "flattened, frame {f}");
     }
 }
+
+#[test]
+fn layer_settings_keep_its_id_and_keys() {
+    let mut s = walk();
+    s.events.add_layer(LayerMode::Additive);
+    run(&mut s);
+    set_rot(&mut s, 5, 0.8);
+    let id = s.armature.animations[0].layers[1].id;
+    let settings = AnimLayer {
+        name: "Breathing".into(),
+        play: PlayMode::Looped { length: 1., speed: 1., phase: 0., free_running: true },
+        generators: vec![Generator { bone_id: 0, ..Default::default() }],
+        ..Default::default()
+    };
+    s.events.set_layer(1, &settings, true);
+    run(&mut s);
+    let a = &s.armature.animations[0];
+    assert_eq!(a.layers[1].id, id);
+    assert_eq!(a.layers[1].name, "Breathing");
+    assert_eq!(a.layers[1].generators.len(), 1);
+    assert!(!a.layer_keys(1).is_empty(), "its keys stay");
+}

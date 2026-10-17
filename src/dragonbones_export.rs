@@ -35,8 +35,10 @@ pub fn export(armature: &Armature, base: &str, tex_padding: Vec2) -> Result<DbFi
     let mut armature = without_bind_helpers(armature);
     // DragonBones plays one timeline per animation: bake the layers in
     let setup = armature.bones.clone();
+    let anims = armature.animations.clone();
+    let ctx = crate::layers::Ctx { anims: &anims, clock: None };
     for anim in &mut armature.animations {
-        *anim = crate::layers::flatten(anim, &setup);
+        *anim = crate::layers::flatten_in(anim, &ctx, &setup);
     }
     let armature = &armature;
 

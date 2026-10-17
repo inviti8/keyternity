@@ -762,6 +762,8 @@ pub struct Ui {
     pub timeline_hover_column: Option<i32>,
     /// the layer stack is folded away
     pub timeline_layers_folded: bool,
+    /// the layer whose settings window is open
+    pub layer_settings: Option<usize>,
     /// scaling the selected keys in time
     pub timeline_scale: Option<crate::timeline_rows::ScaleDrag>,
     /// `S` was pressed over the timeline: start scaling
@@ -1536,6 +1538,10 @@ pub struct Armature {
     pub tex_data: Vec<TextureData>,
     #[serde(skip)]
     pub animated_bones: Vec<Bone>,
+    /// seconds on the editor's clock while playing, for free-running loops
+    /// (docs/TIMELINE.md §5.7); `None` plays them in the animation's own time
+    #[serde(skip)]
+    pub clock: Option<f32>,
     /// render cameras (docs/FRAME_SEQUENCES.md §4); editor-only, saved in editor.json
     #[serde(skip)]
     pub cameras: Vec<crate::render_camera::RenderCamera>,
@@ -1656,7 +1662,8 @@ impl Armature {
         };
 
         // Base as it always was, then each playing layer (docs/TIMELINE.md §5.2)
-        crate::layers::pose(&self.animations[anim_idx], &bones, anim_frame)
+        let ctx = crate::layers::Ctx { anims: &self.animations, clock: self.clock };
+        crate::layers::pose_in(&self.animations[anim_idx], &ctx, &bones, anim_frame)
     }
 
     pub fn interpolate_keyframes(
@@ -2007,8 +2014,72 @@ pub struct AnimLayer {
     /// owned by a lip-sync track, which regenerates its keys (docs/LIP_SYNC.md)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub generated: Option<i32>,
+    /// Linear follows the animation's time; Looped repeats on its own (§5.7)
+    pub play: PlayMode,
+    /// plays this animation (its Base keys and generators) instead of its own keys
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link: Option<i32>,
+    /// procedural channels, added to the layer's keys (§5.8)
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub generators: Vec<Generator>,
     /// this layer's keys, while it isn't the active one
     pub keyframes: Vec<Keyframe>,
+}
+
+/// How a layer plays in time (docs/TIMELINE.md §5.7).
+#[derive(PartialEq, serde::Serialize, serde::Deserialize, Clone, Debug, Default)]
+pub enum PlayMode {
+    /// frame for frame with the animation
+    #[default]
+    Linear,
+    /// repeats every `length` seconds: its time is `(t × speed + phase) mod length`
+    Looped { length: f32, speed: f32, phase: f32, free_running: bool },
+}
+
+/// A generator's shape.
+#[derive(PartialEq, serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default)]
+pub enum Wave {
+    #[default]
+    Sine,
+    Triangle,
+    Square,
+    /// smooth value noise
+    Noise,
+}
+
+/// A procedural channel (docs/TIMELINE.md §5.8): `offset + amplitude × wave(time)`,
+/// added to what the layer's keys give.
+#[derive(PartialEq, serde::Serialize, serde::Deserialize, Clone, Debug)]
+#[serde(default)]
+pub struct Generator {
+    pub bone_id: i32,
+    pub element: AnimElement,
+    pub wave: Wave,
+    pub amplitude: f32,
+    /// seconds per cycle (noise: per bump)
+    pub period: f32,
+    /// seconds
+    pub phase: f32,
+    pub offset: f32,
+    /// noise only
+    pub octaves: u32,
+    pub seed: u32,
+}
+
+impl Default for Generator {
+    fn default() -> Self {
+        Generator {
+            bone_id: -1,
+            element: AnimElement::Rotation,
+            wave: Wave::Sine,
+            amplitude: 0.1,
+            period: 3.,
+            phase: 0.,
+            offset: 0.,
+            octaves: 2,
+            seed: 1,
+        }
+    }
 }
 
 impl Default for AnimLayer {
@@ -2022,6 +2093,9 @@ impl Default for AnimLayer {
             solo: false,
             locked: false,
             generated: None,
+            play: PlayMode::Linear,
+            link: None,
+            generators: vec![],
             keyframes: vec![],
         }
     }
@@ -2844,6 +2918,8 @@ pub enum Events {
     DuplicateLayer,
     MergeLayerDown,
     FlattenLayers,
+    CloseLoop,
+    BakeGenerator,
     ResetVertices,
     SelectBind,
     DeleteIkTarget,
@@ -3021,6 +3097,15 @@ impl EventState {
     }
     pub fn flatten_layers(&mut self) {
         self.layer_event(E::FlattenLayers, 0);
+    }
+    pub fn close_loop(&mut self, index: usize) {
+        self.layer_event(E::CloseLoop, index);
+    }
+    /// Bake generator `generator` of layer `index` into keys.
+    pub fn bake_generator(&mut self, index: usize, generator: usize) {
+        self.events.push(E::BakeGenerator);
+        self.values.push(index as f32);
+        self.str_values.push(generator.to_string());
     }
 
     /// Set layer `index`'s settings (not its keys). `new_step` makes an undo step, so

@@ -581,8 +581,10 @@ pub fn prepare_files(
 
     // files keep Base in `keyframes`; exports (runtimes) get the layers flattened
     let setup = armature_copy.bones.clone();
+    let anims = armature_copy.animations.clone();
+    let ctx = crate::layers::Ctx { anims: &anims, clock: None };
     for anim in &mut armature_copy.animations {
-        *anim = if edit_mode.export_flatten_layers { crate::layers::flatten(anim, &setup) } else { anim.normalized() };
+        *anim = if edit_mode.export_flatten_layers { crate::layers::flatten_in(anim, &ctx, &setup) } else { anim.normalized() };
     }
 
     // remove keyframes with a frame of -1
@@ -971,6 +973,7 @@ pub fn import<R: Read + std::io::Seek>(
         styles: root.styles.clone(),
         tex_data: vec![],
         animated_bones: vec![],
+        clock: None,
         cameras: vec![],
     };
 
@@ -1501,7 +1504,10 @@ pub fn animate_bones(armature: &mut Armature, selection: &SelectionState, edit_m
             }
             let frame = anim.set_frame();
             let anim_bones = armature.animated_bones.clone();
+            // free-running loops keep the editor's clock while playing
+            armature.clock = Some(edit_mode.time);
             armature.animated_bones = armature.animate(a, frame, Some(&anim_bones));
+            armature.clock = None;
         }
     } else if edit_mode.anim_open && selection.anim != usize::MAX && selection.anim_frame != -1 {
         // display the selected animation's frame

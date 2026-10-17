@@ -1088,6 +1088,10 @@ fn context_menu_content(
         let i: usize = split[1].parse().unwrap_or(0);
         if i > 0 {
             ui.context_rename(shared_ui, config, context_id.clone());
+            if ui.context_button(&shared_ui.loc("keyframe_editor.layer_settings_open"), &config).clicked() {
+                shared_ui.layer_settings = Some(i);
+                shared_ui.context_menu.close();
+            }
             if ui.context_button(&shared_ui.loc("keyframe_editor.layer_duplicate"), &config).clicked() {
                 events.duplicate_layer(i);
                 shared_ui.context_menu.close();
@@ -1123,6 +1127,34 @@ fn context_menu_content(
             shared_ui.selected_keyframes = anim.keyframes.iter().filter(in_row).cloned().collect();
             shared_ui.last_selected = "keyframe".to_string();
             shared_ui.context_menu.close();
+        }
+        // a generator on this channel, on the active layer (or a new additive one)
+        let numeric = match group {
+            Some(timeline_rows::Group::Position) => Some(AnimElement::PositionX),
+            Some(timeline_rows::Group::Rotation) => Some(AnimElement::Rotation),
+            Some(timeline_rows::Group::Scale) => Some(AnimElement::ScaleX),
+            Some(timeline_rows::Group::Tint) => Some(AnimElement::TintA),
+            Some(_) => None,
+            None => element.clone().filter(|e| layers::NUMERIC.contains(e)),
+        };
+        if let Some(el) = numeric {
+            if ui.context_button(&shared_ui.loc("keyframe_editor.add_generator"), &config).clicked() {
+                let gen = Generator { bone_id, element: el, ..Default::default() };
+                if anim.active_layer > 0 {
+                    let mut layer = anim.layers[anim.active_layer].clone();
+                    layer.generators.push(gen);
+                    events.set_layer(anim.active_layer, &layer, true);
+                    shared_ui.layer_settings = Some(anim.active_layer);
+                } else {
+                    let new = anim.layers.len().max(1);
+                    events.add_layer(LayerMode::Additive);
+                    let name = shared_ui.loc("keyframe_editor.layer_settings.procedural");
+                    let layer = AnimLayer { name, mode: LayerMode::Additive, generators: vec![gen], ..Default::default() };
+                    events.set_layer(new, &layer, false);
+                    shared_ui.layer_settings = Some(new);
+                }
+                shared_ui.context_menu.close();
+            }
         }
         if ui.context_button(&shared_ui.loc("keyframe_editor.delete_row"), &config).clicked() {
             shared_ui.deleting_line_bone_id = bone_id;
