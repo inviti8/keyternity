@@ -635,11 +635,17 @@ pub fn frame_cues(cues: &[(f32, &str)], rig: &MouthRig, fps: i32, start_frame: i
             out.push(c.clone());
             continue;
         };
-        let f = c.0.max(last.0 + hold);
-        let next = one.get(i + 1).map(|n| n.0);
-        let squeezed = next.is_some_and(|n| n - f < hold);
+        let mut f = c.0.max(last.0 + hold);
+        let next = one.get(i + 1);
+        let squeezed = next.is_some_and(|n| n.0 - f < hold);
         if squeezed && c.1 != closure {
-            continue;
+            // dropping it would join the visemes either side into one long hold (the
+            // mouth shut through "Piper picked"): show it for a frame instead
+            let short = c.0.max(last.0 + 1);
+            match next {
+                Some(n) if n.1 == last.1 && short < n.0 => f = short,
+                _ => continue,
+            }
         }
         if last.1 != c.1 {
             out.push((f, c.1.clone()));
@@ -766,7 +772,7 @@ pub fn builtin_pose(viseme: &str) -> Vec<PoseControl> {
         "AI" | "aa" | "open" => all(vec![jaw(0.75), corners(0., 0.1), lips(0.25, 0.35, 0., 0.)]),
         "E" | "wide" => all(vec![jaw(0.35), corners(0., 0.35), lips(0.35, 0.45, 0., 0.)]),
         "I" => all(vec![jaw(0.2), corners(0., 0.4), lips(0.3, 0.35, 0., 0.)]),
-        "O" | "round" => all(vec![jaw(0.55), corners(0.5, 0.), lips(0., 0., 0.4, 0.4)]),
+        "O" | "round" => all(vec![jaw(0.6), corners(0.7, 0.), lips(0., 0., 0.4, 0.4)]),
         "U" => all(vec![jaw(0.25), corners(0.8, 0.), lips(0., 0., 0.7, 0.7)]),
         "WQ" => all(vec![jaw(0.12), corners(1., 0.), lips(0., 0., 0.8, 0.8)]),
         "CH" => all(vec![jaw(0.2), corners(0.4, 0.), lips(0.2, 0.2, 0.5, 0.5)]),

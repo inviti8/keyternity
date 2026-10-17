@@ -121,14 +121,26 @@ fn cues_rest_in_silences_only() {
 fn frames_lead_hold_and_keep_closures() {
     let rig = MouthRig::default(); // Preston Blair
     let s = KeyerSettings { lead: 1, min_hold: 2, ..Default::default() };
-    // at 24 fps: a closure, a brief "aa" squeezed between, another closure soon after
-    let cues = vec![(0., "sil"), (0.5, "PP"), (0.54, "aa"), (0.58, "PP"), (1.0, "E"), (1.5, "sil")];
+    // at 24 fps: a closure, a brief "E" squeezed out before the "aa", an "O" later
+    let cues = vec![(0., "sil"), (0.5, "PP"), (0.54, "E"), (0.58, "aa"), (1.0, "O"), (1.5, "sil")];
     let f = frame_cues(&cues, &rig, 24, 10, &s);
     let names: Vec<&str> = f.iter().map(|c| c.1.as_str()).collect();
-    assert_eq!(names, vec!["rest", "MBP", "E", "rest"], "{f:?}");
+    assert_eq!(names, vec!["rest", "MBP", "AI", "O", "rest"], "{f:?}");
     assert_eq!(f[1].0, 10 + 12 - 1, "led by a frame from the clip's start");
-    assert_eq!(f[3].0, 10 + 36, "rest isn't led");
+    assert_eq!(f[4].0, 10 + 36, "rest isn't led");
     assert!(f.windows(2).all(|p| p[1].0 - p[0].0 >= 2), "{f:?}");
+}
+
+#[test]
+fn a_brief_sound_between_closures_still_shows() {
+    // "Piper picked" at speed: PP, a quick "er", PP; dropping the "er" for the hold
+    // would leave the mouth shut through both
+    let rig = MouthRig::default();
+    let s = KeyerSettings { lead: 0, min_hold: 2, ..Default::default() };
+    let cues = vec![(0., "sil"), (0.5, "PP"), (0.6, "E"), (0.64, "PP"), (0.75, "I"), (1.0, "sil")];
+    let f = frame_cues(&cues, &rig, 24, 0, &s);
+    let names: Vec<&str> = f.iter().map(|c| c.1.as_str()).collect();
+    assert_eq!(names, vec!["rest", "MBP", "E", "MBP", "E", "rest"], "{f:?}");
 }
 
 #[test]
