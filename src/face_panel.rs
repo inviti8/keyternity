@@ -289,6 +289,7 @@ pub fn draw(
                     }
                 });
             }
+            toolbar(ui, shared_ui, armature, selections, edit_mode, events, &controls);
             board(ui, shared_ui, config, armature, selections, edit_mode, events, &controls);
             ui.label(egui::RichText::new(loc(shared_ui, "hint")).size(11.).color(egui::Color32::from_gray(150)));
         });
@@ -416,7 +417,8 @@ fn board(
         if !mapped {
             base = base.lerp_to_gamma(egui::Color32::from_gray(90), 0.7);
         }
-        if active == Some(pl.bone) {
+        let selected = shared_ui.face_panel_selected == Some(pl.bone);
+        if active == Some(pl.bone) || selected {
             base = base.lerp_to_gamma(egui::Color32::WHITE, 0.35);
         }
         let mut m = egui::Mesh::default();
@@ -429,6 +431,10 @@ fn board(
             m.add_triangle(i, i + 1, i + 2);
         }
         painter.add(egui::Shape::mesh(m));
+        if selected {
+            let outline = hull(&pl.tris.iter().flatten().copied().collect::<Vec<_>>());
+            painter.add(egui::Shape::closed_line(outline, egui::Stroke::new(1.5, egui::Color32::from_rgb(240, 190, 80))));
+        }
         // keyed on this frame: a diamond at its rest
         let keyed = animating && anim.is_some_and(|a| a.keyframes.iter().any(|k| k.bone_id == pl.bone && k.frame == frame));
         if keyed {
@@ -492,6 +498,9 @@ fn board(
         let origin = ui.input(|i| i.pointer.press_origin());
         let hovered = origin.filter(|o| rect.contains(*o)).and_then(pick).or(hovered);
         shared_ui.face_panel_drag = hovered;
+        if hovered.is_some() {
+            shared_ui.face_panel_selected = hovered;
+        }
         shared_ui.face_panel_drag_start = None;
         let (shift, alt) = ui.input(|i| (i.modifiers.shift, i.modifiers.alt));
         shared_ui.face_panel_drag_mode = if resp.drag_started_by(egui::PointerButton::Secondary) || shift {
@@ -577,43 +586,10 @@ fn board(
         }
     }
 
-    // double-click: back to rest; right-click: the control's menu
-    if resp.double_clicked() {
-        if let Some(id) = hovered {
-            reset(armature, id, anim_idx, frame, events);
-        }
-    }
-    if resp.secondary_clicked() {
-        shared_ui.face_panel_menu = hovered;
-    }
-    if let Some(id) = shared_ui.face_panel_menu {
-        let mut close = false;
-        resp.context_menu(|ui| {
-            if ui.button(shared_ui.loc("face_panel.reset")).clicked() {
-                reset(armature, id, anim_idx, frame, events);
-                close = true;
-            }
-            if animating && frame >= 0 && ui.button(shared_ui.loc("face_panel.key")).clicked() {
-                if let (Some(idx), Some(p)) = (armature.bones.iter().position(|b| b.id == id), posed.iter().find(|b| b.id == id)) {
-                    events.save_edited_bone(idx);
-                    events.edit_bone(id, &AnimElement::PositionX, p.pos.x, "", anim_idx, frame);
-                    events.edit_bone(id, &AnimElement::PositionY, p.pos.y, "", anim_idx, frame);
-                    events.edit_bone(id, &AnimElement::Rotation, p.rot, "", anim_idx, frame);
-                    events.edit_bone(id, &AnimElement::ScaleX, p.scale.x, "", anim_idx, frame);
-                    events.edit_bone(id, &AnimElement::ScaleY, p.scale.y, "", anim_idx, frame);
-                }
-                close = true;
-            }
-            if ui.button(shared_ui.loc("face_panel.select")).clicked() {
-                if let Some(idx) = armature.bones.iter().position(|b| b.id == id) {
-                    events.select_bone(idx, false);
-                }
-                close = true;
-            }
-        });
-        if close {
-            shared_ui.face_panel_menu = None;
-        }
+    // a click selects the manipulator under it (or nothing): the toolbar's Key and
+    // Reset act on it. Neither lives on a mouse button, so a drag can't reset by accident.
+    if resp.clicked() || resp.secondary_clicked() || resp.middle_clicked() {
+        shared_ui.face_panel_selected = hovered;
     }
     let _ = config;
 }
@@ -628,4 +604,52 @@ fn reset(armature: &Armature, id: i32, anim: usize, frame: i32, events: &mut Eve
     events.edit_bone(id, &AnimElement::Rotation, fc.rest_rot, "", anim, frame);
     events.edit_bone(id, &AnimElement::ScaleX, 1., "", anim, frame);
     events.edit_bone(id, &AnimElement::ScaleY, 1., "", anim, frame);
+}
+
+/// Key and Reset for the selected manipulator, above the mask.
+fn toolbar(
+    ui: &mut egui::Ui,
+    shared_ui: &mut crate::Ui,
+    armature: &Armature,
+    selections: &SelectionState,
+    edit_mode: &EditMode,
+    events: &mut EventState,
+    controls: &[(String, i32)],
+) {
+    // only a manipulator of this rig counts
+    let selected = shared_ui.face_panel_selected.filter(|id| controls.iter().any(|(_, c)| c == id));
+    let animating = shared_ui.is_animating(edit_mode, selections);
+    let anim_idx = if animating { selections.anim } else { usize::MAX };
+    let frame = if animating { selections.anim_frame } else { -1 };
+    let posed: &[Bone] = if armature.animated_bones.len() == armature.bones.len() { &armature.animated_bones } else { &armature.bones };
+    let loc = |shared_ui: &crate::Ui, k: &str| shared_ui.loc(&format!("face_panel.{k}"));
+    ui.horizontal(|ui| {
+        let name = selected
+            .and_then(|id| armature.bones.iter().find(|b| b.id == id))
+            .and_then(|b| b.face_control.as_ref())
+            .map_or(loc(shared_ui, "none_selected"), |fc| fc.name.clone());
+        ui.label(egui::RichText::new(name).strong());
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let can_key = selected.is_some() && animating && frame >= 0;
+            let key_tip = loc(shared_ui, if can_key { "key_desc" } else { "key_disabled" });
+            if ui.add_enabled(can_key, egui::Button::new(loc(shared_ui, "key"))).on_hover_text(&key_tip).on_disabled_hover_text(&key_tip).clicked() {
+                if let Some(id) = selected {
+                    if let (Some(idx), Some(p)) = (armature.bones.iter().position(|b| b.id == id), posed.iter().find(|b| b.id == id)) {
+                        events.save_edited_bone(idx);
+                        events.edit_bone(id, &AnimElement::PositionX, p.pos.x, "", anim_idx, frame);
+                        events.edit_bone(id, &AnimElement::PositionY, p.pos.y, "", anim_idx, frame);
+                        events.edit_bone(id, &AnimElement::Rotation, p.rot, "", anim_idx, frame);
+                        events.edit_bone(id, &AnimElement::ScaleX, p.scale.x, "", anim_idx, frame);
+                        events.edit_bone(id, &AnimElement::ScaleY, p.scale.y, "", anim_idx, frame);
+                    }
+                }
+            }
+            let reset_tip = loc(shared_ui, "reset_desc");
+            if ui.add_enabled(selected.is_some(), egui::Button::new(loc(shared_ui, "reset"))).on_hover_text(&reset_tip).on_disabled_hover_text(&reset_tip).clicked() {
+                if let Some(id) = selected {
+                    reset(armature, id, anim_idx, frame, events);
+                }
+            }
+        });
+    });
 }

@@ -303,13 +303,16 @@
   },
   "face_panel": {
     "title": "Face Rig",
-    "hint": "Left-drag moves, right-drag twists, middle-drag closes eyes or pushes lips and jaw in and out (Shift and Alt for right and middle on a trackpad). Right-click for the menu; double-click resets.",
+    "hint": "Click a control to select it for Key and Reset. Left-drag moves, right-drag twists, middle-drag closes eyes or pushes lips and jaw in and out (Shift and Alt for right and middle on a trackpad).",
     "how_scale": "drag down to close",
     "how_twist": "right-drag: twist",
     "how_depth": "middle-drag: in/out",
     "reset": "Reset",
     "key": "Key",
-    "select": "Select Control Bone",
+    "none_selected": "Click a control to select it",
+    "key_desc": "Key the selected control at the current frame.",
+    "key_disabled": "Select a control, and a frame while animating, to key it.",
+    "reset_desc": "Put the selected control back at rest (keyed, while animating).",
     "none": "No face rig yet. Select a face mesh, then in its Shapes section use Set Up Face.",
     "root_note": "This is a face rig: its controls are worked from the Face Rig panel."
   },

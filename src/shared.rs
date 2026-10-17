@@ -779,7 +779,8 @@ pub struct Ui {
     pub face_panel_drag_mode: crate::face_panel::DragMode,
     /// the manipulator under the pointer
     pub face_panel_hover: Option<i32>,
-    pub face_panel_menu: Option<i32>,
+    /// the manipulator the toolbar's Key and Reset act on
+    pub face_panel_selected: Option<i32>,
     /// picking a landmark: its name, and the vertex selection when picking started
     pub picking_landmark: Option<String>,
     pub picking_from: Vec<usize>,

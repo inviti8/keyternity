@@ -377,7 +377,10 @@ limits in `FaceBot.FBX`). Full weight is at the limit:
   - **middle** works the third channel: the eyes' scale, the lips' and jaw's depth.
   - Shift and Alt stand in for right and middle on trackpads.
   - A control that can't move (the eyes) works its one channel with any drag.
-  - Right-click without dragging opens the menu.
+  - No mouse button resets: Key and Reset are buttons above the mask, acting on the
+    selected manipulator. Clicking or dragging a manipulator selects it, and it stays
+    outlined. There's no right-click menu and no double-click reset, so a twist can't
+    reset a control by accident.
 - **Grabbing:** each manipulator is grabbable anywhere inside its outline (convex
   hull), plus a few points' margin, topmost first. The mouth ring's hollow middle
   grabs the ring, while the lips and corners on top of it stay grabbable. A drag takes
@@ -402,7 +405,6 @@ not with bones on the canvas.
   - Drag a manipulator to pose; Shift-drag twists.
   - It moves only along the directions it drives, up to 1.5× its range, and the
     active one shows its travel box.
-  - Double-click resets it. Right-click gives Reset, Key, and Select Control Bone.
   - While animating, a drag keys it, and a ◆ marks manipulators keyed on the current
     frame.
   - The mouth carries the corners, lips and jaw, and the jaw carries the lower lip.

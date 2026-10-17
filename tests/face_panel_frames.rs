@@ -275,3 +275,51 @@ fn mouse_buttons_pick_the_channel() {
     let shifted = drag_jaw(egui::PointerButton::Primary, egui::Modifiers::SHIFT);
     assert!(shifted.rot.abs() > 0.01);
 }
+
+#[test]
+fn clicks_select_without_resetting() {
+    // move the jaw (left-drag), then right-click and double-click it: it stays put
+    let mut s = rigged();
+    let ctx = egui::Context::default();
+    let raw = |events: Vec<egui::Event>| egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000., 800.))),
+        events,
+        ..Default::default()
+    };
+    let mut step = |s: &mut Shared, events: Vec<egui::Event>| {
+        ctx.run(raw(events), |ctx| {
+            face_panel::draw(ctx, &mut s.ui, &s.config, &s.armature, &s.selections, &s.edit_mode, &mut s.events);
+        });
+        run_events(s);
+    };
+    for _ in 0..4 {
+        step(&mut s, vec![]);
+    }
+    let r = ctx.memory(|m| m.area_rect(egui::Id::new("face_rig_panel"))).unwrap();
+    let jaw_id = s.armature.bones.iter().find(|b| b.face_control.as_ref().is_some_and(|c| c.name == "Jaw")).unwrap().id;
+    let mut p = r.center();
+    for i in 0..40 {
+        p = egui::pos2(r.center().x + 40., r.top() + r.height() * (0.70 + i as f32 * 0.006));
+        step(&mut s, vec![egui::Event::PointerMoved(p)]);
+        if s.ui.face_panel_hover == Some(jaw_id) {
+            break;
+        }
+    }
+    let button = |b: egui::PointerButton, pressed: bool, at: egui::Pos2| egui::Event::PointerButton { pos: at, button: b, pressed, modifiers: Default::default() };
+    step(&mut s, vec![button(egui::PointerButton::Primary, true, p)]);
+    let q = p + egui::vec2(0., 15.);
+    for _ in 0..3 {
+        step(&mut s, vec![egui::Event::PointerMoved(q)]);
+    }
+    step(&mut s, vec![button(egui::PointerButton::Primary, false, q)]);
+    let jaw = |s: &Shared| s.armature.bones.iter().find(|b| b.id == jaw_id).unwrap().pos;
+    let moved = jaw(&s);
+    assert_eq!(s.ui.face_panel_selected, Some(jaw_id), "dragging selects it");
+    // a right-click, and a double-click
+    for b in [egui::PointerButton::Secondary, egui::PointerButton::Primary, egui::PointerButton::Primary] {
+        step(&mut s, vec![button(b, true, q)]);
+        step(&mut s, vec![button(b, false, q)]);
+    }
+    assert_eq!(jaw(&s), moved, "clicks don't reset");
+    assert_eq!(s.ui.face_panel_selected, Some(jaw_id));
+}
