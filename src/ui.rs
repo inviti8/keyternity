@@ -1088,6 +1088,24 @@ fn context_menu_content(
             shared_ui.scale_dialog = Some(1.);
             shared_ui.context_menu.close();
         }
+    } else if id == "shape" {
+        let bone_id: i32 = split[1].parse().unwrap_or(-1);
+        let shape: i32 = split.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+        let l = |shared_ui: &crate::Ui, k: &str| shared_ui.loc(&format!("bone_panel.shapes.{k}"));
+        ui.context_rename(shared_ui, config, context_id.clone());
+        if ui.context_button(&l(shared_ui, "duplicate"), &config).clicked() {
+            events.duplicate_shape(bone_id, shape, false);
+            shared_ui.context_menu.close();
+        }
+        let tip = l(shared_ui, "mirror_desc");
+        if ui.context_button(&l(shared_ui, "mirror"), &config).on_hover_text(tip).clicked() {
+            events.duplicate_shape(bone_id, shape, true);
+            shared_ui.context_menu.close();
+        }
+        if ui.context_button(&l(shared_ui, "delete"), &config).clicked() {
+            events.delete_shape(bone_id, shape);
+            shared_ui.context_menu.close();
+        }
     } else if id == "layer" {
         let i: usize = split[1].parse().unwrap_or(0);
         if i > 0 {
@@ -1126,14 +1144,18 @@ fn context_menu_content(
         // a timeline row: kfrow_{bone}_g_{group} or kfrow_{bone}_e_{element}
         let bone_id: i32 = split[1].parse().unwrap_or(-1);
         let n: usize = split.get(3).and_then(|s| s.parse().ok()).unwrap_or(0);
-        let group = if split.get(2).map(|s| s.as_str()) == Some("g") { timeline_rows::Group::from_index(n) } else { None };
-        let element = AnimElement::from_repr(n);
+        let kind = split.get(2).map(|s| s.as_str()).unwrap_or("");
+        let group = if kind == "g" { timeline_rows::Group::from_index(n) } else { None };
+        // a shape's row: kfrow_{bone}_s_{shape id}
+        let shape_row = (kind == "s").then_some(n as i32);
+        let element = if kind == "e" { AnimElement::from_repr(n) } else { None };
         let anim = armature.sel_anim(&selections).unwrap();
         let in_row = |kf: &&Keyframe| {
             kf.bone_id == bone_id
-                && match group {
-                    Some(g) => timeline_rows::Group::of(&kf.element) == g,
-                    None => Some(&kf.element) == element.as_ref(),
+                && match (group, shape_row) {
+                    (Some(g), _) => timeline_rows::Group::of(&kf.element) == g,
+                    (_, Some(s)) => kf.element == AnimElement::ShapeWeight && kf.shape == s,
+                    _ => Some(&kf.element) == element.as_ref(),
                 }
         };
         if ui.context_button(&shared_ui.loc("keyframe_editor.select_row"), &config).clicked() {
@@ -1169,7 +1191,12 @@ fn context_menu_content(
                 shared_ui.context_menu.close();
             }
         }
-        if ui.context_button(&shared_ui.loc("keyframe_editor.delete_row"), &config).clicked() {
+        if shape_row.is_some() && ui.context_button(&shared_ui.loc("keyframe_editor.delete_row"), &config).clicked() {
+            // a shape's keys: as selected keys (undoable)
+            shared_ui.selected_keyframes = anim.keyframes.iter().filter(in_row).cloned().collect();
+            events.delete_selected_keyframes();
+            shared_ui.context_menu.close();
+        } else if shape_row.is_none() && ui.context_button(&shared_ui.loc("keyframe_editor.delete_row"), &config).clicked() {
             shared_ui.deleting_line_bone_id = bone_id;
             shared_ui.deleting_group = group;
             if let Some(el) = element.filter(|_| group.is_none()) {

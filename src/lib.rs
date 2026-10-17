@@ -80,6 +80,8 @@ pub mod psd_import;
 pub mod render_camera;
 pub mod renderer;
 pub mod settings_modal;
+pub mod shapes;
+pub mod shapes_panel;
 pub mod shared;
 pub mod skin;
 pub mod startup_window;

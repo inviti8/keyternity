@@ -301,6 +301,26 @@
     "delete": "Delete"
   },
   "bone_panel": {
+    "shapes": {
+      "heading": "Shapes ($n)",
+      "desc": "Shapes (morph targets): sculpted offsets of this mesh's vertices, blended by weight before skinning, so they follow the bones. Use them for mouths, blinks, brows and squash. While animating, a weight change keys it.",
+      "sculpting": "Sculpting “$name”: drag vertices to shape it.",
+      "done": "Done",
+      "name_desc": "Double-click to rename; right-click for Duplicate, Mirror and Delete. Moves $n vertices.",
+      "edit": "Sculpt",
+      "edit_desc": "Sculpt this shape: it shows at full weight (others at 0), and dragging vertices edits the shape, not the mesh.",
+      "keyed": "Weight keyed at frame $frame.",
+      "key": "Key this weight at frame $frame.",
+      "empty": "No shapes yet.",
+      "add": "+ Add Shape",
+      "add_desc": "Add an empty shape, then Sculpt it.",
+      "new_name": "Shape",
+      "no_frame": "Select a frame to key weights.",
+      "duplicate": "Duplicate",
+      "mirror": "Mirror to Other Side",
+      "mirror_desc": "A copy flipped across the mesh's centre (x = 0): Smile_L makes Smile_R.",
+      "delete": "Delete Shape"
+    },
     "visible": "Visible ℹ:",
     "visible_desc": "Show or hide this bone and its children. While animating, with a frame selected, this keys visibility at that frame: the bone switches on or off there.",
     "visible_keyed": "Visibility is keyed at frame $frame.",
@@ -671,6 +691,7 @@
       "Hidden": "Visibility",
       "Zindex": "Z-index",
       "Ik": "IK",
+      "Shape": "Shapes",
       "Other": "Other"
     },
     "scale_keys": "Scale Keys (S)",
@@ -759,7 +780,8 @@
       "TintB": "Blue Tint",
       "TintA": "Alpha Tint",
       "IkWeight": "IK Weight",
-      "IkCopyRotation": "IK Copy Rotation"
+      "IkCopyRotation": "IK Copy Rotation",
+      "ShapeWeight": "Shape"
     }
   },
   "keyframe_panel": {

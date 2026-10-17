@@ -1044,6 +1044,8 @@ fn simulate_physics(armature_bones: &mut Vec<Bone>, constructed_bones: &mut Vec<
 
 pub fn construct_verts(bones: &mut Vec<Bone>) {
     for b in 0..bones.len() {
+        // shapes first, in the mesh's own space, so skinning carries them
+        crate::shapes::apply(&mut bones[b]);
         let bone = bones[b].clone();
 
         // track vertex init pos for binds

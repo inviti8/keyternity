@@ -1787,7 +1787,7 @@ fn draw_row_label(
             }
             let name = shared_ui.loc(&format!("keyframe_editor.groups.{}", group.key()));
             painter.text(egui::pos2(x + 16., y), egui::Align2::LEFT_CENTER, name, font, text.gamma_multiply(0.9));
-            if first.len() > 1 {
+            if timeline_rows::opens(anim, *bone_id, *group) {
                 let open = shared_ui.timeline_opened.contains(&(*bone_id, *group));
                 if arrow(ui, rect.right() - 10., open, "open") {
                     if open {
@@ -1800,6 +1800,14 @@ fn draw_row_label(
             let menu = egui::Rect::from_x_y_ranges(rect.left()..=rect.right() - 20., rect.y_range());
             if ui.interact(menu, id.with("menu"), egui::Sense::click()).secondary_clicked() {
                 shared_ui.context_menu.show(&format!("kfrow_{}_g_{}", bone_id, *group as usize));
+            }
+        }
+        Row::Shape(bone_id, shape) => {
+            let bone = armature.bones.iter().find(|b| b.id == *bone_id);
+            let name = bone.and_then(|b| b.shapes.iter().find(|s| s.id == *shape)).map_or(format!("#{shape}"), |s| s.name.clone());
+            painter.text(egui::pos2(rect.left() + 54., y), egui::Align2::LEFT_CENTER, name, font, dim);
+            if ui.interact(rect, id.with("menu"), egui::Sense::click()).secondary_clicked() {
+                shared_ui.context_menu.show(&format!("kfrow_{}_s_{}", bone_id, shape));
             }
         }
         Row::Channel(bone_id, el) => {

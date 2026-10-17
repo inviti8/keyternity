@@ -19,11 +19,13 @@ pub enum Group {
     Hidden,
     Zindex,
     Ik,
+    /// shape (morph target) weights: one row per shape when opened
+    Shape,
     Other,
 }
 
 impl Group {
-    pub const ALL: [Group; 9] = [
+    pub const ALL: [Group; 10] = [
         Group::Position,
         Group::Rotation,
         Group::Scale,
@@ -32,6 +34,7 @@ impl Group {
         Group::Hidden,
         Group::Zindex,
         Group::Ik,
+        Group::Shape,
         Group::Other,
     ];
 
@@ -50,6 +53,7 @@ impl Group {
             E::Hidden => Group::Hidden,
             E::Zindex => Group::Zindex,
             E::IkBend | E::IkWeight | E::IkCopyRotation => Group::Ik,
+            E::ShapeWeight => Group::Shape,
             _ => Group::Other,
         }
     }
@@ -65,6 +69,7 @@ impl Group {
             Group::Hidden => "Hidden",
             Group::Zindex => "Zindex",
             Group::Ik => "Ik",
+            Group::Shape => "Shape",
             Group::Other => "Other",
         }
     }
@@ -80,6 +85,7 @@ impl Group {
             Group::Hidden => (190, 190, 190),
             Group::Zindex => (110, 200, 200),
             Group::Ik => (225, 120, 110),
+            Group::Shape => (235, 150, 120),
             Group::Other => (170, 170, 170),
         }
     }
@@ -106,6 +112,8 @@ pub enum Row {
     Group(i32, Group),
     /// one channel of a group that has several (Position X, Tint G…)
     Channel(i32, AnimElement),
+    /// one shape's weight (bone, shape id)
+    Shape(i32, i32),
 }
 
 impl Row {
@@ -115,13 +123,14 @@ impl Row {
             Row::Bone(id) => kf.bone_id == *id,
             Row::Group(id, g) => kf.bone_id == *id && Group::of(&kf.element) == *g,
             Row::Channel(id, el) => kf.bone_id == *id && kf.element == *el,
+            Row::Shape(id, s) => kf.bone_id == *id && kf.element == AnimElement::ShapeWeight && kf.shape == *s,
         }
     }
 
     pub fn bone_id(&self) -> Option<i32> {
         match self {
             Row::Summary => None,
-            Row::Bone(id) | Row::Group(id, _) | Row::Channel(id, _) => Some(*id),
+            Row::Bone(id) | Row::Group(id, _) | Row::Channel(id, _) | Row::Shape(id, _) => Some(*id),
         }
     }
 
@@ -130,6 +139,7 @@ impl Row {
         match self {
             Row::Group(_, g) => Some(*g),
             Row::Channel(_, el) => Some(Group::of(el)),
+            Row::Shape(..) => Some(Group::Shape),
             _ => None,
         }
     }
@@ -146,6 +156,27 @@ pub fn channels(anim: &Animation, bone_id: i32, group: Group) -> Vec<AnimElement
     els.sort();
     els.dedup();
     els
+}
+
+/// The shapes a bone has keys for, by id.
+pub fn shape_ids(anim: &Animation, bone_id: i32) -> Vec<i32> {
+    let mut ids: Vec<i32> = anim
+        .keyframes
+        .iter()
+        .filter(|kf| kf.frame >= 0 && kf.bone_id == bone_id && kf.element == AnimElement::ShapeWeight)
+        .map(|kf| kf.shape)
+        .collect();
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
+/// Whether a group row opens: into its channels, or (Shapes) one row per shape.
+pub fn opens(anim: &Animation, bone_id: i32, group: Group) -> bool {
+    match group {
+        Group::Shape => !shape_ids(anim, bone_id).is_empty(),
+        _ => channels(anim, bone_id, group).len() > 1,
+    }
 }
 
 /// The rows for `anim`: Summary, then each keyed bone (in `bones` order) with its
@@ -171,8 +202,15 @@ pub fn build_rows(anim: &Animation, bones: &[Bone], opened: &[(i32, Group)]) -> 
         groups.dedup();
         for g in groups {
             rows.push(Row::Group(bone.id, g));
+            if !opened.contains(&(bone.id, g)) {
+                continue;
+            }
+            if g == Group::Shape {
+                rows.extend(shape_ids(anim, bone.id).into_iter().map(|s| Row::Shape(bone.id, s)));
+                continue;
+            }
             let els = channels(anim, bone.id, g);
-            if els.len() > 1 && opened.contains(&(bone.id, g)) {
+            if els.len() > 1 {
                 rows.extend(els.into_iter().map(|el| Row::Channel(bone.id, el)));
             }
         }
@@ -196,7 +234,7 @@ pub fn keys_at<'a>(anim: &'a Animation, row: &Row, frame: i32) -> Vec<&'a Keyfra
 
 /// One key, wherever it is: a channel has one key per frame.
 pub fn same_key(a: &Keyframe, b: &Keyframe) -> bool {
-    a.frame == b.frame && a.bone_id == b.bone_id && a.element == b.element
+    a.frame == b.frame && a.bone_id == b.bone_id && a.element == b.element && a.shape == b.shape
 }
 
 /// Move the `selected` keys to `to(frame)` (never below 0), keeping the others.

@@ -35,7 +35,12 @@ pub const DISCRETE: [AnimElement; 5] =
 /// the first key it holds the first key's value, after the last the last's (as Base
 /// always has).
 pub fn channel(keys: &[Keyframe], bone_id: i32, el: &AnimElement, frame: i32) -> Option<f32> {
-    let matches = |kf: &&Keyframe| kf.bone_id == bone_id && kf.element == *el;
+    channel_s(keys, bone_id, el, 0, frame)
+}
+
+/// `channel`, for a shape's weight (`shape` is its id) or any channel (`shape` 0).
+pub fn channel_s(keys: &[Keyframe], bone_id: i32, el: &AnimElement, shape: i32, frame: i32) -> Option<f32> {
+    let matches = |kf: &&Keyframe| kf.bone_id == bone_id && kf.element == *el && kf.shape == shape;
     let prev = keys.iter().filter(matches).filter(|kf| kf.frame <= frame).last();
     let next = keys.iter().filter(matches).find(|kf| kf.frame > frame);
     let (prev, next) = match (prev, next) {
@@ -49,7 +54,30 @@ pub fn channel(keys: &[Keyframe], bone_id: i32, el: &AnimElement, frame: i32) ->
 
 /// A discrete channel's key in effect at `frame` (the last one on or before it).
 pub fn step<'a>(keys: &'a [Keyframe], bone_id: i32, el: &AnimElement, frame: i32) -> Option<&'a Keyframe> {
-    keys.iter().filter(|kf| kf.bone_id == bone_id && kf.element == *el && kf.frame <= frame).last()
+    keys.iter().filter(|kf| kf.bone_id == bone_id && kf.element == *el && kf.shape == 0 && kf.frame <= frame).last()
+}
+
+/// A channel's value on a bone: a transform, or (`ShapeWeight`) shape `shape`'s weight.
+pub fn get_s(b: &Bone, el: &AnimElement, shape: i32) -> f32 {
+    if *el == AnimElement::ShapeWeight {
+        return b.shapes.iter().find(|s| s.id == shape).map_or(0., |s| s.weight);
+    }
+    get(b, el)
+}
+
+fn set_s(b: &mut Bone, el: &AnimElement, shape: i32, v: f32) {
+    if *el == AnimElement::ShapeWeight {
+        if let Some(s) = b.shapes.iter_mut().find(|s| s.id == shape) {
+            s.weight = v;
+        }
+        return;
+    }
+    set(b, el, v)
+}
+
+/// The channels a bone has, as (element, shape): its transforms, then one per shape.
+fn bone_channels(b: &Bone) -> impl Iterator<Item = (AnimElement, i32)> + '_ {
+    NUMERIC.iter().map(|e| (e.clone(), 0)).chain(b.shapes.iter().map(|s| (AnimElement::ShapeWeight, s.id)))
 }
 
 pub fn get(b: &Bone, el: &AnimElement) -> f32 {
@@ -211,12 +239,12 @@ pub fn loop_frames(anim: &Animation, layer: &AnimLayer) -> Option<i32> {
 
 /// A channel's value at a fractional `frame` (layers playing at another speed land
 /// between frames).
-fn channel_at(keys: &[Keyframe], bone_id: i32, el: &AnimElement, frame: f32) -> Option<f32> {
+fn channel_at(keys: &[Keyframe], bone_id: i32, el: &AnimElement, shape: i32, frame: f32) -> Option<f32> {
     let whole = frame.floor() as i32;
     if (frame - whole as f32).abs() < 1e-4 {
-        return channel(keys, bone_id, el, whole);
+        return channel_s(keys, bone_id, el, shape, whole);
     }
-    let matches = |kf: &&Keyframe| kf.bone_id == bone_id && kf.element == *el;
+    let matches = |kf: &&Keyframe| kf.bone_id == bone_id && kf.element == *el && kf.shape == shape;
     let prev = keys.iter().filter(matches).filter(|kf| kf.frame as f32 <= frame).last();
     let next = keys.iter().filter(matches).find(|kf| kf.frame as f32 > frame);
     let (prev, next) = match (prev, next) {
@@ -304,9 +332,10 @@ pub fn evaluate_in(anim: &Animation, ctx: &Ctx, setup: &[Bone], frame: i32, incl
     let mut bones = setup.to_vec();
     let base = anim.layer_keys(0);
     for b in &mut bones {
-        for el in NUMERIC.iter() {
-            if let Some(v) = channel(base, b.id, el, frame) {
-                set(b, el, v);
+        let chans: Vec<(AnimElement, i32)> = bone_channels(b).collect();
+        for (el, shape) in &chans {
+            if let Some(v) = channel_s(base, b.id, el, *shape, frame) {
+                set_s(b, el, *shape, v);
             }
         }
         for el in DISCRETE.iter() {
@@ -329,16 +358,25 @@ pub fn evaluate_in(anim: &Animation, ctx: &Ctx, setup: &[Bone], frame: i32, incl
         let lf = lt * fps.max(1) as f32;
         let loop_len = loop_length(layer);
         for (b, rest) in bones.iter_mut().zip(setup) {
-            for el in NUMERIC.iter() {
-                let key = channel_at(keys, b.id, el, lf);
-                let mut gens = layer.generators.iter().chain(linked_gens).filter(|g| g.bone_id == b.id && g.element == *el).peekable();
+            let chans: Vec<(AnimElement, i32)> = bone_channels(b).collect();
+            for (el, shape) in &chans {
+                let (el, shape) = (el, *shape);
+                let key = channel_at(keys, b.id, el, shape, lf);
+                // generators drive transforms (shapes: later)
+                let mut gens = layer
+                    .generators
+                    .iter()
+                    .chain(linked_gens)
+                    .filter(|g| shape == 0 && g.bone_id == b.id && g.element == *el)
+                    .peekable();
                 if key.is_none() && gens.peek().is_none() {
                     continue;
                 }
                 // generators add to the keys, or to the setup value without any
-                let k = key.unwrap_or(get(rest, el)) + gens.map(|g| generator_value(g, lt, loop_len)).sum::<f32>();
-                let v = blend(get(b, el), k, get(rest, el), &layer.mode, layer.weight, el);
-                set(b, el, v);
+                let rest_v = get_s(rest, el, shape);
+                let k = key.unwrap_or(rest_v) + gens.map(|g| generator_value(g, lt, loop_len)).sum::<f32>();
+                let v = blend(get_s(b, el, shape), k, rest_v, &layer.mode, layer.weight, el);
+                set_s(b, el, shape, v);
             }
             if layer.weight >= 0.5 {
                 for el in DISCRETE.iter() {
@@ -366,13 +404,13 @@ pub fn pose_in(anim: &Animation, ctx: &Ctx, setup: &[Bone], frame: i32) -> Vec<B
 /// what's below, and the active layer's mode and weight are inverted over it (and its
 /// generators taken away).
 pub fn key_on_active(anim: &Animation, setup: &[Bone], bone_id: i32, el: &AnimElement, frame: i32, target: f32) -> f32 {
-    key_on_active_in(anim, &Ctx::NONE, setup, bone_id, el, frame, target)
+    key_on_active_in(anim, &Ctx::NONE, setup, bone_id, el, 0, frame, target)
 }
 
-pub fn key_on_active_in(anim: &Animation, ctx: &Ctx, setup: &[Bone], bone_id: i32, el: &AnimElement, frame: i32, target: f32) -> f32 {
+pub fn key_on_active_in(anim: &Animation, ctx: &Ctx, setup: &[Bone], bone_id: i32, el: &AnimElement, shape: i32, frame: i32, target: f32) -> f32 {
     let active = anim.active_layer;
     let Some(layer) = anim.layers.get(active).filter(|_| active > 0) else { return target };
-    if !NUMERIC.contains(el) {
+    if !NUMERIC.contains(el) && *el != AnimElement::ShapeWeight {
         return target;
     }
     let below = evaluate_in(anim, ctx, setup, frame, &|i| i != active && enabled(anim, i));
@@ -383,29 +421,29 @@ pub fn key_on_active_in(anim: &Animation, ctx: &Ctx, setup: &[Bone], bone_id: i3
     let gens: f32 = layer
         .generators
         .iter()
-        .filter(|g| g.bone_id == bone_id && g.element == *el)
+        .filter(|g| shape == 0 && g.bone_id == bone_id && g.element == *el)
         .map(|g| generator_value(g, lt, loop_length(layer)))
         .sum();
-    key_for(target, get(b, el), get(rest, el), &layer.mode, layer.weight, el) - gens
+    key_for(target, get_s(b, el, shape), get_s(rest, el, shape), &layer.mode, layer.weight, el) - gens
 }
 
 /// The channels (bone, element) layers `layers` drive: their keys, generators and
 /// linked animations.
-fn touched(anim: &Animation, ctx: &Ctx, layers: impl Iterator<Item = usize>) -> Vec<(i32, AnimElement)> {
-    let mut out: Vec<(i32, AnimElement)> = vec![];
-    let mut add = |b: i32, e: &AnimElement| {
-        if !out.iter().any(|(ob, oe)| *ob == b && oe == e) {
-            out.push((b, e.clone()));
+fn touched(anim: &Animation, ctx: &Ctx, layers: impl Iterator<Item = usize>) -> Vec<(i32, AnimElement, i32)> {
+    let mut out: Vec<(i32, AnimElement, i32)> = vec![];
+    let mut add = |b: i32, e: &AnimElement, s: i32| {
+        if !out.iter().any(|(ob, oe, os)| *ob == b && oe == e && *os == s) {
+            out.push((b, e.clone(), s));
         }
     };
     for i in layers {
         let (keys, _, linked_gens) = if i == 0 { (anim.layer_keys(0), anim.fps, &[][..]) } else { layer_source(anim, ctx, i) };
         for kf in keys {
-            add(kf.bone_id, &kf.element);
+            add(kf.bone_id, &kf.element, kf.shape);
         }
         let own: &[Generator] = anim.layers.get(i).map_or(&[], |l| l.generators.as_slice());
         for g in own.iter().chain(linked_gens) {
-            add(g.bone_id, &g.element);
+            add(g.bone_id, &g.element, 0);
         }
     }
     out
@@ -413,12 +451,13 @@ fn touched(anim: &Animation, ctx: &Ctx, layers: impl Iterator<Item = usize>) -> 
 
 /// Keys sampled on every frame, with the ones a straight line through their
 /// neighbours would give dropped.
-fn sampled(bone_id: i32, el: &AnimElement, values: &[(i32, f32)]) -> Vec<Keyframe> {
+fn sampled(bone_id: i32, el: &AnimElement, shape: i32, values: &[(i32, f32)]) -> Vec<Keyframe> {
     let (start, end) = utils::interp_preset(HandlePreset::Linear);
     let key = |&(frame, value): &(i32, f32)| Keyframe {
         frame,
         bone_id,
         element: el.clone(),
+        shape,
         value,
         start_handle: start,
         end_handle: end,
@@ -446,16 +485,16 @@ fn bake(anim: &Animation, ctx: &Ctx, setup: &[Bone], top: usize) -> Vec<Keyframe
     let mut keys: Vec<Keyframe> = anim
         .layer_keys(0)
         .iter()
-        .filter(|kf| !channels.iter().any(|(b, e)| *b == kf.bone_id && *e == kf.element))
+        .filter(|kf| !channels.iter().any(|(b, e, s)| *b == kf.bone_id && *e == kf.element && *s == kf.shape))
         .cloned()
         .collect();
     let last = anim.last_frame();
     let poses: Vec<Vec<Bone>> = (0..=last).map(|f| evaluate_in(anim, ctx, setup, f, &|i| i <= top && enabled(anim, i))).collect();
-    for (bone_id, el) in channels {
+    for (bone_id, el, shape) in channels {
         let at = |f: usize| poses[f].iter().find(|b| b.id == bone_id);
-        if NUMERIC.contains(&el) {
-            let values: Vec<(i32, f32)> = (0..=last as usize).filter_map(|f| at(f).map(|b| (f as i32, get(b, &el)))).collect();
-            keys.extend(sampled(bone_id, &el, &values));
+        if NUMERIC.contains(&el) || el == AnimElement::ShapeWeight {
+            let values: Vec<(i32, f32)> = (0..=last as usize).filter_map(|f| at(f).map(|b| (f as i32, get_s(b, &el, shape)))).collect();
+            keys.extend(sampled(bone_id, &el, shape, &values));
         } else {
             // a key wherever the value changes
             let mut prev: Option<(f32, String)> = None;
@@ -531,13 +570,13 @@ pub fn merge_down_in(anim: &mut Animation, ctx: &Ctx, setup: &[Bone], i: usize) 
         let mut keys: Vec<Keyframe> = anim.layers[below]
             .keyframes
             .iter()
-            .filter(|kf| !channels.iter().any(|(b, e)| *b == kf.bone_id && *e == kf.element))
+            .filter(|kf| !channels.iter().any(|(b, e, s)| *b == kf.bone_id && *e == kf.element && *s == kf.shape))
             .cloned()
             .collect();
-        for (bone_id, el) in channels {
+        for (bone_id, el, shape) in channels {
             let Some(rest) = setup.iter().find(|b| b.id == bone_id) else { continue };
-            if !NUMERIC.contains(&el) {
-                keys.extend(anim.layers[i].keyframes.iter().filter(|k| k.bone_id == bone_id && k.element == el).cloned());
+            if !NUMERIC.contains(&el) && el != AnimElement::ShapeWeight {
+                keys.extend(anim.layers[i].keyframes.iter().filter(|k| k.bone_id == bone_id && k.element == el && k.shape == shape).cloned());
                 continue;
             }
             let mut values = vec![];
@@ -545,9 +584,9 @@ pub fn merge_down_in(anim: &mut Animation, ctx: &Ctx, setup: &[Bone], i: usize) 
                 let target = evaluate_in(anim, &ctx, setup, f, &|j| j <= i && enabled(anim, j) || j == i);
                 let under = evaluate_in(anim, &ctx, setup, f, &|j| j < below && enabled(anim, j));
                 let (Some(t), Some(u)) = (target.iter().find(|b| b.id == bone_id), under.iter().find(|b| b.id == bone_id)) else { continue };
-                values.push((f, key_for(get(t, &el), get(u, &el), get(rest, &el), &mode, w, &el)));
+                values.push((f, key_for(get_s(t, &el, shape), get_s(u, &el, shape), get_s(rest, &el, shape), &mode, w, &el)));
             }
-            keys.extend(sampled(bone_id, &el, &values));
+            keys.extend(sampled(bone_id, &el, shape, &values));
         }
         keys.sort_by(|a, b| a.frame.cmp(&b.frame));
         anim.layers[below].keyframes = keys;
@@ -569,14 +608,14 @@ pub fn close_loop(anim: &mut Animation, i: usize) -> usize {
     anim.set_active_layer(i);
     let mut firsts: Vec<Keyframe> = vec![];
     for kf in &anim.keyframes {
-        match firsts.iter_mut().find(|f| f.bone_id == kf.bone_id && f.element == kf.element) {
+        match firsts.iter_mut().find(|f| f.bone_id == kf.bone_id && f.element == kf.element && f.shape == kf.shape) {
             Some(f) if kf.frame < f.frame => *f = kf.clone(),
             Some(_) => {}
             None => firsts.push(kf.clone()),
         }
     }
     for first in &firsts {
-        anim.keyframes.retain(|k| !(k.bone_id == first.bone_id && k.element == first.element && k.frame == len));
+        anim.keyframes.retain(|k| !(k.bone_id == first.bone_id && k.element == first.element && k.shape == first.shape && k.frame == len));
         anim.keyframes.push(Keyframe { frame: len, ..first.clone() });
     }
     anim.sort_keyframes();

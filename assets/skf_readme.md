@@ -26,3 +26,10 @@ X is the atlas number).
 - An animation's `end_frame` is its last frame, where playback loops. When it's 0
   (or missing), the animation ends on its last keyframe. Keys after `end_frame` are
   kept in the file but aren't played
+
+- A mesh's `shapes` (in its visuals) are morph targets: each has a `name`, a setup
+  `weight`, and `deltas`, offsets of vertices (`vert` is the vertex index) in the
+  mesh's own space. Before skinning, each vertex moves by the sum of
+  `weight × delta` over its shapes. `ShapeWeight` keyframes animate a shape's
+  weight; their `shape` field is the shape's `id`. Runtimes without shape support
+  can ignore them: the mesh then stays at rest

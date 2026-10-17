@@ -643,6 +643,7 @@ pub fn prepare_files(
                                 next_kf: -1,
                                 label_top: 0.,
                                 handle_preset: HandlePreset::Linear,
+                                ..Default::default()
                             });
                         }
                     }
@@ -669,7 +670,7 @@ pub fn prepare_files(
 
             // find later keyframe that has the same bone ID and element as this
             if let Some(next) = keyframes.iter().position(|find| {
-                find.bone_id == kf.bone_id && find.element == kf.element && find.frame > kf.frame
+                find.bone_id == kf.bone_id && find.element == kf.element && find.shape == kf.shape && find.frame > kf.frame
             }) {
                 kf.next_kf = next as i32;
             }
@@ -716,6 +717,16 @@ pub fn prepare_files(
                 let v_id = &mut armature_copy.bones[b].binds[w].verts[v].id;
                 *v_id = vertices.iter().position(|v| v.id == *v_id as u32).unwrap() as i32;
             }
+        }
+
+        // shape offsets by vertex index, as the vertices are about to be renumbered
+        let vertices = armature_copy.bones[b].vertices.clone();
+        for shape in &mut armature_copy.bones[b].shapes {
+            shape.deltas = shape
+                .deltas
+                .iter()
+                .filter_map(|d| vertices.iter().position(|v| v.id == d.vert).map(|i| ShapeDelta { vert: i as u32, delta: d.delta }))
+                .collect();
         }
 
         for (i, vert) in armature_copy.bones[b].vertices.iter_mut().enumerate() {
@@ -891,6 +902,7 @@ pub fn prepare_files(
             vertices: bone.vertices.clone(),
             indices: bone.indices.clone(),
             binds: bone.binds.clone(),
+            shapes: bone.shapes.clone(),
             init_tex: bone.tex.clone(),
             init_tint: bone.tint,
             init_zindex: bone.zindex,
@@ -990,6 +1002,7 @@ pub fn import<R: Read + std::io::Seek>(
         bone.vertices = visuals.vertices.clone();
         bone.indices = visuals.indices.clone();
         bone.binds = visuals.binds.clone();
+        bone.shapes = visuals.shapes.clone();
         bone.pivot_pos = visuals.pivot_pos;
         bone.pivot_rot = visuals.pivot_rot;
         bone.pivot_scale = visuals.pivot_scale;
@@ -1512,6 +1525,15 @@ pub fn animate_bones(armature: &mut Armature, selection: &SelectionState, edit_m
     } else if edit_mode.anim_open && selection.anim != usize::MAX && selection.anim_frame != -1 {
         // display the selected animation's frame
         armature.animated_bones = armature.animate(selection.anim, selection.anim_frame, None);
+    }
+
+    // sculpting a shape: show it alone, at full weight
+    if let Some((bone_id, shape)) = edit_mode.sculpt_shape {
+        if let Some(b) = armature.animated_bones.iter_mut().find(|b| b.id == bone_id) {
+            for s in &mut b.shapes {
+                s.weight = if s.id == shape { 1. } else { 0. };
+            }
+        }
     }
 }
 

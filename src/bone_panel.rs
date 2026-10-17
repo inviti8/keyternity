@@ -407,6 +407,9 @@ pub fn draw(
         if !bone.meshdef_folded {
             ui.add_space(20.);
         }
+
+        crate::shapes_panel::draw(ui, &bone, selections, shared_ui, config, armature, events, edit_mode);
+        ui.add_space(20.);
     }
 
     if children.len() > 0 || parents.len() > 0 {

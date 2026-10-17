@@ -171,6 +171,7 @@ pub fn apply_cuts(bone: &mut Bone, cuts: &[PenCut], tex_size: Vec2) -> Result<Cu
                     if work.bind_pose {
                         topology::interpolate_binds(&mut work, vert.id as i32, &weights);
                     }
+                    crate::shapes::interpolate(&mut work, vert.id, &weights);
                     added += 1;
                     work.vertices.len() as u32 - 1
                 }

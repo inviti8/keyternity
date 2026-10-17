@@ -43,6 +43,27 @@ pub fn iterate_events(
             E::AddCamera | E::DeleteCamera | E::DuplicateCamera | E::FitCamera => undo_states.new_undo_cameras(&armature.cameras),
             E::SetCamera if events.values[0] == 1. => undo_states.new_undo_cameras(&armature.cameras),
             E::SetLayer if events.values[0] == 1. => undo_states.new_undo_anim(armature.sel_anim(&selections).unwrap()),
+            E::AddShape | E::DeleteShape | E::DuplicateShape => {
+                if let Some(b) = armature.bones.iter().find(|b| b.id == events.values[0] as i32) {
+                    undo_states.new_undo_bone(b);
+                    undo_states.new_undo_anims(&armature.animations);
+                    undo_states.undo_actions.last_mut().unwrap().continued = true;
+                }
+            }
+            E::SetShape if events.str_values[0].starts_with('1') => {
+                if let Some(b) = armature.bones.iter().find(|b| b.id == events.values[0] as i32) {
+                    undo_states.new_undo_bone(b);
+                }
+            }
+            E::EditShapeWeight if events.values[5] == 1. => {
+                if events.values[3] >= 0. && events.values[4] >= 0. {
+                    if let Some(a) = armature.animations.get(events.values[3] as usize) {
+                        undo_states.new_undo_anim(a);
+                    }
+                } else if let Some(b) = armature.bones.iter().find(|b| b.id == events.values[0] as i32) {
+                    undo_states.new_undo_bone(b);
+                }
+            }
             E::RenameStyle => if !ui.just_made_style { undo_states.new_undo_style(&armature.sel_style(&selections).unwrap()); ui.just_made_style = false }
             E::DeleteSelectedKeyframes | E::DeleteKeyframeLine | E::PasteKeyframesOnFrame | E::InsertKeyframe | E::InsertKeyframeAll | E::DeleteBoneKeyframes | E::SetAnimEnd | E::DeleteKeyframeGroup | E::ScaleSelectedKeyframes
             | E::AddLayer | E::DeleteLayer | E::DuplicateLayer | E::MergeLayerDown | E::FlattenLayers
@@ -163,6 +184,79 @@ pub fn iterate_events(
 
         events.events.remove(0);
         events.values.drain(0..=2);
+    } else if event == Events::EditShapeWeight {
+        let v = &events.values;
+        let anim = if v[3] < 0. || !edit_mode.anim_open { usize::MAX } else { v[3] as usize };
+        let frame = if anim == usize::MAX { -1 } else { v[4] as i32 };
+        shapes::edit_weight(armature, v[0] as i32, v[1] as i32, v[2], anim, frame);
+        events.events.remove(0);
+        events.values.drain(0..=5);
+    } else if event == Events::AddShape
+        || event == Events::DeleteShape
+        || event == Events::SetShape
+        || event == Events::ToggleSculptShape
+        || event == Events::DuplicateShape
+    {
+        let bone_id = events.values[0] as i32;
+        let s = events.str_values[0].clone();
+        match event {
+            Events::AddShape => {
+                if let Some(bone) = armature.bones.iter_mut().find(|b| b.id == bone_id) {
+                    let id = shapes::next_id(bone);
+                    let name = shapes::unique_name(bone, if s.is_empty() { "Shape" } else { &s });
+                    bone.shapes.push(MeshShape { id, name, ..Default::default() });
+                }
+            }
+            Events::DeleteShape => {
+                if let Ok(id) = s.parse::<i32>() {
+                    shapes::delete(armature, bone_id, id);
+                    if edit_mode.sculpt_shape == Some((bone_id, id)) {
+                        edit_mode.sculpt_shape = None;
+                    }
+                }
+            }
+            Events::ToggleSculptShape => {
+                if let Ok(id) = s.parse::<i32>() {
+                    if edit_mode.sculpt_shape == Some((bone_id, id)) {
+                        edit_mode.sculpt_shape = None;
+                    } else {
+                        edit_mode.sculpt_shape = Some((bone_id, id));
+                        // sculpting drags vertices: show them
+                        edit_mode.editing_mesh = true;
+                        edit_mode.showing_mesh = true;
+                    }
+                }
+            }
+            Events::DuplicateShape => {
+                let mut parts = s.split('|');
+                let id = parts.next().and_then(|p| p.parse::<i32>().ok());
+                let mirror = parts.next() == Some("1");
+                if let (Some(id), Some(bone)) = (id, armature.bones.iter_mut().find(|b| b.id == bone_id)) {
+                    if let Some(src) = bone.shapes.iter().find(|s| s.id == id).cloned() {
+                        let mut copy = src.clone();
+                        copy.id = shapes::next_id(bone);
+                        if mirror {
+                            copy.deltas = shapes::mirrored(bone, &src, shapes::mirror_tolerance(bone)).0;
+                            copy.name = shapes::unique_name(bone, &shapes::mirror_name(&src.name));
+                        } else {
+                            copy.name = shapes::unique_name(bone, &src.name);
+                        }
+                        bone.shapes.push(copy);
+                    }
+                }
+            }
+            _ => {
+                let json = s.splitn(2, '|').nth(1).unwrap_or("");
+                if let (Ok(shape), Some(bone)) = (serde_json::from_str::<MeshShape>(json), armature.bones.iter_mut().find(|b| b.id == bone_id)) {
+                    if let Some(old) = bone.shapes.iter_mut().find(|o| o.id == shape.id) {
+                        *old = shape;
+                    }
+                }
+            }
+        }
+        events.events.remove(0);
+        events.values.remove(0);
+        events.str_values.remove(0);
     } else if event == Events::ScaleSelectedKeyframes {
         let (pivot, factor) = (events.values[0] as i32, events.values[1]);
         let anim = armature.sel_anim_mut(&selections).unwrap();
@@ -767,9 +861,7 @@ pub fn simple_event(
         Events::DeleteSelectedKeyframes => {
             for skf in &ui.selected_keyframes {
                 let keyframes = &mut armature.sel_anim_mut(&selections).unwrap().keyframes;
-                keyframes.retain(|kf| {
-                    kf.frame != skf.frame || kf.element != skf.element || kf.bone_id != skf.bone_id
-                });
+                keyframes.retain(|kf| !timeline_rows::same_key(kf, skf));
             }
         }
         Events::SelectBone => {
@@ -1033,9 +1125,19 @@ pub fn simple_event(
             let mouse_vel = renderer::mouse_vel(&input, &camera);
             let zoom = camera.zoom;
             let og_bone = &mut armature.sel_bone_mut(&selections).unwrap();
+            let moved = utils::rotate(&(mouse_vel * zoom), -total_rot) / scale;
+            // sculpting a shape: the drag shapes its offset
+            if let Some((b, s)) = edit_mode.sculpt_shape.filter(|(b, _)| *b == og_bone.id) {
+                let _ = b;
+                if let Some(shape) = og_bone.shapes.iter_mut().find(|sh| sh.id == s) {
+                    let d = shapes::delta_of(shape, value as u32);
+                    shapes::set_delta(shape, value as u32, d - moved);
+                }
+                return;
+            }
             og_bone.verts_edited = true;
             let vert_mut = og_bone.vertices.iter_mut().find(|v| v.id == value as u32);
-            vert_mut.unwrap().pos -= utils::rotate(&(mouse_vel * zoom), -total_rot) / scale;
+            vert_mut.unwrap().pos -= moved;
         }
         Events::ClickVertex => {
             if selections.bind == -1 {
@@ -1314,6 +1416,7 @@ pub fn simple_event(
             bone.binds = vec![];
             bone.verts_edited = true;
             cleanup_vertices(bone);
+            shapes::prune(bone);
             selections.bind = -1;
         }
         Events::RenameTex => {
@@ -1694,7 +1797,7 @@ pub fn insert_keyframes(armature: &mut Armature, anim: usize, frame: i32, bone_i
             .map(|(el, v)| match &layer {
                 Some(_) => {
                     let ctx = layers::Ctx { anims: &armature.animations, clock: None };
-                    layers::key_on_active_in(&armature.animations[anim], &ctx, &armature.bones, *id, el, frame, v)
+                    layers::key_on_active_in(&armature.animations[anim], &ctx, &armature.bones, *id, el, 0, frame, v)
                 }
                 None => v,
             })
@@ -2199,6 +2302,8 @@ fn edit_bone(
         AnimElement::PivotRot => set!(bone.pivot_rot, f32),
         AnimElement::PivotScaleX => set!(bone.pivot_scale.x, f32),
         AnimElement::PivotScaleY => set!(bone.pivot_scale.y, f32),
+        // shape weights are keyed through `shapes::edit_weight` (EditShapeWeight)
+        AnimElement::ShapeWeight => return,
         AnimElement::Length => {
             init_value = bone.length;
             bone.length = value.max(0.);
@@ -2217,7 +2322,7 @@ fn edit_bone(
             Some(layer) if layer.locked || layer.link.is_some() => return,
             Some(layer) => {
                 let ctx = layers::Ctx { anims: &armature.animations, clock: None };
-                let v = layers::key_on_active_in(anim, &ctx, &armature.bones, bone_id, &element, anim_frame, value);
+                let v = layers::key_on_active_in(anim, &ctx, &armature.bones, bone_id, &element, 0, anim_frame, value);
                 (v, Some(layer.mode.clone()))
             }
             None => (value, None),
@@ -2277,6 +2382,11 @@ pub fn cleanup_vertices(bone: &mut Bone) {
         // so adjust indices to correct this
         for idx in &mut bone.indices {
             *idx -= if *idx >= v as u32 { 1 } else { 0 };
+        }
+
+        // and from shapes
+        for shape in &mut bone.shapes {
+            shape.deltas.retain(|d| d.vert != vert.id);
         }
 
         // remove this vertex from binds

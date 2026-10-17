@@ -90,6 +90,7 @@ pub fn add_vertex(bone: &mut Bone, mut vert: Vertex, site: VertSite) -> Result<u
     if bone.bind_pose {
         interpolate_binds(bone, vert.id as i32, &weights);
     }
+    crate::shapes::interpolate(bone, vert.id, &weights);
     Ok(n)
 }
 

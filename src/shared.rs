@@ -764,6 +764,8 @@ pub struct Ui {
     pub timeline_layers_folded: bool,
     /// the layer whose settings window is open
     pub layer_settings: Option<usize>,
+    /// the bone panel's Shapes section is folded
+    pub shapes_folded: bool,
     /// the typed Scale Keys window, with its factor
     pub scale_dialog: Option<f32>,
     /// scaling the selected keys in time
@@ -1222,6 +1224,9 @@ pub struct Visuals {
     pub indices: Vec<u32>,
     #[serde(default, skip_serializing_if = "are_weights_empty")]
     pub binds: Vec<BoneBind>,
+    /// shapes (morph targets), offsets by vertex index
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shapes: Vec<MeshShape>,
 
     #[serde(skip_deserializing)]
     pub init_tex: String,
@@ -1352,6 +1357,9 @@ pub struct Bone {
     pub indices: Vec<u32>,
     #[serde(skip)]
     pub binds: Vec<BoneBind>,
+    /// shapes (morph targets) on this mesh (docs/LIP_SYNC.md §4)
+    #[serde(skip)]
+    pub shapes: Vec<MeshShape>,
 
     #[serde(skip)]
     pub folded: bool,
@@ -1991,6 +1999,33 @@ fn is_zero_usize(v: &usize) -> bool {
     *v == 0
 }
 
+fn is_zero_i32(v: &i32) -> bool {
+    *v == 0
+}
+
+/// A shape (morph target) on a mesh bone (docs/LIP_SYNC.md §4): offsets from the
+/// rest positions, blended by weight before skinning. See `shapes.rs`.
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Default, Debug)]
+#[serde(default)]
+pub struct MeshShape {
+    /// unique on its bone, from 1
+    pub id: i32,
+    pub name: String,
+    /// per vertex: by id in the editor, by index in saved files
+    pub deltas: Vec<ShapeDelta>,
+    /// the setup-pose weight (usually 0); animation keys it
+    pub weight: f32,
+    /// optional: "mouth", "brows"… for the UI and exclusive groups
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub group: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq, Default, Debug)]
+pub struct ShapeDelta {
+    pub vert: u32,
+    pub delta: Vec2,
+}
+
 #[derive(PartialEq, serde::Serialize, serde::Deserialize, Clone, Default, Debug)]
 pub enum LayerMode {
     /// blends toward the layer's values by its weight
@@ -2165,7 +2200,7 @@ impl Animation {
     ) -> (bool, usize) {
         macro_rules! is_same_frame {
             ($kf:expr) => {
-                $kf.frame == frame && $kf.bone_id == id && $kf.element == element
+                $kf.frame == frame && $kf.bone_id == id && $kf.element == element && $kf.shape == 0
             };
         }
 
@@ -2253,6 +2288,9 @@ impl Animation {
 pub struct Keyframe {
     pub frame: i32,
     pub bone_id: i32,
+    /// for `ShapeWeight` keys: the shape's id (`MeshShape::id`); 0 otherwise
+    #[serde(skip_serializing_if = "is_zero_i32")]
+    pub shape: i32,
 
     pub element: AnimElement,
 
@@ -2374,6 +2412,7 @@ pub enum AnimElement {
      /* N */ PivotScaleX, // NA
      /* O */ PivotScaleY, // NA
      /* P */ Length, // NA
+     /* Q */ ShapeWeight, // a shape's weight; Keyframe::shape says which
 }
 
 // iterable anim change icons IDs
@@ -2514,6 +2553,9 @@ pub struct EditMode {
     pub anim_open: bool,
     pub time: f32,
     pub sel_time: f32,
+    /// sculpting a shape (bone id, shape id): vertex drags edit its offsets, and it
+    /// shows at full weight with the bone's other shapes at 0 (docs/LIP_SYNC.md §4.4)
+    pub sculpt_shape: Option<(i32, i32)>,
     pub export_bake_ik: bool,
     /// bake animation layers into Base (exports for runtimes)
     pub export_flatten_layers: bool,
@@ -2923,6 +2965,12 @@ pub enum Events {
     CloseLoop,
     BakeGenerator,
     MoveLayer,
+    EditShapeWeight,
+    AddShape,
+    DeleteShape,
+    SetShape,
+    ToggleSculptShape,
+    DuplicateShape,
     ResetVertices,
     SelectBind,
     DeleteIkTarget,
@@ -3101,6 +3149,54 @@ impl EventState {
     pub fn flatten_layers(&mut self) {
         self.layer_event(E::FlattenLayers, 0);
     }
+    /// Set a shape's weight: keyed at `frame` of `anim`, or the setup weight
+    /// (`anim` usize::MAX or `frame` -1).
+    pub fn edit_shape_weight(&mut self, bone_id: i32, shape: i32, value: f32, anim: usize, frame: i32, new_step: bool) {
+        self.events.push(E::EditShapeWeight);
+        self.values.push(bone_id as f32);
+        self.values.push(shape as f32);
+        self.values.push(value);
+        self.values.push(if anim == usize::MAX { -1. } else { anim as f32 });
+        self.values.push(frame as f32);
+        self.values.push(if new_step { 1. } else { 0. });
+    }
+
+    /// Start sculpting a shape (vertex drags edit its offsets), or stop.
+    pub fn toggle_sculpt_shape(&mut self, bone_id: i32, shape: i32) {
+        self.events.push(E::ToggleSculptShape);
+        self.values.push(bone_id as f32);
+        self.str_values.push(shape.to_string());
+    }
+
+    /// Copy a shape (mirrored across the mesh's x axis when `mirror`), as a new one.
+    pub fn duplicate_shape(&mut self, bone_id: i32, shape: i32, mirror: bool) {
+        self.events.push(E::DuplicateShape);
+        self.values.push(bone_id as f32);
+        self.str_values.push(format!("{shape}|{}", if mirror { 1 } else { 0 }));
+    }
+
+    /// Add an empty shape to a mesh bone.
+    pub fn add_shape(&mut self, bone_id: i32, name: &str) {
+        self.events.push(E::AddShape);
+        self.values.push(bone_id as f32);
+        self.str_values.push(name.to_string());
+    }
+
+    /// Delete a shape, and its keys.
+    pub fn delete_shape(&mut self, bone_id: i32, shape: i32) {
+        self.events.push(E::DeleteShape);
+        self.values.push(bone_id as f32);
+        self.str_values.push(shape.to_string());
+    }
+
+    /// Replace a shape (name, offsets, group, setup weight). `new_step` makes an
+    /// undo step, so a sculpt stroke is one.
+    pub fn set_shape(&mut self, bone_id: i32, shape: &MeshShape, new_step: bool) {
+        self.events.push(E::SetShape);
+        self.values.push(bone_id as f32);
+        self.str_values.push(format!("{}|{}", if new_step { 1 } else { 0 }, serde_json::to_string(shape).unwrap()));
+    }
+
     /// Move layer `index` up (`by` 1) or down (-1) the stack.
     pub fn move_layer(&mut self, index: usize, by: i32) {
         self.events.push(E::MoveLayer);
