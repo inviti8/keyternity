@@ -442,7 +442,7 @@ generator for blinks (play a short clip at random intervals between a min and ma
 |---|---|
 | **1. Navigation** ✓ | Visible-range view and `frame_to_x`/`x_to_frame` (tested), range bar with zoom handles, cursor-anchored zoom, Shift-scroll and middle-drag pan, Home/F fit, adaptive ruler, drawing only what's in view |
 | **2. Rows and keys** ✓ | Compact rows, grouped channels with disclosure, small marks (diamond/square), colour per property group, summary rows (folded bones show keys), column highlight, box select, scaling keys around the playhead (§3.5), 🗑 moved to the context menu |
-| *2, later* | Pinned bone headers while scrolling; the typed *Scale Keys…* factor (`S`-drag with Ctrl snapping covers most uses); alternating frame shading |
+| *2, polish* ✓ | Pinned bone headers while scrolling (pushed up by the next bone), the typed *Scale Keys…* window (a factor or a new length), and Move Up/Down for layers. Alternating frame shading was left out: frame lines and the column highlight cover it |
 | **3. Layers** ✓ | §5.1–5.5: data, evaluation, the layer stack, Merge Down/Bake, flattening for export (`.skfe` and DragonBones exports flatten; `.skf` keeps layers) |
 | **4. Play modes and generators** ✓ | §5.7–5.8: Linear/Looped layers (length, speed, phase, free-running clock), linked layers, Close Loop, Wave and Noise generators, Bake to Keys, seam warnings on export |
 

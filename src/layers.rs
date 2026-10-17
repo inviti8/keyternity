@@ -682,6 +682,11 @@ pub fn layer_event(event: &Events, value: f32, str_value: &str, anim: &mut Anima
         Events::FlattenLayers => {
             *anim = flatten_in(anim, ctx, setup);
         }
+        Events::MoveLayer => {
+            // str: "1" moves it up the stack (later in order), "-1" down; Base stays
+            let to = i as i64 + str_value.parse::<i64>().unwrap_or(0);
+            move_layer(anim, i, to.max(0) as usize);
+        }
         Events::CloseLoop => {
             close_loop(anim, i);
         }
@@ -693,4 +698,19 @@ pub fn layer_event(event: &Events, value: f32, str_value: &str, anim: &mut Anima
         }
         _ => {}
     }
+}
+
+/// Move layer `from` to position `to` in the stack (Base, at 0, stays put), keeping
+/// the active layer the one being edited.
+pub fn move_layer(anim: &mut Animation, from: usize, to: usize) {
+    let n = anim.layers.len();
+    if from == 0 || to == 0 || from >= n || to >= n || from == to {
+        return;
+    }
+    let active_id = anim.layers[anim.active_layer].id;
+    anim.set_active_layer(0);
+    let layer = anim.layers.remove(from);
+    anim.layers.insert(to, layer);
+    let active = anim.layers.iter().position(|l| l.id == active_id).unwrap_or(0);
+    anim.set_active_layer(active);
 }

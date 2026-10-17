@@ -138,6 +138,7 @@ pub fn draw(
 
     if selections.anim != usize::MAX {
         layer_settings(egui_ctx, shared_ui, armature, selections, events);
+        scale_dialog(egui_ctx, shared_ui, selections, events);
     }
 }
 
@@ -766,6 +767,53 @@ pub fn draw_bottom_bar(
             }
         });
     });
+}
+
+/// Scale Keys…: an exact factor, or a target length, around the current frame
+/// (docs/TIMELINE.md §3.5).
+fn scale_dialog(egui_ctx: &egui::Context, shared_ui: &mut crate::Ui, selections: &SelectionState, events: &mut EventState) {
+    let Some(mut factor) = shared_ui.scale_dialog else { return };
+    let selected = shared_ui.selected_keyframes.clone();
+    if selected.is_empty() {
+        shared_ui.scale_dialog = None;
+        return;
+    }
+    let pivot = pivot_frame(selections, &selected);
+    let frames: Vec<i32> = selected.iter().map(|k| k.frame).collect();
+    let span = frames.iter().max().unwrap() - frames.iter().min().unwrap();
+    let loc = |k: &str| shared_ui.loc(&format!("keyframe_editor.scale_dialog.{k}"));
+    let (mut open, mut apply, mut cancel) = (true, false, false);
+    egui::Window::new(loc("title"))
+        .id(egui::Id::new("timeline_scale_dialog"))
+        .open(&mut open)
+        .resizable(false)
+        .collapsible(false)
+        .show(egui_ctx, |ui| {
+            ui.label(loc("pivot").replace("$frame", &pivot.to_string()));
+            egui::Grid::new("scale_dialog").num_columns(2).show(ui, |ui| {
+                ui.label(loc("factor"));
+                ui.add(egui::DragValue::new(&mut factor).speed(0.01).prefix("×").max_decimals(3));
+                ui.end_row();
+                ui.label(loc("length"));
+                let mut length = (span as f32 * factor).round() as i32;
+                let r = ui.add_enabled(span > 0, egui::DragValue::new(&mut length).range(0..=100_000).suffix(" f"));
+                if r.changed() && span > 0 {
+                    factor = length as f32 / span as f32;
+                }
+                ui.end_row();
+            });
+            factor = timeline_rows::clamp_scale(&frames, pivot, factor);
+            ui.weak(loc("reverse"));
+            ui.horizontal(|ui| {
+                apply = ui.button(loc("apply")).clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter));
+                cancel = ui.button(loc("cancel")).clicked();
+            });
+        });
+    if apply {
+        events.scale_selected_keyframes(pivot, factor);
+        shared_ui.last_selected = "keyframe".to_string();
+    }
+    shared_ui.scale_dialog = if apply || cancel || !open { None } else { Some(factor) };
 }
 
 /// The layer settings window (docs/TIMELINE.md §5.7–5.8): play mode, link, and
@@ -1617,6 +1665,25 @@ fn draw_rows(
             draw_row_label(ui, &lp, shared_ui, armature, anim, config, selections, events, &rows[i], row_rect(i).intersect(labels), i);
         }
         shared_ui.bone_tops.tops = tops;
+
+        // the bone whose rows are at the top stays pinned there, pushed up by the next
+        let header = (0..first.min(rows.len())).rev().find(|j| matches!(rows[*j], Row::Bone(_)));
+        if let Some(h) = header.filter(|h| row_rect(*h).bottom() <= clip.top() + 0.5) {
+            let next_top = (h + 1..rows.len()).find(|j| matches!(rows[*j], Row::Bone(_))).map(|j| row_rect(j).top());
+            let y = next_top.map_or(clip.top(), |t| (t - ROW_H).min(clip.top()));
+            let r = egui::Rect::from_min_size(egui::pos2(content.left(), y), egui::vec2(width, ROW_H));
+            gp.rect_filled(r, egui::CornerRadius::ZERO, shade(light, -11));
+            lp.rect_filled(r, egui::CornerRadius::ZERO, shade(dark, 6));
+            painter.hline(content.x_range(), r.bottom(), egui::Stroke::new(1., dark));
+            for f in timeline_rows::row_frames(anim, &rows[h]).into_iter().filter(|f| visible(*f)) {
+                let keys = timeline_rows::keys_at(anim, &rows[h], f);
+                let stepped = keys.iter().all(|k| timeline_rows::is_stepped_key(k));
+                let all = keys.iter().all(|k| is_selected(k));
+                let fill = if all { SELECTED } else { text };
+                draw_mark(&gp, egui::pos2(x_of(f), r.center().y), stepped, 4., fill, egui::Stroke::new(1., shade(fill, -110)));
+            }
+            draw_row_label(ui, &lp, shared_ui, armature, anim, config, selections, events, &rows[h], r.intersect(labels), h);
+        }
 
         // the label column's right edge: drag to resize
         let edge = egui::Rect::from_x_y_ranges(gl - 3.0..=gl + 2.0, clip.y_range());

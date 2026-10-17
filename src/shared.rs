@@ -764,6 +764,8 @@ pub struct Ui {
     pub timeline_layers_folded: bool,
     /// the layer whose settings window is open
     pub layer_settings: Option<usize>,
+    /// the typed Scale Keys window, with its factor
+    pub scale_dialog: Option<f32>,
     /// scaling the selected keys in time
     pub timeline_scale: Option<crate::timeline_rows::ScaleDrag>,
     /// `S` was pressed over the timeline: start scaling
@@ -2920,6 +2922,7 @@ pub enum Events {
     FlattenLayers,
     CloseLoop,
     BakeGenerator,
+    MoveLayer,
     ResetVertices,
     SelectBind,
     DeleteIkTarget,
@@ -3097,6 +3100,12 @@ impl EventState {
     }
     pub fn flatten_layers(&mut self) {
         self.layer_event(E::FlattenLayers, 0);
+    }
+    /// Move layer `index` up (`by` 1) or down (-1) the stack.
+    pub fn move_layer(&mut self, index: usize, by: i32) {
+        self.events.push(E::MoveLayer);
+        self.values.push(index as f32);
+        self.str_values.push(by.to_string());
     }
     pub fn close_loop(&mut self, index: usize) {
         self.layer_event(E::CloseLoop, index);

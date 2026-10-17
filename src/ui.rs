@@ -1084,12 +1084,25 @@ fn context_menu_content(
             shared_ui.timeline_scale_start = true;
             shared_ui.context_menu.close();
         }
+        if ui.context_button(&shared_ui.loc("keyframe_editor.scale_keys_typed"), &config).clicked() {
+            shared_ui.scale_dialog = Some(1.);
+            shared_ui.context_menu.close();
+        }
     } else if id == "layer" {
         let i: usize = split[1].parse().unwrap_or(0);
         if i > 0 {
             ui.context_rename(shared_ui, config, context_id.clone());
             if ui.context_button(&shared_ui.loc("keyframe_editor.layer_settings_open"), &config).clicked() {
                 shared_ui.layer_settings = Some(i);
+                shared_ui.context_menu.close();
+            }
+            let n = armature.sel_anim(&selections).map_or(0, |a| a.layers.len());
+            if i + 1 < n && ui.context_button(&shared_ui.loc("keyframe_editor.layer_up"), &config).clicked() {
+                events.move_layer(i, 1);
+                shared_ui.context_menu.close();
+            }
+            if i > 1 && ui.context_button(&shared_ui.loc("keyframe_editor.layer_down"), &config).clicked() {
+                events.move_layer(i, -1);
                 shared_ui.context_menu.close();
             }
             if ui.context_button(&shared_ui.loc("keyframe_editor.layer_duplicate"), &config).clicked() {

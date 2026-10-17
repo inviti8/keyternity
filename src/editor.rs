@@ -46,7 +46,7 @@ pub fn iterate_events(
             E::RenameStyle => if !ui.just_made_style { undo_states.new_undo_style(&armature.sel_style(&selections).unwrap()); ui.just_made_style = false }
             E::DeleteSelectedKeyframes | E::DeleteKeyframeLine | E::PasteKeyframesOnFrame | E::InsertKeyframe | E::InsertKeyframeAll | E::DeleteBoneKeyframes | E::SetAnimEnd | E::DeleteKeyframeGroup | E::ScaleSelectedKeyframes
             | E::AddLayer | E::DeleteLayer | E::DuplicateLayer | E::MergeLayerDown | E::FlattenLayers
-            | E::CloseLoop | E::BakeGenerator => {
+            | E::CloseLoop | E::BakeGenerator | E::MoveLayer => {
                 undo_states.new_undo_anim(armature.sel_anim(&selections).unwrap())
             }
             E::ResetVertices | E::CenterBoneVerts | E::DeleteVertex | E::TraceBoneVerts | E::NewVertex | E::DeleteTriangle | E::RetriangulateVerts | E::PenApply => {
@@ -493,7 +493,7 @@ pub fn simple_event(
         Events::ToggleShowCameras => edit_mode.show_cameras = !edit_mode.show_cameras,
         Events::AddLayer | Events::SelectLayer | Events::SetLayer | Events::DeleteLayer
         | Events::DuplicateLayer | Events::MergeLayerDown | Events::FlattenLayers
-        | Events::CloseLoop | Events::BakeGenerator => {
+        | Events::CloseLoop | Events::BakeGenerator | Events::MoveLayer => {
             let bones = armature.bones.clone();
             let anims = armature.animations.clone();
             if let Some(anim) = armature.animations.get_mut(selections.anim) {

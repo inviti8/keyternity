@@ -157,3 +157,22 @@ fn merging_down() {
         assert!((rot(&m, f) - want[f as usize]).abs() < 1e-3, "frame {f}");
     }
 }
+
+#[test]
+fn reordering_layers_keeps_the_one_being_edited() {
+    let mut a = walk();
+    let x = a.add_layer("x", LayerMode::Additive);
+    let y = a.add_layer("y", LayerMode::Override);
+    a.layers[x].keyframes = vec![key(E::Rotation, 0, 0.6)];
+    a.layers[y].keyframes = vec![key(E::Rotation, 0, 2.)];
+    a.set_active_layer(x);
+    // y (override, on top) wins; moved under x, x adds to it
+    assert!((rot(&a, 0) - 2.).abs() < 1e-4);
+    layers::move_layer(&mut a, y, 1);
+    assert_eq!(a.layers[1].name, "y");
+    assert_eq!(a.layers[a.active_layer].name, "x", "still editing x");
+    assert_eq!(a.keyframes[0].value, 0.6);
+    assert!((rot(&a, 0) - 2.1).abs() < 1e-4, "{}", rot(&a, 0));
+    layers::move_layer(&mut a, 1, 0);
+    assert_eq!(a.layers[0].name, "Base", "Base stays at the bottom");
+}

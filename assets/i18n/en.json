@@ -731,6 +731,18 @@
       "select_bone": "Select a bone to add a generator to it.",
       "procedural": "Procedural"
     },
+    "layer_up": "Move Up",
+    "layer_down": "Move Down",
+    "scale_keys_typed": "Scale Keys…",
+    "scale_dialog": {
+      "title": "Scale Keys",
+      "pivot": "Around frame $frame (the current frame): keys there stay put.",
+      "factor": "Factor",
+      "length": "New length",
+      "reverse": "A negative factor reverses the keys.",
+      "apply": "Apply",
+      "cancel": "Cancel"
+    },
     "double_click_tip": "Double-click a key to select every key of its bone on that frame",
     "elements": {
       "PositionX": "Position X",
