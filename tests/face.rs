@@ -261,3 +261,25 @@ fn a_rig_set_up_before_its_shapes_maps_them_when_they_arrive() {
     assert_eq!(face::automap(&mut s.armature, 1) > 0, true);
     assert_eq!(smile(&s), 1);
 }
+
+#[test]
+fn the_panel_face_deforms_with_its_controls() {
+    use keyternity_lib::face_panel;
+    let art = face_panel::art();
+    let face = art.face.as_ref().expect("the skinned face");
+    let jaw_rest = art.controls.iter().find(|c| c.name == "Jaw").unwrap().rest;
+    let mut xf = std::collections::HashMap::new();
+    xf.insert("Jaw".to_string(), (egui::vec2(0., -2.), 0., jaw_rest));
+    let moved = face_panel::deform(face, &xf);
+    for (i, ws) in face.weights.iter().enumerate() {
+        let jaw: f32 = ws.iter().filter(|(n, _)| n == "Jaw").map(|(_, w)| w).sum();
+        let total: f32 = ws.iter().map(|(_, w)| w).sum();
+        let expect = -2. * jaw / total.max(1.);
+        assert!((moved[i][1] - face.verts[i][1] - expect).abs() < 1e-3, "vertex {i}");
+        if jaw == 0. {
+            let d = ((moved[i][0] - face.verts[i][0]).powi(2) + (moved[i][1] - face.verts[i][1]).powi(2)).sqrt();
+            assert!(d < 1e-4, "vertices the jaw doesn't weight stay put: {i}");
+        }
+    }
+    assert!(face.weights.iter().any(|ws| ws.iter().any(|(n, _)| n == "Jaw")));
+}

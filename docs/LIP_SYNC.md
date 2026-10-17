@@ -372,6 +372,13 @@ not with bones on the canvas.
   - While animating, a drag keys it, and a ◆ marks manipulators keyed on the current
     frame.
   - The mouth carries the corners, lips and jaw, and the jaw carries the lower lip.
+- **The face deforms with the manipulators,** as in FaceBot. The mask (`vizFace`) is
+  skinned to them in the FBX: the jaw, eyes, brows, lips and corners, with the base
+  holding the rest. The converter carries those weights over, and the panel
+  blend-skins the mask each frame, re-lighting it from its deformed 3D normals. The
+  mouth opens onto the dark base behind it. This is the 3D rig's behaviour seen from
+  the front, without a 3D viewport. A true 3D view (orbiting) remains possible later
+  if needed.
 - **Under it,** the controls are still helper bones, so they key, layer, loop and
   export as before. But they're hidden: not drawn or pickable on the canvas, and not
   listed in the hierarchy (the rig's root bone is).

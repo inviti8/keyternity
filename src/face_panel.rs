@@ -13,7 +13,67 @@ use std::sync::OnceLock;
 pub struct RigArt {
     pub name: String,
     pub mask: Vec<ArtPart>,
+    /// the face, skinned to the manipulators: it deforms as they move
+    #[serde(default)]
+    pub face: Option<ArtFace>,
     pub controls: Vec<ArtControl>,
+}
+
+/// A skinned mesh: 3D vertices (mask units; +z faces the viewer), triangles (far to
+/// near), and per vertex its weights by control name ("" holds still).
+#[derive(serde::Deserialize)]
+pub struct ArtFace {
+    pub color: [u8; 3],
+    pub verts: Vec<[f32; 3]>,
+    pub tris: Vec<[u32; 3]>,
+    pub weights: Vec<Vec<(String, f32)>>,
+}
+
+/// The key light the art was shaded with (upper left, toward the viewer).
+const LIGHT: [f32; 3] = [-0.35, 0.55, 0.76];
+
+/// A triangle's shade from its 3D corners, as the converter shades the art.
+pub fn shade_of(a: [f32; 3], b: [f32; 3], c: [f32; 3]) -> f32 {
+    let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    let v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+    let n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+    let nl = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt().max(1e-6);
+    let ll = (LIGHT[0] * LIGHT[0] + LIGHT[1] * LIGHT[1] + LIGHT[2] * LIGHT[2]).sqrt();
+    let lambert = (n[0] * LIGHT[0] + n[1] * LIGHT[1] + n[2] * LIGHT[2]).abs() / (nl * ll);
+    0.32 + 0.68 * lambert
+}
+
+/// The face's vertices deformed by the controls: each vertex blends its controls'
+/// moves (offset, and twist about the control's rest), linear-blend skinning in the
+/// mask's plane. `xf` gives each control's (offset, twist, rest).
+pub fn deform(face: &ArtFace, xf: &std::collections::HashMap<String, (egui::Vec2, f32, [f32; 2])>) -> Vec<[f32; 3]> {
+    face.verts
+        .iter()
+        .zip(&face.weights)
+        .map(|(v, ws)| {
+            let (mut x, mut y, mut total) = (0., 0., 0.);
+            for (name, w) in ws {
+                let (px, py) = match xf.get(name) {
+                    Some((off, twist, rest)) => {
+                        let (dx, dy) = (v[0] - rest[0], v[1] - rest[1]);
+                        let (c, s) = (twist.cos(), twist.sin());
+                        (rest[0] + dx * c - dy * s + off.x, rest[1] + dx * s + dy * c + off.y)
+                    }
+                    None => (v[0], v[1]),
+                };
+                x += px * w;
+                y += py * w;
+                total += w;
+            }
+            if total <= 1e-6 {
+                return *v;
+            }
+            // weights that don't sum to one: the rest holds still
+            let rest_w = (1. - total).max(0.);
+            let sum = total + rest_w;
+            [(x + v[0] * rest_w) / sum, (y + v[1] * rest_w) / sum, v[2]]
+        })
+        .collect()
 }
 
 #[derive(serde::Deserialize)]
@@ -209,6 +269,30 @@ fn board(
     let frame = selections.anim_frame;
     let anim = armature.animations.get(selections.anim);
     let pointer = ui.ctx().pointer_hover_pos().filter(|p| rect.contains(*p));
+
+    // each control's move (offset, twist, rest), and the face deformed by them
+    let mut xf: std::collections::HashMap<String, (egui::Vec2, f32, [f32; 2])> = std::collections::HashMap::new();
+    for a in &art.controls {
+        if let Some((_, bone)) = controls.iter().find(|(n, _)| *n == a.name) {
+            let (off, twist) = placement(armature, posed, *bone);
+            xf.insert(a.name.clone(), (off, twist, a.rest));
+        }
+    }
+    if let Some(face) = &art.face {
+        let verts = deform(face, &xf);
+        let base = egui::Color32::from_rgb(face.color[0], face.color[1], face.color[2]);
+        let mut m = egui::Mesh::default();
+        for t in &face.tris {
+            let (a, b, c) = (verts[t[0] as usize], verts[t[1] as usize], verts[t[2] as usize]);
+            let col = lit(base, shade_of(a, b, c));
+            let i = m.vertices.len() as u32;
+            for p in [a, b, c] {
+                m.colored_vertex(to_screen(p[0], p[1]), col);
+            }
+            m.add_triangle(i, i + 1, i + 2);
+        }
+        painter.add(egui::Shape::mesh(m));
+    }
 
     // each control's screen triangles, in draw order
     struct Placed<'a> {

@@ -21,7 +21,8 @@ CONTROLS = {
     'facebot_ctrl_U_Lip': 'UpperLip', 'facebot_ctrl_L_Lip': 'LowerLip',
     'facebot_ctrl_Jaw': 'Jaw', 'facebot_ctrl_Tongue': 'Tongue',
 }
-MASK = ['facebot_ctrlBase', 'facebot_vizFace']
+MASK = ['facebot_ctrlBase']
+FACE = 'facebot_vizFace'
 # where the tongue sits on the panel (its geometry is modelled at the origin)
 TONGUE_REST = (0., -14.4)
 
@@ -160,7 +161,7 @@ def main(src, out):
         return [o[1] for o in out], [o[2] for o in out]
 
     mask = []
-    for name, default in zip(MASK, ([20, 20, 22], [90, 90, 95])):
+    for name, default in zip(MASK, ([20, 20, 22],)):
         pts, tris, depth = mesh(by_name[name])
         tris2, shades = flat(pts, tris, cx, 0.)
         mask.append({'name': name, 'color': colour(by_name[name], default), 'depth': depth, 'tris': tris2, 'shade': shades})
@@ -195,7 +196,38 @@ def main(src, out):
     for c in controls + mask:
         c.pop('depth')
 
-    rig = {'name': 'FaceBot', 'source': 'FaceBot.FBX (Neuromancy Technology, 2016)', 'mask': mask, 'controls': controls}
+    # the face: skinned to the manipulators, so it deforms with them in the panel
+    face_id = by_name[FACE]
+    pts, tris, _ = mesh(face_id)
+    weights = [[] for _ in pts]
+    raw = {o['props'][0]: o for o in top['Objects']['children']}
+    for oid, (kind, name, o) in objects.items():
+        if kind != 'Deformer' or o['props'][2] != 'Cluster':
+            continue
+        idx = w = None
+        for c in o['children']:
+            if c['name'] == 'Indexes':
+                idx = c['props'][0]
+            if c['name'] == 'Weights':
+                w = c['props'][0]
+        model = None
+        for c in top['Connections']['children']:
+            a_, b_ = c['props'][1], c['props'][2]
+            if b_ == oid and objects.get(a_, ('',))[0] == 'Model':
+                model = objects[a_][1]
+        control = CONTROLS.get(model)  # the base (and anything else) holds still
+        for i, wt in zip(idx or [], w or []):
+            if wt > 1e-4:
+                weights[i].append([control or '', round(wt, 3)])
+    order = sorted(range(len(tris)), key=lambda k: sum(pts[i][2] for i in tris[k]) / 3)
+    face = {
+        'color': [128, 128, 134],
+        'verts': [[round(p[0] - cx, 2), round(p[1], 2), round(p[2], 2)] for p in pts],
+        'tris': [list(tris[k]) for k in order],
+        'weights': weights,
+    }
+
+    rig = {'name': 'FaceBot', 'source': 'FaceBot.FBX (Neuromancy Technology, 2016)', 'mask': mask, 'face': face, 'controls': controls}
     with open(out, 'w', encoding='utf-8') as f:
         json.dump(rig, f, separators=(',', ':'))
     print('wrote', out, sum(len(c['tris']) for c in controls + mask), 'triangles')
