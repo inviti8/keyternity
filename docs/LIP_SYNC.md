@@ -20,8 +20,11 @@ For Keyternity this breaks down into building blocks, each useful on its own:
 1. **Shapes:** morph targets for 2D meshes, with keyable weights. They're useful for
    any facial or squash-and-stretch animation, not just speech.
 2. **Dialog audio** in animations: import a clip, see its waveform, hear it in sync.
-3. **Mouth rigs and visemes:** a standard viseme set, and a per-character mapping
-   from each viseme to shapes or a mouth texture.
+3. **A standard face, the face rig and visemes:**
+   - FaceBot's shape convention (§6.4);
+   - a 2D face rig of draggable controls after FaceBot's (§6.5);
+   - a per-character mapping from each viseme to rig values, shapes or a mouth
+     texture.
 4. **Auto lip sync:** audio (and optional text) gives a viseme track, which gives
    keys. Regenerating it doesn't touch the artist's own keys.
 5. **Voice generation:** type a line, pick a voice, get the audio and its timing.
@@ -137,7 +140,7 @@ in bind space.
 - **Exports:** the manifest/Phaser/Godot files can reference the clip with its start
   time, so a game can play the line in sync.
 
-## 6. Visemes and mouth rigs
+## 6. Visemes, mouth rigs and the face rig
 
 ### 6.1 Viseme sets
 
@@ -195,7 +198,8 @@ pub struct MouthRig {
 }
 pub struct MouthPose {
     pub viseme: String,
-    pub shapes: Vec<(i32, i32, f32)>,        // (mesh bone id, shape id, weight): morph mouths
+    pub controls: Vec<(String, Vec2, f32)>,  // (face-rig control, offset, twist): rig-built (§6.5, default)
+    pub shapes: Vec<(i32, i32, f32)>,        // (mesh bone id, shape id, weight): viseme shapes
     pub texture: Option<(i32, String)>,      // (bone id, texture name): drawn mouths
 }
 ```
@@ -217,6 +221,299 @@ pub struct MouthPose {
 - **Drawn mouths** can't add up. For those, an expression swaps the whole mouth set,
   e.g. a "smiling" variant of each viseme texture via a Style. Styles are already
   hot-swappable.
+
+### 6.4 Standard face shapes (FaceBot's convention)
+
+Facebot used the **Mixamo blend-shape set**, which became its convention, with an
+optional set of Preston Blair viseme shapes added. Keyternity adopts the same
+structure as its standard face. A mesh whose shapes follow it gets a working face
+rig, viseme poses and lip sync with no setup. It's a convention, not a requirement:
+other names are mapped (§6.6).
+
+**Core set:** expression and articulation shapes, paired Left and Right where
+they're sided.
+
+| region | shapes |
+|---|---|
+| Eyes | `Blink_L`, `Blink_R` |
+| Brows | `BrowsUp_L/R`, `BrowsDown_L/R`, `BrowsIn_L/R`, `BrowsOuterLower_L/R` |
+| Nose | `NoseScrunch_L/R` |
+| Mouth | `MouthOpen`, `MouthUp`, `MouthDown`, `MidMouth_L/R` (shift sideways), `MouthNarrow_L/R`, `MouthWhistle_L/R` |
+| Corners | `Smile_L/R`, `Frown_L/R` |
+| Upper lip | `UpperLipUp_L/R`, `UpperLipIn`, `UpperLipOut` |
+| Lower lip | `LowerLipDown_L/R`, `LowerLipIn`, `LowerLipOut` |
+| Jaw | `JawSide_L/R` (Mixamo's JawRotateZ), `JawTwist_L/R` (JawRotateY), `JawForward`, `JawBackward` |
+| Tongue | `TongueUp` |
+
+**Viseme shapes (optional):** `AI`, `E`, `O`, `U`, `etc`, `WQ`, `MBP`, `L`, `FV`,
+`rest`. These are Preston Blair's ten, sculpted or drawn directly (§6.5 explains when
+to use them).
+
+- **Names:** Keyternity's canonical names are shorter (`_L`/`_R`, and a jaw "side"
+  and "twist" for a 2D view). Mixamo's own spellings, and FaceBot's variants, are
+  accepted as **aliases**: `Blink_Left`, `JawRotateZ_Left`, `JawForeward`,
+  `Jaw_RotateY_Left`, `MouthWhistle_NarrowAdjust_Left`, and so on. Auto-fill and the
+  rig match both, case-insensitively.
+- **Creating the set:** *Generate Face* (§6.7) builds the set from a landmark map.
+  *Add Standard Face Shapes* instead creates them empty, named and grouped (eyes,
+  brows, mouth…), for sculpting by hand. Mirror (§4.4) makes each `_R` from its
+  `_L`.
+
+### 6.5 The face rig (2D, after FaceBot)
+
+FaceBot's rig was a mask with **13 manipulators** sitting in front of the
+character's face. Dragging one drove its shapes, so a face could be posed by feel
+rather than by hunting through sliders. Keyternity's face rig keeps that structure,
+in 2D.
+
+**Controls are helper bones.** The rig is a small group of hidden helper bones, the
+controls, plus a **driver table** that turns their offsets into shape weights each
+frame. Because controls are bones:
+- they're keyed, layered, looped, copied, scaled in time and given generators like
+  any bone, with nothing new for the timeline;
+- the shape weights are *derived*, so there's no bake-to-rig or bake-to-face round
+  trip (§6.6);
+- exports leave the controls out, as they already do for Bind Pose helpers. They bake
+  the driven weights into shape weights, or into DragonBones FFD keys (§4.5).
+
+**Layout.** The default layout is generated once from `FaceBot.FBX`, using its zero
+groups' rest positions and its hierarchy, and ships as built-in data. The FBX isn't
+needed at runtime. Units are the mask's, x across and y up:
+
+| control | parent | rest (x, y) | drives (default mapping) |
+|---|---|---|---|
+| `Brow_L` / `Brow_R` | face | (±6.6, 7.6) | +y BrowsUp, −y BrowsDown, x inward BrowsIn, twist BrowsOuterLower |
+| `Eye_L` / `Eye_R` | face | (±6.4, 4.6) | −y Blink. Look direction moves the eye bone or pupil (below). |
+| `Nose_L` / `Nose_R` | face | (±2.0, −2.8) | +y NoseScrunch |
+| `Mouth` | face | (0, −8.6) | +y MouthUp, −y MouthDown, ±x MidMouth_L/R; carries the four below |
+| `Corner_L` / `Corner_R` | Mouth | (±5.8, −0.3) | +y Smile, −y Frown, x inward MouthNarrow, x outward MouthWhistle |
+| `UpperLip` | Mouth | (0, 1.3) | +y UpperLipUp_L+R, twist UpperLipIn/Out (a lip roll) |
+| `Jaw` | Mouth | (0, 5.2)* | −y MouthOpen, ±x JawSide, twist JawTwist, +y JawForward |
+| `LowerLip` | Jaw | (0, −6.4) | −y LowerLipDown_L+R, twist LowerLipIn/Out |
+| `Tongue` | face | (0, −8.6) | +y TongueUp |
+
+\* FaceBot's jaw pivots behind the mouth: its zero sits 5.2 above it and 6.2 back.
+The 2D rig places the handle below the mouth instead, and keeps the pivot for jaw
+twist.
+
+- **How values work:**
+  - Each control moves within a box, ±1 by default and set per control, shown as its
+    track.
+  - An axis's positive half drives one shape and its negative half another
+    (`weight = max(±v, 0)`). Twist is the handle's rotation, ±45° for full.
+  - Each slot can drive several shapes with weights, for example `UpperLip` +y →
+    UpperLipUp_L 1.0 and UpperLipUp_R 1.0.
+  - Slots without a matching shape are hidden, so a simpler face gets a simpler rig.
+- **Parenting:** moving `Mouth` carries the corners, lips and jaw, and moving `Jaw`
+  carries the lower lip, as in FaceBot. Their own offsets stay local.
+- **Showing it:** the rig draws as an overlay panel, a stylised mask with its
+  handles, like FaceBot's `vizFace`. It docks beside the canvas, or floats near the
+  character's head. Handles show their track and current value; double-click one to
+  zero it.
+- **Editing the mapping:** a *Face Rig* section lists each control's slots and the
+  shapes they drive, with weights. Any slot can be re-pointed, including to texture
+  swaps for drawn faces, and the result saves with the character.
+- **Eyes:**
+  - Blinks are shapes, driven by `Eye_L/R`.
+  - Where the face has eye bones, or pupils as their own bones, an **Eye Look**
+    control moves them within limits, as FaceBot's look target did.
+  - FaceBot keyed random blinks and saccades from buttons. Here they become
+    generators on a layer (TIMELINE.md §5.8, the planned *Random event* generator).
+    FaceBot's timings are the defaults: a blink closes in 80 ms, holds 60–80 ms, and
+    is open again by 180–250 ms. A saccade darts in 10–40 ms, holds 40–220 ms, and
+    alternates axes.
+
+**Visemes on the rig.** A mouth pose (§6.2) can be either kind:
+- **Built from rig values** (the default): AI is "Jaw −0.6, Corner_L/R +0.2,
+  UpperLip +0.1". Lip sync then keys the controls, and the artist adjusts any viseme
+  with the same handles afterwards. This is what FaceBot recommended.
+- **A viseme shape** (`AI`…`rest`), when the face has them. The result is crisper,
+  and good for cartoon mouths, but the rig can't adjust it beyond the shape's weight,
+  as FaceBot noted.
+
+A rig can mix the two. Auto-fill picks viseme shapes when they exist; otherwise it
+uses the built-in rig-value poses for the standard set.
+
+### 6.6 What changes from FaceBot
+
+The structure comes from FaceBot. The mechanics are reworked where the original was
+fragile:
+
+| FaceBot | Keyternity | why |
+|---|---|---|
+| Remapped other shape sets by a "config model": frame *n* held the equivalent shape at 100% | A **mapping table**: each standard shape lists the mesh shape it uses, auto-matched by name and alias, then picked by hand | No round trip through another tool. A mistake in one keyed frame no longer shifts every mapping after it. |
+| Phoneme configs keyed as frames 0–9 of a scene | Viseme poses edited on the rig and saved with the mouth rig (§6.2) | Same idea, visible and editable in place |
+| Bake to rig, edit, bake back to face, delete rig (a modal, destructive round trip) | Controls are the keyed channels, and shape weights are derived live | Nothing to bake, so nothing can get out of step |
+| Found the face mesh, Hips and eyes from fixed name lists and prefixes, and allowed one character per scene | The artist picks the face mesh(es), and optionally the eye bones, in a *Set Up Face* step. Any number of characters, each with its own rig. | Fixed naming was the most common setup failure |
+| Shape-name inconsistencies (`JawForeward`/`JawForward`, `Jaw_RotateY` vs `JawRotateY`, `Midmouth_Left` listed twice) | One canonical list, plus aliases | |
+| Lip sync through a Windows SAPI aligner, with fixed 0.2 s ramps | The engine and keyer in §7: per-language rules, word timings, lead, hold and smoothing | Cross-platform, and tunable |
+| Random blinks and saccades keyed in place by buttons | Generators on a layer | Non-destructive, and they loop with idles |
+
+The recovered FaceBot source and docs are kept for reference in `REFERENCE/FaceBot_Free`
+(not part of the build). `source_recovered/` holds the code decompiled from its
+`.pyc` files.
+
+| FaceBot | Keyternity | why |
+|---|---|---|
+| Shapes sculpted in another 3D app | Generated from a landmark map and templates, then refined (§6.7) | In 2D the artist authors everything. |
+
+### 6.7 Generating the face: landmarks and automatic shapes
+
+FaceBot assumed the shapes were sculpted in another 3D app. In Keyternity the artist
+authors everything, so a full set of 40-odd shapes by hand would be the bottleneck.
+Instead, the artist **maps a small set of landmarks** on the mesh once. Keyternity
+then **generates** the standard shapes (§6.4) from templates, and the artist refines
+them.
+
+**Landmark map.** About 30 named points, shown on the face-rig mask (§6.5) as dots to
+pick:
+
+| region | landmarks | count |
+|---|---|---|
+| Mouth | `MouthCorner_L/R`; upper lip `UpperLip_L2, L1, R1, R2`; lower lip `LowerLip_L2, L1, R1, R2` | 10 |
+| Lip centres (midline) | `UpperLipMid`, `LowerLipMid`. Optional: they're derived from the inner pairs when not mapped. | (2) |
+| Eyes | upper lid `Lid_L_Up1/2`, lower lid `Lid_L_Low1/2`, corners `EyeIn_L`, `EyeOut_L`, and the same on R | 12 |
+| Brows | `Brow_L_In/Mid/Out`, the same on R | 6 |
+| Nose | `NoseWing_L/R`, and `NoseTip` on the midline | 3 |
+| Jaw | `Chin` (midline), and optionally `Jaw_L/R` | 1–3 |
+
+The mouth's 10 points are the core: 4 on the top lip, 4 on the bottom, and the 2
+corners. A face can map only the regions it animates: a character that never blinks
+skips the eyes.
+
+#### Setup: map one side, derive the other
+
+1. *Set Up Face* asks which **view** the drawing is (front, three-quarter or profile),
+   and suggests one (below).
+2. **Midline first:** the artist maps the midline points (`UpperLipMid`,
+   `LowerLipMid`, `NoseTip`, `Chin`, about four). They fix the face's symmetry
+   axis, including any head tilt.
+3. **One side:** the artist maps the left points. Clicking a dot on the mask, then a
+   vertex on the mesh, maps it. The next dot is selected automatically, so mapping is
+   a run of clicks.
+4. **Derived side:** the right side is computed (below), snapped to vertices, and
+   shown as hollow dots. The artist confirms or drags any that are off. It's always
+   a suggestion, never silently final.
+5. **A check** lists what generating needs (mesh requirements, below), with a fix for
+   each.
+
+**Front view.** The symmetry axis is the line best fitting the midline points (least
+squares, so a tilted head gives a tilted axis). Each right point is its left twin
+reflected across that axis.
+
+**Three-quarter view.** On a turned head the far side is foreshortened: it's a
+mirror, squeezed. Two ways to measure the squeeze:
+- **Automatically,** when a few far-side points are also mapped. Compare a pair's
+  distances from the axis. If the far mouth corner is 0.6 as far from the midline as
+  the near one, the face is turned. (Your observation: the far corner sits close to
+  its neighbours, the near one far from them.)
+- **From one far anchor:** the artist maps a single far-side point, usually the far
+  mouth corner, and everything else on that side follows from it.
+
+The model treats the head as a **cylinder** seen at a yaw angle θ. A point at angle φ
+around the head appears at `x = R·sin(φ + θ)` from the head's centre. Its mirrored
+twin at −φ appears at `R·sin(θ − φ)`.
+- **Inputs:** the head radius R (from the face outline, or the eye-corner span) and
+  the midline position on screen (`R·sin θ`).
+- **Solving:** one mapped far anchor gives θ. Every near point's φ then gives its far
+  twin.
+- **Why a cylinder:** points far from the midline (corners, outer brows) compress
+  more than points near it (inner lips, nose wings), which is what a turned face
+  does. A flat squeeze would misplace them.
+- **Heights:** vertical positions are carried across along the tilted axis.
+
+Derived points then **snap** to a vertex near the computed spot. The search prefers a
+vertex on the same feature line (the lip seam for lip points, the lid seam for lid
+points) and keeps the points in order along it. The result is a suggestion for the
+artist to confirm.
+
+**Suggesting the view.** Once the midline and a pair are mapped:
+- **Front:** both sides within about 10%.
+- **Three-quarter:** clearly uneven.
+- **Profile:** the midline lies on the mesh's outer edge.
+
+The artist can always override it.
+
+**Profile view** (unique to 2D). Only one side is visible, and the midline is the
+silhouette.
+- **Landmarks:** a reduced set with no mirroring: upper and lower lip front points,
+  the one visible corner, `Chin`, `NoseTip`, the visible eye's lids and brow.
+- **Shapes:** paired shapes collapse to one. `Smile` drives the visible corner, and
+  the rig hides the far-side controls.
+- **Templates:** each has a profile variant. O pushes the lips forward, smile pulls
+  the corner back and up, MBP presses the lips together at the front.
+- **Facing:** a profile facing the other way is the same map flipped in x.
+
+**Several views of one character** (front, three-quarter and profile drawings,
+swapped by Styles or textures) each get their own landmark map and generated shapes,
+under the **same shape and control names**. Animation, lip sync and viseme poses
+then carry across when the drawing switches views.
+
+#### Templates
+
+Each standard shape is a **template**: how each landmark moves, in face-relative
+units, so it fits any face:
+- horizontal motion in **mouth widths** (corner to corner) for the mouth, and in eye
+  widths for the eyes;
+- vertical motion in **nose-to-chin** distances.
+
+Examples:
+- `Smile_L`: the left corner +0.12 out and +0.10 up; the left lip points follow at
+  half.
+- `MouthOpen`: the lower lip points down 0.25 and `Chin` down 0.2.
+- `MBP`: the upper and lower lip points meet at the lip line.
+
+Templates are written for a front view, in head space. For three-quarter views
+they're projected with the same yaw (horizontal motion scales with the cylinder's
+local squeeze). Profile uses its own variants.
+- **Style presets** (Subtle, Standard, Cartoon) scale every template.
+- Each shape has its own **strength** too, as a cartoon "AI" opens far wider than a
+  realistic one.
+- Templates are data (JSON), so studios can ship their own.
+
+#### Spreading landmark motion to the mesh
+
+Uses existing machinery:
+1. Each mapped landmark becomes a hidden helper bone.
+2. The helpers get automatic weights, limited to the landmark's **region**. A
+   region is the area around its feature group, padded and with its edge held fixed,
+   so mouth shapes never move the eyes and brow shapes never move the mouth.
+3. For each template, the helpers are posed and *Capture as shape* (§4.4) bakes the
+   result into that shape's deltas.
+
+The artist can fix a falloff with the weight tools they already know, and regenerate.
+A smoother interpolation through the landmark motion (radial basis functions) can
+replace the helper bones later without changing the workflow.
+
+#### Mesh requirements (checked at setup)
+
+- **A lip seam:** the upper and lower lip must be separate edges along the mouth
+  line, or the mouth can't open. The check finds the lip points' edges. If they're
+  joined, it offers to cut the seam with the Pen tool along the mapped lip points.
+- **A mouth interior:** a drawn layer behind the mouth (dark cavity, teeth, tongue)
+  that shows as the lips part. It's a separate bone, which the jaw and lower lip can
+  drive (teeth follow the jaw; `TongueUp` moves the tongue).
+- **Lid seams,** for blinks, the same way, with an eyeball or eye-white layer behind.
+- **Enough vertices** around each feature: the check suggests densifying (Trace
+  detail, or adding points) where a region has too few to bend smoothly.
+
+#### Regenerating without losing work
+
+Each generated shape stores **its generated deltas plus the artist's corrections**
+separately. Regenerating, after remapping a landmark or changing a strength or the
+style, rebuilds the generated part and keeps the corrections on top. Sculpting a
+generated shape edits only its corrections. *Reset Corrections* returns to the pure
+template.
+
+#### The result
+
+Map about 30 points (about 15 with mirroring), press *Generate Face*, and the
+character has:
+- the standard shapes;
+- a working face rig (§6.5);
+- viseme poses (§6.2) ready for lip sync.
+
+Then the artist refines.
 
 ## 7. Auto lip sync
 
@@ -349,6 +646,8 @@ reviews and refines.
 |---|---|---|
 | **0. Timeline pass and layers** | [TIMELINE.md](TIMELINE.md): navigation, compact rows and keys, then animation layers | Its own feature, done first |
 | **1. Shapes** | Data, evaluation before skinning, ShapeWeight keys and timeline rows, Shapes panel, sculpt mode, mirror, capture from pose, remapping on topology edits, `.skf` and DragonBones (FFD) export, tests | Useful immediately: blinks, brows, squash. |
+| **1b. Standard face and face rig** | The standard shape list and aliases, *Add Standard Face Shapes*, the mapping table, *Set Up Face*, control helper bones and the driver table, the default layout generated from `FaceBot.FBX`, the rig overlay panel, Eye Look, driven weights baked on export | The FaceBot structure in 2D (§6.4–6.6) |
+| **1c. Generated faces** | Landmark map on the rig mask, *Set Up Face* (midline, one side, derived side: mirror for front views, cylinder model for three-quarter, profile mode), view suggestion, snapping to feature lines, mesh checks (lip and lid seams, mouth interior, density) with fixes, templates (JSON) with style presets and per-shape strength, helper-bone propagation with regions, *Generate Face*, generated + corrections and regenerate | After 1 and 1b. Makes the whole face a few minutes' setup. |
 | **2. Dialog audio** | Clips embedded in `.skf`, Symphonia decoding, rodio playback in sync, waveform, audio scrub, video export with audio | Desktop first |
 | **3. Mouth rigs + lip sync** | The 17 sounds and the viseme-set mappings, mouth rig panel and auto-fill, the English text rules (ported from TalkingHead), typed transcripts with words spread over speech, lip-sync tracks and keyer, regenerate and bake, loudness fallback, drawn and morph mouths | The Facebot loop, end to end. No downloads. |
 | **3b. Transcription** | whisper.cpp through `whisper-rs`, model download, word timings, editable transcript; TalkingHead's other language modules | Imported recordings |
@@ -366,11 +665,18 @@ reviews and refines.
 | Q4 | Voice generation: local only, or cloud allowed too? Voice cloning? | Local Kokoro first; cloud and cloning as opt-in later |
 | Q5 | Languages that matter to you beyond English? | — |
 | Q6 | Engine? | **Decided:** TalkingHead's technique (text rules + word timings), with Whisper transcription for imported audio. Rhubarb isn't used. Lip sync itself also works on the web; only transcription is desktop-only. |
-| Q7 | Does Facebot's phoneme→viseme table, or its rig convention (shape names), exist anywhere we should match? | — |
+| Q7 | Does Facebot's phoneme→viseme table, or its rig convention (shape names), exist anywhere we should match? | **Answered:** recovered from the FaceBot source (`REFERENCE/`). Its Mixamo shape set becomes the standard face (§6.4), its 13-control mask becomes the 2D face rig (§6.5), and its SAPI→Preston Blair table matches §6.1. |
+| Q8 | Face-rig controls as hidden helper bones, with shape weights derived each frame (no bake round trip)? | Yes |
+| Q9 | Canonical shape names shortened (`_L`/`_R`, jaw side and twist), with Mixamo's and FaceBot's spellings as aliases? | Yes |
+| Q10 | Visemes built from rig values by default, with viseme shapes used when present? | Yes |
+| Q11 | Generate the standard shapes from a ~30-point landmark map (10 for the mouth), mapping the midline and one side and deriving the other? | Yes (§6.7) |
+| Q12 | Three-quarter mirroring by a cylinder model, solved from one far-side anchor or from measured asymmetry, with derived points always shown for confirmation? | Yes |
+| Q13 | Profile as its own view, with a reduced landmark set, collapsed paired shapes and profile templates; several views of a character sharing shape and control names? | Yes |
 
 ## Sources
 
 - TalkingHead (the lip-sync technique): [repository](https://github.com/met4citizen/TalkingHead)
+- FaceBot (the structure for §6.4–6.6): `REFERENCE/FaceBot_Free`, with its conventions, morph and phoneme structure PDFs, rig FBX, and `source_recovered/` (decompiled from its Python 2.7 `.pyc` files)
 
 - Rhubarb Lip Sync: [repository and README](https://github.com/DanielSWolf/rhubarb-lip-sync), [licence](https://github.com/DanielSWolf/rhubarb-lip-sync/blob/master/LICENSE.md), [releases](https://github.com/DanielSWolf/rhubarb-lip-sync/releases)
 - Kokoro-82M: [model card](https://huggingface.co/hexgrad/Kokoro-82M); durations in the Rust port: [Kokoros](https://docsearch.algolia.com/mcp/docs/repo/lucasjinreal/kokoros)
