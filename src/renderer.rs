@@ -2358,12 +2358,14 @@ pub fn draw_points(
     let mut point_verts = vec![];
     let mut point_indices = vec![];
     let mut on_point = false;
+    // face-rig controls are worked from the Face Rig panel
+    let rig_bones = crate::face::rig_bones(&temp_arm.bones);
 
     for p in 0..temp_arm.bones.len() {
         let bone = &temp_arm.bones[p];
         let mut color;
 
-        if bone.bind_owner.is_some() {
+        if bone.bind_owner.is_some() || rig_bones.contains(&bone.id) {
             continue;
         }
 
@@ -3005,11 +3007,12 @@ pub fn draw_kites(
     let mut line_indices = vec![];
     let mut gizmo = (vec![], vec![]);
     let mut links = (vec![], vec![]);
+    let rig_bones = crate::face::rig_bones(&temp_arm.bones);
 
     for p in 0..temp_arm.bones.len() {
         let bone = &temp_arm.bones[p];
 
-        if bone.bind_owner.is_some() {
+        if bone.bind_owner.is_some() || rig_bones.contains(&bone.id) {
             continue;
         }
 

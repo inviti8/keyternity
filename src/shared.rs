@@ -768,6 +768,12 @@ pub struct Ui {
     pub shapes_folded: bool,
     /// the Face Landmarks section is open
     pub landmarks_open: bool,
+    /// the Face Rig panel: open, the rig shown (its root bone), the control being
+    /// dragged, and the control whose menu is open
+    pub face_panel_open: bool,
+    pub face_panel_root: Option<i32>,
+    pub face_panel_drag: Option<i32>,
+    pub face_panel_menu: Option<i32>,
     /// picking a landmark: its name, and the vertex selection when picking started
     pub picking_landmark: Option<String>,
     pub picking_from: Vec<usize>,

@@ -202,3 +202,29 @@ fn exports_bake_the_rig_into_shape_keys() {
         assert!((weight(&p, "MouthOpen") - shown[f as usize]).abs() < 1e-4, "frame {f}");
     }
 }
+
+#[test]
+fn the_panel_art_matches_the_rig() {
+    let art = keyternity_lib::face_panel::art();
+    assert_eq!(art.controls.len(), face::LAYOUT.len());
+    for c in &art.controls {
+        assert!(face::LAYOUT.iter().any(|l| l.name == c.name), "{} has no control", c.name);
+        assert!(!c.tris.is_empty());
+    }
+    assert!(!art.mask.is_empty());
+}
+
+#[test]
+fn the_panel_places_controls_with_their_parents() {
+    let (mut arm, ids) = rigged();
+    let range = control(&mut arm, "Mouth").face_control.as_ref().unwrap().range;
+    control(&mut arm, "Mouth").pos.y -= range;
+    control(&mut arm, "Corner_L").pos.y += range * 0.5;
+    let corner = arm.bones.iter().find(|b| b.face_control.as_ref().is_some_and(|c| c.name == "Corner_L")).unwrap().id;
+    let posed = arm.bones.clone();
+    let (off, twist) = keyternity_lib::face_panel::placement(&arm, &posed, corner);
+    // in panel units (the rig's RANGE per full travel): mouth down 1 range, corner up half
+    assert!((off.y - (-face::RANGE + face::RANGE * 0.5)).abs() < 1e-3, "{:?}", off);
+    assert_eq!(twist, 0.);
+    assert!(keyternity_lib::face_panel::rigs(&arm).iter().any(|(r, cs)| *r == ids[0] && cs.len() == 13));
+}

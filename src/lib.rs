@@ -68,6 +68,7 @@ pub mod envelope;
 pub mod export_sequence;
 pub mod face;
 pub mod face_gen;
+pub mod face_panel;
 pub mod face_ui;
 pub mod ik;
 pub mod export_modal;

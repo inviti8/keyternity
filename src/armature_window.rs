@@ -201,6 +201,10 @@ pub fn draw_hierarchy(
         if armature.is_bone_folded(armature.bones[b].id) {
             continue;
         }
+        // face-rig controls are worked from the Face Rig panel, not listed
+        if armature.bones[b].face_control.is_some() {
+            continue;
+        }
         let bone_id = armature.bones[b].id;
 
         // stop rendering if not all hiddens have been initialized

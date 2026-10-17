@@ -356,6 +356,32 @@ twist.
 A rig can mix the two. Auto-fill picks viseme shapes when they exist; otherwise it
 uses the built-in rig-value poses for the standard set.
 
+**The Face Rig panel (decided):** the rig is worked from its own dedicated panel,
+not with bones on the canvas.
+- **What it shows:** FaceBot's mask with its coloured manipulators: brows orange,
+  eyes blue, nose green, the mouth ring cyan, corners red, lips yellow, jaw purple,
+  tongue pink.
+- **Where the graphics come from:** `tools/facebot_rig.py` flattens `FaceBot.FBX`
+  into 2D triangles and colours, written to `assets/face_rig/facebot.json`. Only that
+  data ships; the FBX stays in `REFERENCE/`.
+- **Using it:**
+  - Drag a manipulator to pose; Shift-drag twists.
+  - It moves only along the directions it drives, up to 1.5× its range, and the
+    active one shows its travel box.
+  - Double-click resets it. Right-click gives Reset, Key, and Select Control Bone.
+  - While animating, a drag keys it, and a ◆ marks manipulators keyed on the current
+    frame.
+  - The mouth carries the corners, lips and jaw, and the jaw carries the lower lip.
+- **Under it,** the controls are still helper bones, so they key, layer, loop and
+  export as before. But they're hidden: not drawn or pickable on the canvas, and not
+  listed in the hierarchy (the rig's root bone is).
+- **Opening it:** *Set Up Face* opens the panel, and *Face Rig Panel* (in Shapes or
+  Face Control) reopens it.
+- **Later:**
+  - symmetric drag (left and right together);
+  - custom rig panels (other layouts and graphics), which the data-driven panel is
+    ready for.
+
 **As built (phase 1b):**
 - **Shapes section:**
   - *+ Standard Shapes* adds the standard set (or *+ Visemes*, with the ten visemes),
@@ -370,9 +396,8 @@ uses the built-in rig-value poses for the standard set.
   - `face::drive` runs in `renderer::construction` before inheritance, so the live
     view, onions, renders and exports all see driven weights. Driven weights add to
     keyed ones and are capped at 1.5.
-- **Overlay:** with the face mesh, the rig root or a control selected, the canvas
-  shows the mask oval, each control's travel box (along the directions it uses) and a
-  line from its rest.
+- **Overlay:** the first version drew the mask and travel boxes over the canvas, with
+  the bones as handles. It was replaced by the Face Rig panel (above).
 - **Face Control section:** a selected control shows its range, *Set Rest Here*, and
   per direction the shapes it drives. Add with **+**; double- or right-click to remove.
 - **Exports:** `.skfe` and DragonBones exports bake the driven weights into

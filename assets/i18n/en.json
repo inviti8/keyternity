@@ -300,6 +300,13 @@
     "duplicate": "Duplicate",
     "delete": "Delete"
   },
+  "face_panel": {
+    "title": "Face Rig",
+    "hint": "Drag a control to pose; Shift-drag twists. Double-click resets; right-click to key or select.",
+    "reset": "Reset",
+    "key": "Key",
+    "select": "Select Control Bone"
+  },
   "bone_panel": {
     "landmarks": {
       "heading": "Face Landmarks ($n mapped)",
@@ -338,6 +345,8 @@
       "visemes": "+ Visemes",
       "visemes_desc": "The standard shapes plus Preston Blair's ten viseme shapes (AI, E, O, U, etc, WQ, MBP, L, FV, rest), for crisp drawn or sculpted mouths.",
       "set_up": "Set Up Face",
+      "open_panel": "Face Rig Panel",
+      "open_panel_desc": "Open the Face Rig panel: drag its coloured controls to pose the face.",
       "set_up_desc": "Add a face rig over this mesh: 13 controls laid out like FaceBot's mask (brows, eyes, nose, mouth, corners, lips, jaw, tongue). Drag a control and its shapes follow; key controls like any bone. Each direction is mapped to this mesh's standard shapes.",
       "rigged": "This mesh already has a face rig.",
       "root_name": "Face",

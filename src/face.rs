@@ -185,7 +185,7 @@ pub const LAYOUT: &[LayoutControl] = &[
     LayoutControl { name: "UpperLip", parent: Some("Mouth"), pos: (0., 1.3), slots: &[(Up, &[("UpperLipUp_L", 1.), ("UpperLipUp_R", 1.)]), (TwistCcw, &[("UpperLipOut", 1.)]), (TwistCw, &[("UpperLipIn", 1.)])] },
     LayoutControl { name: "Jaw", parent: Some("Mouth"), pos: (0., -3.2), slots: &[(Down, &[("MouthOpen", 1.)]), (Up, &[("JawForward", 1.)]), (Right, &[("JawSide_L", 1.)]), (Left, &[("JawSide_R", 1.)]), (TwistCcw, &[("JawTwist_L", 1.)]), (TwistCw, &[("JawTwist_R", 1.)])] },
     LayoutControl { name: "LowerLip", parent: Some("Jaw"), pos: (0., 1.9), slots: &[(Down, &[("LowerLipDown_L", 1.), ("LowerLipDown_R", 1.)]), (TwistCcw, &[("LowerLipOut", 1.)]), (TwistCw, &[("LowerLipIn", 1.)])] },
-    LayoutControl { name: "Tongue", parent: None, pos: (3.4, -11.8), slots: &[(Up, &[("TongueUp", 1.)])] },
+    LayoutControl { name: "Tongue", parent: None, pos: (0., -14.4), slots: &[(Up, &[("TongueUp", 1.)])] },
 ];
 
 /// The mask's extent in its own units (x half-width, y bottom and top), for fitting it
