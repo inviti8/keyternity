@@ -125,6 +125,7 @@ pub fn draw(
         ui.label(egui::RichText::new(loc(shared_ui, "empty")).color(dim));
     }
 
+    crate::face_ui::face_buttons(ui, bone, shared_ui, armature, events);
     ui.horizontal(|ui| {
         if ui.skf_button(loc(shared_ui, "add")).on_hover_text(loc(shared_ui, "add_desc")).clicked() {
             events.add_shape(bone.id, &loc(shared_ui, "new_name"));

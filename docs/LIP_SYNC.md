@@ -356,6 +356,32 @@ twist.
 A rig can mix the two. Auto-fill picks viseme shapes when they exist; otherwise it
 uses the built-in rig-value poses for the standard set.
 
+**As built (phase 1b):**
+- **Shapes section:**
+  - *+ Standard Shapes* adds the standard set (or *+ Visemes*, with the ten visemes),
+    skipping names already present in any spelling. Matching ignores case and
+    separators, `Left`/`Right` match `_L`/`_R`, and the listed aliases apply.
+  - *Set Up Face* adds a `Face` root bone under the mesh's parent, with the 13
+    controls fitted over the mesh's bounds and each direction mapped to the mesh's
+    standard shapes.
+- **Controls:**
+  - Controls are ordinary bones with a `face_control`: rest, range, and slots of
+    targets.
+  - `face::drive` runs in `renderer::construction` before inheritance, so the live
+    view, onions, renders and exports all see driven weights. Driven weights add to
+    keyed ones and are capped at 1.5.
+- **Overlay:** with the face mesh, the rig root or a control selected, the canvas
+  shows the mask oval, each control's travel box (along the directions it uses) and a
+  line from its rest.
+- **Face Control section:** a selected control shows its range, *Set Rest Here*, and
+  per direction the shapes it drives. Add with **+**; double- or right-click to remove.
+- **Exports:** `.skfe` and DragonBones exports bake the driven weights into
+  `ShapeWeight` keys (sampled per frame) and drop the rig's bones. `.skf` keeps the rig.
+- **Not yet:**
+  - Eye Look (the eye-bone control);
+  - limits that stop a control at its box (the value just caps at 1.5);
+  - per-target weight editing in the panel (targets are added at ×1).
+
 ### 6.6 What changes from FaceBot
 
 The structure comes from FaceBot. The mechanics are reworked where the original was
@@ -668,7 +694,7 @@ reviews and refines.
 |---|---|---|
 | **0. Timeline pass and layers** | [TIMELINE.md](TIMELINE.md): navigation, compact rows and keys, then animation layers | Its own feature, done first |
 | **1. Shapes** ✓ | Data, evaluation before skinning, ShapeWeight keys and timeline rows, Shapes panel, sculpt mode, mirror, capture from pose, remapping on topology edits, `.skf` and DragonBones (FFD) export, tests | Useful immediately: blinks, brows, squash. |
-| **1b. Standard face and face rig** | The standard shape list and aliases, *Add Standard Face Shapes*, the mapping table, *Set Up Face*, control helper bones and the driver table, the default layout generated from `FaceBot.FBX`, the rig overlay panel, Eye Look, driven weights baked on export | The FaceBot structure in 2D (§6.4–6.6) |
+| **1b. Standard face and face rig** ✓ | The standard shape list and aliases, *Add Standard Face Shapes*, the mapping table, *Set Up Face*, control helper bones and the driver table, the default layout generated from `FaceBot.FBX`, the rig overlay panel, Eye Look, driven weights baked on export | The FaceBot structure in 2D (§6.4–6.6) |
 | **1c. Generated faces** | Landmark map on the rig mask, *Set Up Face* (midline, one side, derived side: mirror for front views, cylinder model for three-quarter, profile mode), view suggestion, snapping to feature lines, mesh checks (lip and lid seams, mouth interior, density) with fixes, templates (JSON) with style presets and per-shape strength, helper-bone propagation with regions, *Generate Face*, generated + corrections and regenerate | After 1 and 1b. Makes the whole face a few minutes' setup. |
 | **2. Dialog audio** | Clips embedded in `.skf`, Symphonia decoding, rodio playback in sync, waveform, audio scrub, video export with audio | Desktop first |
 | **3. Mouth rigs + lip sync** | The 17 sounds and the viseme-set mappings, mouth rig panel and auto-fill, the English text rules (ported from TalkingHead), typed transcripts with words spread over speech, lip-sync tracks and keyer, regenerate and bake, loudness fallback, drawn and morph mouths | The Facebot loop, end to end. No downloads. |

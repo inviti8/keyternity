@@ -121,7 +121,7 @@ fn select(id: i32, selections: &mut SelectionState, edit_mode: &mut EditMode, ui
 }
 
 /// World and screen (egui points) conversions for the canvas this frame.
-struct View {
+pub(crate) struct View {
     cam: Camera,
     aspect: f32,
     window: Vec2,
@@ -129,7 +129,7 @@ struct View {
 }
 
 impl View {
-    fn new(ctx: &egui::Context, camera: &Camera, config: &Config) -> View {
+    pub(crate) fn new(ctx: &egui::Context, camera: &Camera, config: &Config) -> View {
         View {
             cam: renderer::world_camera(camera, config),
             aspect: camera.aspect_ratio(),
@@ -138,7 +138,7 @@ impl View {
         }
     }
 
-    fn to_pt(&self, world: Vec2) -> egui::Pos2 {
+    pub(crate) fn to_pt(&self, world: Vec2) -> egui::Pos2 {
         let clip = Vec2::new(
             (world.x - self.cam.pos.x) / self.cam.zoom * self.aspect,
             (world.y - self.cam.pos.y) / self.cam.zoom,

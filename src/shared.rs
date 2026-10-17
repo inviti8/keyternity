@@ -1360,6 +1360,9 @@ pub struct Bone {
     /// shapes (morph targets) on this mesh (docs/LIP_SYNC.md §4)
     #[serde(skip)]
     pub shapes: Vec<MeshShape>,
+    /// a face-rig control: this helper bone drives shapes (docs/LIP_SYNC.md §6.5)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub face_control: Option<FaceControl>,
 
     #[serde(skip)]
     pub folded: bool,
@@ -2020,6 +2023,51 @@ pub struct MeshShape {
     pub group: String,
 }
 
+/// A face-rig control (docs/LIP_SYNC.md §6.5): a helper bone whose offset from its
+/// rest, and twist, drive shape weights. See `face.rs`.
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Default, Debug)]
+#[serde(default)]
+pub struct FaceControl {
+    /// its place in the layout: "Corner_L", "Jaw"…
+    pub name: String,
+    /// local position and rotation at rest (no shapes driven)
+    pub rest: Vec2,
+    pub rest_rot: f32,
+    /// the travel for full weight
+    pub range: f32,
+    pub slots: Vec<ControlSlot>,
+}
+
+/// A direction a control can move, each driving its own shapes.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq, Eq, Default, Debug)]
+pub enum ControlAxis {
+    #[default]
+    Up,
+    Down,
+    /// screen right (the character's left)
+    Right,
+    Left,
+    /// counter-clockwise twist
+    TwistCcw,
+    TwistCw,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Default, Debug)]
+#[serde(default)]
+pub struct ControlSlot {
+    pub axis: ControlAxis,
+    pub targets: Vec<SlotTarget>,
+}
+
+/// A shape a slot drives: on mesh bone `mesh`, shape `shape`, scaled by `weight`.
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Default, Debug)]
+#[serde(default)]
+pub struct SlotTarget {
+    pub mesh: i32,
+    pub shape: i32,
+    pub weight: f32,
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq, Default, Debug)]
 pub struct ShapeDelta {
     pub vert: u32,
@@ -2559,6 +2607,8 @@ pub struct EditMode {
     /// sculpting: unselected vertices this close (mesh units) to a dragged one follow
     /// it with a smooth falloff; 0 moves only the selection
     pub sculpt_radius: f32,
+    /// show face rigs' masks and control tracks over the canvas
+    pub show_face_rig: bool,
     pub export_bake_ik: bool,
     /// bake animation layers into Base (exports for runtimes)
     pub export_flatten_layers: bool,
@@ -2975,6 +3025,9 @@ pub enum Events {
     ToggleSculptShape,
     DuplicateShape,
     CaptureShape,
+    SetUpFace,
+    AddStandardShapes,
+    SetFaceControl,
     SetSculptRadius,
     ResetVertices,
     SelectBind,
@@ -3171,6 +3224,27 @@ impl EventState {
         self.events.push(E::ToggleSculptShape);
         self.values.push(bone_id as f32);
         self.str_values.push(shape.to_string());
+    }
+
+    /// Add a face rig for a mesh (docs/LIP_SYNC.md §6.5).
+    pub fn set_up_face(&mut self, mesh_id: i32, root_name: &str) {
+        self.events.push(E::SetUpFace);
+        self.values.push(mesh_id as f32);
+        self.str_values.push(root_name.to_string());
+    }
+
+    /// Add the standard face shapes a mesh lacks (with the visemes when `visemes`).
+    pub fn add_standard_shapes(&mut self, mesh_id: i32, visemes: bool) {
+        self.events.push(E::AddStandardShapes);
+        self.values.push(mesh_id as f32);
+        self.str_values.push(if visemes { "1" } else { "0" }.to_string());
+    }
+
+    /// Replace a face control's settings (rest, range, slots).
+    pub fn set_face_control(&mut self, bone_id: i32, control: &FaceControl) {
+        self.events.push(E::SetFaceControl);
+        self.values.push(bone_id as f32);
+        self.str_values.push(serde_json::to_string(control).unwrap());
     }
 
     /// Capture the mesh as it's posed now as a new shape (docs/LIP_SYNC.md §4.4).
@@ -3679,7 +3753,7 @@ fn gridline_default() -> i32 {
     500
 }
 
-fn default_tint() -> TintColor {
+pub fn default_tint() -> TintColor {
     TintColor::new(1., 1., 1., 1.)
 }
 

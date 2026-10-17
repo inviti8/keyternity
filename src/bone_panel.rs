@@ -412,6 +412,11 @@ pub fn draw(
         ui.add_space(20.);
     }
 
+    if bone.face_control.is_some() {
+        crate::face_ui::panel(ui, &bone, shared_ui, config, armature, events);
+        ui.add_space(20.);
+    }
+
     if children.len() > 0 || parents.len() > 0 {
         inverse_kinematics(ui, &bone, selections, shared_ui, config, armature, events);
         if !bone.ik_folded {

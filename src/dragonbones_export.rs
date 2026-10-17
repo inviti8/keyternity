@@ -40,6 +40,8 @@ pub fn export(armature: &Armature, base: &str, tex_padding: Vec2) -> Result<DbFi
     for anim in &mut armature.animations {
         *anim = crate::layers::flatten_in(anim, &ctx, &setup);
     }
+    // no face rigs in DragonBones: bake what the controls drive, and drop them
+    crate::face::bake_for_export(&mut armature);
     let armature = &armature;
 
     let textures = resolve_textures(armature);
@@ -1125,14 +1127,24 @@ impl<'a> Ctx<'a> {
             .iter()
             .filter(|slot| {
                 let Some(bone) = self.bone(slot.bone_id) else { return false };
-                let keyed = anim.keyframes.iter().any(|k| k.bone_id == bone.id && k.element == AnimElement::ShapeWeight);
+                let keyed = anim.keyframes.iter().any(|k| k.bone_id == bone.id && k.element == AnimElement::ShapeWeight)
+                    || self.arm.bones.iter().any(|c| {
+                        c.face_control.as_ref().is_some_and(|fc| fc.slots.iter().any(|s| s.targets.iter().any(|t| t.mesh == bone.id)))
+                            && anim.keyframes.iter().any(|k| k.bone_id == c.id)
+                    });
                 bone.verts_edited && !bone.vertices.is_empty() && !bone.shapes.is_empty() && (keyed || bone.shapes.iter().any(|s| s.weight != 0.))
             })
             .collect();
         if meshes.is_empty() {
             return vec![];
         }
-        let poses: Vec<Vec<Bone>> = (0..=duration_sf).map(|f| crate::layers::pose(anim, &self.arm.bones, f)).collect();
+        let poses: Vec<Vec<Bone>> = (0..=duration_sf)
+            .map(|f| {
+                let mut pose = crate::layers::pose(anim, &self.arm.bones, f);
+                crate::face::drive(&mut pose);
+                pose
+            })
+            .collect();
         let mut out = vec![];
         for slot in meshes {
             let bone = self.bone(slot.bone_id).unwrap();

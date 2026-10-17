@@ -301,6 +301,31 @@
     "delete": "Delete"
   },
   "bone_panel": {
+    "face": {
+      "no_mesh": "Set Up Face needs a mesh (with vertices) to rig.",
+      "standard": "+ Standard Shapes",
+      "standard_desc": "Add the standard face shapes this mesh doesn't have yet (blinks, brows, mouth, lips, jaw, tongue), empty, named and grouped, ready to sculpt. Shapes named in Mixamo's or FaceBot's spelling count as present.",
+      "visemes": "+ Visemes",
+      "visemes_desc": "The standard shapes plus Preston Blair's ten viseme shapes (AI, E, O, U, etc, WQ, MBP, L, FV, rest), for crisp drawn or sculpted mouths.",
+      "set_up": "Set Up Face",
+      "set_up_desc": "Add a face rig over this mesh: 13 controls laid out like FaceBot's mask (brows, eyes, nose, mouth, corners, lips, jaw, tongue). Drag a control and its shapes follow; key controls like any bone. Each direction is mapped to this mesh's standard shapes.",
+      "rigged": "This mesh already has a face rig.",
+      "root_name": "Face",
+      "control": "Face control: $name",
+      "control_desc": "This control drives shapes: each direction it moves (and its twist) adds its shapes' weight, full at its range. Its parent controls carry it without driving it.",
+      "range": "Range:",
+      "range_desc": "How far the control moves for full weight.",
+      "set_rest": "Set Rest Here",
+      "set_rest_desc": "Make the control's current position and rotation its rest (where it drives nothing).",
+      "axis_up": "Up",
+      "axis_down": "Down",
+      "axis_right": "Right",
+      "axis_left": "Left",
+      "axis_twistccw": "Twist ⟲",
+      "axis_twistcw": "Twist ⟳",
+      "unmapped": "nothing",
+      "target_desc": "Double- or right-click to remove."
+    },
     "shapes": {
       "heading": "Shapes ($n)",
       "desc": "Shapes (morph targets): sculpted offsets of this mesh's vertices, blended by weight before skinning, so they follow the bones. Use them for mouths, blinks, brows and squash. While animating, a weight change keys it.",

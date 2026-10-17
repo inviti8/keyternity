@@ -451,7 +451,7 @@ fn touched(anim: &Animation, ctx: &Ctx, layers: impl Iterator<Item = usize>) -> 
 
 /// Keys sampled on every frame, with the ones a straight line through their
 /// neighbours would give dropped.
-fn sampled(bone_id: i32, el: &AnimElement, shape: i32, values: &[(i32, f32)]) -> Vec<Keyframe> {
+pub(crate) fn sampled(bone_id: i32, el: &AnimElement, shape: i32, values: &[(i32, f32)]) -> Vec<Keyframe> {
     let (start, end) = utils::interp_preset(HandlePreset::Linear);
     let key = |&(frame, value): &(i32, f32)| Keyframe {
         frame,

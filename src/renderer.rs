@@ -925,6 +925,7 @@ pub fn render_screenshot(
 pub fn construction(bones: &mut Vec<Bone>, og_bones: &Vec<Bone>) {
     let ik_rot = ik::solve(og_bones);
     *bones = og_bones.clone();
+    crate::face::drive(bones);
     inheritance(bones, ik_rot, &vec![]);
     construct_verts(bones);
 }
@@ -943,6 +944,7 @@ pub fn runtime_construction(
 
     // re-construct bones, accounting for physics
     *bones = og_bones.clone();
+    crate::face::drive(bones);
     inheritance(bones, ik_rot, &armature_bones);
 
     construct_verts(bones);

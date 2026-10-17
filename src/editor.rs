@@ -43,7 +43,13 @@ pub fn iterate_events(
             E::AddCamera | E::DeleteCamera | E::DuplicateCamera | E::FitCamera => undo_states.new_undo_cameras(&armature.cameras),
             E::SetCamera if events.values[0] == 1. => undo_states.new_undo_cameras(&armature.cameras),
             E::SetLayer if events.values[0] == 1. => undo_states.new_undo_anim(armature.sel_anim(&selections).unwrap()),
-            E::AddShape | E::DeleteShape | E::DuplicateShape | E::CaptureShape => {
+            E::SetUpFace => undo_states.new_undo_bones(&armature.bones),
+            E::SetFaceControl => {
+                if let Some(b) = armature.bones.iter().find(|b| b.id == events.values[0] as i32) {
+                    undo_states.new_undo_bone(b);
+                }
+            }
+            E::AddShape | E::DeleteShape | E::DuplicateShape | E::CaptureShape | E::AddStandardShapes => {
                 if let Some(b) = armature.bones.iter().find(|b| b.id == events.values[0] as i32) {
                     undo_states.new_undo_bone(b);
                     undo_states.new_undo_anims(&armature.animations);
@@ -197,6 +203,9 @@ pub fn iterate_events(
         || event == Events::ToggleSculptShape
         || event == Events::DuplicateShape
         || event == Events::CaptureShape
+        || event == Events::SetUpFace
+        || event == Events::AddStandardShapes
+        || event == Events::SetFaceControl
     {
         let bone_id = events.values[0] as i32;
         let s = events.str_values[0].clone();
@@ -213,6 +222,24 @@ pub fn iterate_events(
                     shapes::delete(armature, bone_id, id);
                     if edit_mode.sculpt_shape == Some((bone_id, id)) {
                         edit_mode.sculpt_shape = None;
+                    }
+                }
+            }
+            Events::SetUpFace => {
+                let ids = face::set_up(armature, bone_id, if s.is_empty() { "Face" } else { &s });
+                if ids.is_empty() {
+                    open_modal(ui, false, ui.loc("bone_panel.face.no_mesh"));
+                }
+            }
+            Events::AddStandardShapes => {
+                if let Some(bone) = armature.bones.iter_mut().find(|b| b.id == bone_id) {
+                    face::add_standard_shapes(bone, s == "1");
+                }
+            }
+            Events::SetFaceControl => {
+                if let (Ok(fc), Some(bone)) = (serde_json::from_str::<FaceControl>(&s), armature.bones.iter_mut().find(|b| b.id == bone_id)) {
+                    if bone.face_control.is_some() {
+                        bone.face_control = Some(fc);
                     }
                 }
             }

@@ -66,6 +66,8 @@ pub mod dragonbones_import;
 pub mod editor;
 pub mod envelope;
 pub mod export_sequence;
+pub mod face;
+pub mod face_ui;
 pub mod ik;
 pub mod export_modal;
 pub mod file_reader;

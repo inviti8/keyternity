@@ -314,6 +314,10 @@ pub fn draw(
         envelope_labels(context, shared_ui, config, events);
     }
     shared_ui.canvas_rect = Some(context.available_rect());
+    // face rigs: mask and control tracks (docs/LIP_SYNC.md §6.5)
+    if !shared_ui.startup_window {
+        face_ui::overlay(context, config, camera, armature, selections, edit_mode);
+    }
     // render cameras, over the canvas (docs/FRAME_SEQUENCES.md §4.2)
     let on_camera = !shared_ui.startup_window
         && camera_ui::overlay(context, shared_ui, config, camera, armature, selections, edit_mode, events);

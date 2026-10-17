@@ -586,6 +586,10 @@ pub fn prepare_files(
     for anim in &mut armature_copy.animations {
         *anim = if edit_mode.export_flatten_layers { crate::layers::flatten_in(anim, &ctx, &setup) } else { anim.normalized() };
     }
+    // runtimes have no face rigs: bake what the controls drive, and drop them
+    if edit_mode.export_flatten_layers {
+        crate::face::bake_for_export(&mut armature_copy);
+    }
 
     // remove keyframes with a frame of -1
     for anim in &mut armature_copy.animations {
@@ -751,6 +755,17 @@ pub fn prepare_files(
     for bone in &mut armature_copy.bones {
         if let Some(ik) = &mut bone.ik {
             ik.target_id = bones.iter().position(|b| b.id == ik.target_id).map_or(-1, |i| i as i32);
+        }
+    }
+
+    // index face-control target meshes
+    for bone in &mut armature_copy.bones {
+        if let Some(fc) = &mut bone.face_control {
+            for slot in &mut fc.slots {
+                for t in &mut slot.targets {
+                    t.mesh = bones.iter().position(|b| b.id == t.mesh).map_or(-1, |i| i as i32);
+                }
+            }
         }
     }
 
