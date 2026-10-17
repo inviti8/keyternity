@@ -16,6 +16,8 @@ const ROW_H: f32 = 18.;
 /// the label column's width, by default and at least
 const LABEL_W: f32 = 190.;
 const LABEL_MIN: f32 = 110.;
+/// a layer row's height
+const LAYER_H: f32 = 20.;
 /// the range bar's height (docs/TIMELINE.md §2.2)
 const BAR_H: f32 = 14.;
 /// the bottom bar's height
@@ -335,6 +337,7 @@ fn timeline_editor(
             let zoom_mode = navigate(ui, shared_ui, config, selections, armature, total, graph);
 
             draw_ruler(ui, shared_ui, selections, armature, config, events, area.left());
+            draw_layer_stack(ui, shared_ui, armature, config, selections, events, area.left());
 
             // The options bar has to be at the bottom, but it needs to be created first
             // so that the remaining height can be taken up by the rows.
@@ -468,6 +471,8 @@ pub fn draw_ruler(
         let tri = vec![egui::pos2(x - 4., rect.bottom() - 6.), egui::pos2(x + 4., rect.bottom() - 6.), egui::pos2(x, rect.bottom())];
         painter.add(egui::Shape::convex_polygon(tri, col, egui::Stroke::NONE));
     }
+
+    draw_layer_header(ui, shared_ui, anim, config, events, header);
 
     let Some(p) = ui.ctx().pointer_interact_pos() else { return };
     if p.x < left {
@@ -759,6 +764,201 @@ pub fn draw_bottom_bar(
     });
 }
 
+/// Above the labels: "+ Layer", and once there are layers, a fold arrow for the stack.
+fn draw_layer_header(
+    ui: &mut egui::Ui,
+    shared_ui: &mut crate::Ui,
+    anim: &Animation,
+    config: &Config,
+    events: &mut EventState,
+    header: egui::Rect,
+) {
+    let text: egui::Color32 = config.colors.text.into();
+    let dark: egui::Color32 = config.colors.dark_accent.into();
+    let painter = ui.painter_at(header);
+    let id = ui.id().with("timeline_layer_header");
+    let hand = egui::CursorIcon::PointingHand;
+    let font = egui::FontId::proportional(12.);
+    let y = header.center().y;
+
+    if !anim.layers.is_empty() {
+        let fold = egui::Rect::from_x_y_ranges(header.left()..=header.right() - 24., header.y_range());
+        let resp = ui.interact(fold, id.with("fold"), egui::Sense::click()).on_hover_cursor(hand);
+        let open = !shared_ui.timeline_layers_folded;
+        let (x, s) = (header.left() + 10., 3.5);
+        let pts = if open {
+            vec![egui::pos2(x - s, y - s * 0.6), egui::pos2(x + s, y - s * 0.6), egui::pos2(x, y + s * 0.8)]
+        } else {
+            vec![egui::pos2(x - s * 0.6, y - s), egui::pos2(x + s * 0.8, y), egui::pos2(x - s * 0.6, y + s)]
+        };
+        let col = if resp.hovered() { text } else { text.gamma_multiply(0.7) };
+        painter.add(egui::Shape::convex_polygon(pts, col, egui::Stroke::NONE));
+        let active = &anim.layers[anim.active_layer.min(anim.layers.len() - 1)].name;
+        let label = shared_ui.loc("keyframe_editor.layers").replace("$n", &anim.layers.len().to_string()).replace("$active", active);
+        painter.text(egui::pos2(header.left() + 20., y), egui::Align2::LEFT_CENTER, label, font.clone(), col);
+        if resp.clicked() {
+            shared_ui.timeline_layers_folded = !shared_ui.timeline_layers_folded;
+        }
+    }
+    let add = if anim.layers.is_empty() {
+        egui::Rect::from_min_max(egui::pos2(header.left() + 4., header.top() + 2.), egui::pos2(header.left() + 70., header.bottom() - 2.))
+    } else {
+        egui::Rect::from_min_max(egui::pos2(header.right() - 22., header.top() + 2.), egui::pos2(header.right() - 4., header.bottom() - 2.))
+    };
+    let resp = ui
+        .interact(add, id.with("add"), egui::Sense::click())
+        .on_hover_cursor(hand)
+        .on_hover_text(shared_ui.loc("keyframe_editor.add_layer_desc"));
+    painter.rect_filled(add, egui::CornerRadius::same(2), if resp.hovered() { shade(dark, 30) } else { shade(dark, 12) });
+    let s = if anim.layers.is_empty() { shared_ui.loc("keyframe_editor.add_layer") } else { "+".to_string() };
+    painter.text(add.center(), egui::Align2::CENTER_CENTER, s, font, text);
+    if resp.clicked() {
+        events.add_layer(LayerMode::Additive);
+        shared_ui.timeline_layers_folded = false;
+    }
+}
+
+/// The layer stack (docs/TIMELINE.md §4.1, §5.3): top layer first. Each row has its
+/// name, mode, weight and mute/solo/lock in the label column, and a tick on every
+/// frame it keys across the graph. Click a layer to edit it; right-click for its menu.
+fn draw_layer_stack(
+    ui: &mut egui::Ui,
+    shared_ui: &mut crate::Ui,
+    armature: &Armature,
+    config: &Config,
+    selections: &SelectionState,
+    events: &mut EventState,
+    labels_left: f32,
+) {
+    let anim = &armature.animations[selections.anim];
+    if anim.layers.is_empty() || shared_ui.timeline_layers_folded {
+        return;
+    }
+    let (gl, gw) = shared_ui.timeline_graph;
+    let view = shared_ui.timeline_view;
+    let x_of = |frame: i32| view.frame_to_x(frame as f32, gl, gw);
+    let text: egui::Color32 = config.colors.text.into();
+    let light: egui::Color32 = config.colors.light_accent.into();
+    let dark: egui::Color32 = config.colors.dark_accent.into();
+    let hand = egui::CursorIcon::PointingHand;
+
+    let n = anim.layers.len();
+    let top = ui.cursor().top();
+    let full = egui::Rect::from_min_size(egui::pos2(labels_left, top), egui::vec2(gl + gw - labels_left, n as f32 * LAYER_H + 2.));
+    ui.allocate_rect(full, egui::Sense::hover());
+    let painter = ui.painter_at(full);
+    painter.rect_filled(full, egui::CornerRadius::ZERO, shade(dark, -6));
+
+    for (row, i) in (0..n).rev().enumerate() {
+        let layer = &anim.layers[i];
+        let r = egui::Rect::from_min_size(egui::pos2(labels_left, top + row as f32 * LAYER_H), egui::vec2(full.width(), LAYER_H));
+        let label = egui::Rect::from_x_y_ranges(labels_left..=gl - 1., r.y_range());
+        let graph = egui::Rect::from_x_y_ranges(gl..=gl + gw, r.shrink2(egui::vec2(0., 2.)).y_range());
+        let active = i == anim.active_layer;
+        let playing = layers::enabled(anim, i);
+        if active {
+            painter.rect_filled(label, egui::CornerRadius::ZERO, shade(dark, 18));
+        }
+        painter.rect_filled(graph, egui::CornerRadius::ZERO, if active { shade(light, -6) } else { shade(light, -16) });
+        let id = ui.id().with(("timeline_layer", i));
+
+        // the frames it keys
+        let mut frames: Vec<i32> = anim.layer_keys(i).iter().map(|k| k.frame).collect();
+        frames.sort();
+        frames.dedup();
+        let tick = if playing { text.gamma_multiply(0.75) } else { text.gamma_multiply(0.3) };
+        let gp = painter.with_clip_rect(graph);
+        for f in frames.into_iter().filter(|f| *f as f32 >= view.start - 1. && *f as f32 <= view.end + 1.) {
+            gp.vline(x_of(f), graph.shrink2(egui::vec2(0., 3.)).y_range(), egui::Stroke::new(2., tick));
+        }
+
+        // toggles, right to left: lock, solo, mute, mode, weight (not on Base)
+        let mut x = label.right() - 4.;
+        let mut changed: Option<(AnimLayer, bool)> = None;
+        if i > 0 {
+            let toggle = |ui: &mut egui::Ui, x: &mut f32, s: &str, on: bool, tip: String, salt: &str| -> bool {
+                let b = egui::Rect::from_min_max(egui::pos2(*x - 15., r.top() + 2.), egui::pos2(*x, r.bottom() - 2.));
+                *x -= 17.;
+                let resp = ui.interact(b, id.with(salt), egui::Sense::click()).on_hover_cursor(hand).on_hover_text(tip);
+                let bg = if on { shade(dark, 50) } else { shade(dark, 8) };
+                painter.rect_filled(b, egui::CornerRadius::same(2), if resp.hovered() { shade(bg, 15) } else { bg });
+                let col = if on { text } else { text.gamma_multiply(0.55) };
+                painter.text(b.center(), egui::Align2::CENTER_CENTER, s, egui::FontId::proportional(11.), col);
+                resp.clicked()
+            };
+            if toggle(ui, &mut x, "L", layer.locked, shared_ui.loc("keyframe_editor.layer_lock"), "lock") {
+                changed = Some((AnimLayer { locked: !layer.locked, ..layer.clone() }, true));
+            }
+            if toggle(ui, &mut x, "S", layer.solo, shared_ui.loc("keyframe_editor.layer_solo"), "solo") {
+                changed = Some((AnimLayer { solo: !layer.solo, ..layer.clone() }, true));
+            }
+            if toggle(ui, &mut x, "M", layer.muted, shared_ui.loc("keyframe_editor.layer_mute"), "mute") {
+                changed = Some((AnimLayer { muted: !layer.muted, ..layer.clone() }, true));
+            }
+            let additive = layer.mode == LayerMode::Additive;
+            let mode_tip = shared_ui.loc(if additive { "keyframe_editor.layer_additive" } else { "keyframe_editor.layer_override" });
+            if toggle(ui, &mut x, if additive { "+" } else { "=" }, additive, mode_tip, "mode") {
+                let mode = if additive { LayerMode::Override } else { LayerMode::Additive };
+                changed = Some((AnimLayer { mode, ..layer.clone() }, true));
+            }
+
+            // weight: drag to change, as one undo step
+            let w = egui::Rect::from_min_max(egui::pos2(x - 34., r.top() + 2.), egui::pos2(x, r.bottom() - 2.));
+            x -= 38.;
+            let resp = ui
+                .interact(w, id.with("weight"), egui::Sense::click_and_drag())
+                .on_hover_cursor(egui::CursorIcon::ResizeHorizontal)
+                .on_hover_text(shared_ui.loc("keyframe_editor.layer_weight"));
+            painter.rect_filled(w, egui::CornerRadius::same(2), shade(dark, 8));
+            let fill = egui::Rect::from_min_size(w.min, egui::vec2(w.width() * layer.weight.clamp(0., 1.), w.height()));
+            painter.rect_filled(fill, egui::CornerRadius::same(2), shade(dark, 40));
+            let pct = format!("{:.0}%", layer.weight * 100.);
+            painter.text(w.center(), egui::Align2::CENTER_CENTER, pct, egui::FontId::proportional(11.), text);
+            if resp.dragged() || resp.drag_started() {
+                let weight = (layer.weight + resp.drag_delta().x / 100.).clamp(0., 1.);
+                changed = Some((AnimLayer { weight, ..layer.clone() }, resp.drag_started()));
+            } else if resp.double_clicked() {
+                changed = Some((AnimLayer { weight: 1., ..layer.clone() }, true));
+            }
+        }
+        if let Some((new, step)) = changed {
+            events.set_layer(i, &new, step);
+        }
+
+        // the name: click to edit this layer; renaming from its menu
+        let name_rect = egui::Rect::from_x_y_ranges(label.left() + 6.0..=x.max(label.left() + 30.), r.y_range());
+        let context_id = format!("layer_{}", i);
+        if shared_ui.rename_id == context_id {
+            let options = Some(TextInputOptions { focus: true, size: Vec2::new(name_rect.width(), LAYER_H - 2.), ..Default::default() });
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(name_rect));
+            let (edited, value, _) = child.text_input(context_id, shared_ui, layer.name.clone(), options);
+            if edited && !value.trim().is_empty() {
+                events.set_layer(i, &AnimLayer { name: value.trim().to_string(), ..layer.clone() }, true);
+            }
+            continue;
+        }
+        let resp = ui.interact(name_rect, id.with("name"), egui::Sense::click()).on_hover_cursor(hand);
+        let col = if active { text } else if playing { text.gamma_multiply(0.75) } else { text.gamma_multiply(0.4) };
+        let name = if layer.locked { format!("{} 🔒", layer.name) } else { layer.name.clone() };
+        painter.with_clip_rect(name_rect).text(
+            egui::pos2(name_rect.left(), r.center().y),
+            egui::Align2::LEFT_CENTER,
+            name,
+            egui::FontId::proportional(if active { 13. } else { 12.5 }),
+            col,
+        );
+        if resp.clicked() && !active {
+            events.select_layer(i);
+        }
+        if resp.double_clicked() && i > 0 {
+            shared_ui.rename_id = context_id.clone();
+        }
+        if resp.secondary_clicked() {
+            shared_ui.context_menu.show(&context_id);
+        }
+    }
+}
+
 /// selected keys
 const SELECTED: egui::Color32 = egui::Color32::from_rgb(110, 240, 120);
 
@@ -791,7 +991,15 @@ fn draw_rows(
     zoom_mode: bool,
 ) {
     let anim = &armature.animations[selections.anim];
-    let rows = timeline_rows::build_rows(anim, &armature.bones, &shared_ui.timeline_opened);
+    // rows for what any layer keys, so they stay put when switching layers; the marks
+    // are the active layer's
+    let rows = if anim.layers.is_empty() {
+        timeline_rows::build_rows(anim, &armature.bones, &shared_ui.timeline_opened)
+    } else {
+        let mut all = Animation { keyframes: vec![], ..Default::default() };
+        all.keyframes = (0..anim.layers.len()).flat_map(|j| anim.layer_keys(j).iter().cloned()).collect();
+        timeline_rows::build_rows(&all, &armature.bones, &shared_ui.timeline_opened)
+    };
     let (gl, gw) = shared_ui.timeline_graph;
     let view = shared_ui.timeline_view;
     let ppf = view.px_per_frame(gw);
@@ -900,7 +1108,8 @@ fn draw_rows(
             gp.vline(x_of(frame), graph.y_range(), egui::Stroke::new(2., egui::Color32::from_rgb(175, 175, 175)));
         }
         let origin = ui.input(|i| i.pointer.press_origin());
-        let scaling = shared_ui.timeline_scale.is_some();
+        let locked = anim.active_layer > 0 && anim.layers.get(anim.active_layer).is_some_and(|l| l.locked);
+        let scaling = shared_ui.timeline_scale.is_some() || locked;
         if bg.clicked() && !scaling {
             if let Some(p) = bg.interact_pointer_pos().filter(|p| p.x > gl) {
                 let frame = view.nearest_frame(p.x, gl, gw);
@@ -1073,6 +1282,20 @@ fn draw_rows(
             }
         }
         shared_ui.timeline_hover_column = hovered_column;
+
+        // the other playing layers' keys on these rows, faintly (docs/TIMELINE.md §5.3)
+        for j in (0..anim.layers.len()).filter(|j| *j != anim.active_layer && layers::enabled(anim, *j)) {
+            let keys = anim.layer_keys(j);
+            for i in shown.clone() {
+                let r = row_rect(i);
+                let mut fs: Vec<i32> = keys.iter().filter(|k| rows[i].matches(k)).map(|k| k.frame).collect();
+                fs.sort();
+                fs.dedup();
+                for f in fs.into_iter().filter(|f| visible(*f)) {
+                    gp.vline(x_of(f), r.shrink2(egui::vec2(0., 5.)).y_range(), egui::Stroke::new(1.5, text.gamma_multiply(0.3)));
+                }
+            }
+        }
 
         // dragging keys: where they'll land, red when dropping above the rows deletes
         let dragging = shared_ui.dragged_keyframe.bone_id == -2 && shared_ui.dragged_keyframe.frame >= 0;
@@ -1317,7 +1540,8 @@ fn add_selected_keyframes(selected_keyframes: &mut Vec<Keyframe>, kf: &Keyframe)
 /// Where the animation ends (its End, or its last key), or `None` for an empty one
 /// with no End set.
 fn end_of(anim: &Animation) -> Option<i32> {
-    (anim.end_frame > 0 || !anim.keyframes.is_empty()).then(|| anim.last_frame())
+    let keyed = !anim.keyframes.is_empty() || anim.layers.iter().any(|l| !l.keyframes.is_empty());
+    (anim.end_frame > 0 || keyed).then(|| anim.last_frame())
 }
 
 /// Scaling keys pivots on the current frame, or the first selected key without one.

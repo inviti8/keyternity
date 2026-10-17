@@ -42,8 +42,10 @@ pub fn iterate_events(
             E::DeleteStyle | E::NewStyle    => undo_states.new_undo_styles(&armature.styles),
             E::AddCamera | E::DeleteCamera | E::DuplicateCamera | E::FitCamera => undo_states.new_undo_cameras(&armature.cameras),
             E::SetCamera if events.values[0] == 1. => undo_states.new_undo_cameras(&armature.cameras),
+            E::SetLayer if events.values[0] == 1. => undo_states.new_undo_anim(armature.sel_anim(&selections).unwrap()),
             E::RenameStyle => if !ui.just_made_style { undo_states.new_undo_style(&armature.sel_style(&selections).unwrap()); ui.just_made_style = false }
-            E::DeleteSelectedKeyframes | E::DeleteKeyframeLine | E::PasteKeyframesOnFrame | E::InsertKeyframe | E::InsertKeyframeAll | E::DeleteBoneKeyframes | E::SetAnimEnd | E::DeleteKeyframeGroup | E::ScaleSelectedKeyframes => {
+            E::DeleteSelectedKeyframes | E::DeleteKeyframeLine | E::PasteKeyframesOnFrame | E::InsertKeyframe | E::InsertKeyframeAll | E::DeleteBoneKeyframes | E::SetAnimEnd | E::DeleteKeyframeGroup | E::ScaleSelectedKeyframes
+            | E::AddLayer | E::DeleteLayer | E::DuplicateLayer | E::MergeLayerDown | E::FlattenLayers => {
                 undo_states.new_undo_anim(armature.sel_anim(&selections).unwrap())
             }
             E::ResetVertices | E::CenterBoneVerts | E::DeleteVertex | E::TraceBoneVerts | E::NewVertex | E::DeleteTriangle | E::RetriangulateVerts | E::PenApply => {
@@ -488,6 +490,15 @@ pub fn simple_event(
         }
         Events::ToggleShowAllEnvelopes => edit_mode.show_all_envelopes = !edit_mode.show_all_envelopes,
         Events::ToggleShowCameras => edit_mode.show_cameras = !edit_mode.show_cameras,
+        Events::AddLayer | Events::SelectLayer | Events::SetLayer | Events::DeleteLayer
+        | Events::DuplicateLayer | Events::MergeLayerDown | Events::FlattenLayers => {
+            let bones = armature.bones.clone();
+            if let Some(anim) = armature.animations.get_mut(selections.anim) {
+                layers::layer_event(event, value, &str_value, anim, &bones);
+            }
+            // keys selected on the old layer aren't on the new one
+            ui.selected_keyframes = vec![];
+        }
         Events::AddCamera | Events::SelectCamera | Events::SetCamera | Events::DeleteCamera
         | Events::DuplicateCamera | Events::FitCamera => {
             camera_ui::camera_event(event, value, &str_value, armature, selections, edit_mode, ui);
@@ -1658,6 +1669,11 @@ pub fn insert_keyframes(armature: &mut Armature, anim: usize, frame: i32, bone_i
         return;
     }
     let shown = armature.animate(anim, frame, None);
+    let a = &armature.animations[anim];
+    let layer = a.layers.get(a.active_layer).filter(|_| a.active_layer > 0).cloned();
+    if layer.as_ref().is_some_and(|l| l.locked) {
+        return;
+    }
     for id in bone_ids {
         let Some(setup) = armature.bones.iter().find(|b| b.id == *id).cloned() else { continue };
         let Some(now) = shown.iter().find(|b| b.id == *id) else { continue };
@@ -1665,10 +1681,20 @@ pub fn insert_keyframes(armature: &mut Armature, anim: usize, frame: i32, bone_i
             continue;
         }
         let values = |b: &Bone| [b.pos.x, b.pos.y, b.rot, b.scale.x, b.scale.y];
+        // through a layer, the key that shows this pose
+        let shown_values: Vec<f32> = KEYED
+            .iter()
+            .zip(values(now))
+            .map(|(el, v)| match &layer {
+                Some(_) => layers::key_on_active(&armature.animations[anim], &armature.bones, *id, el, frame, v),
+                None => v,
+            })
+            .collect();
         let a = &mut armature.animations[anim];
-        for ((el, value), setup_value) in KEYED.iter().zip(values(now)).zip(values(&setup)) {
+        let first_key = layer.as_ref().map_or(true, |l| l.mode != LayerMode::Override);
+        for ((el, value), setup_value) in KEYED.iter().zip(shown_values).zip(values(&setup)) {
             let has_first = a.keyframes.iter().any(|k| k.bone_id == *id && k.element == *el && k.frame == 0);
-            if frame != 0 && !has_first {
+            if frame != 0 && !has_first && first_key {
                 let (_, i) = a.check_if_in_keyframe(*id, 0, el.clone());
                 a.keyframes[i].value = setup_value;
             }
@@ -2174,6 +2200,17 @@ fn edit_bone(
         return;
     }
 
+    // on a layer above Base: nothing if it's locked, and the key is what the layer
+    // needs for the pose to show `value` (docs/TIMELINE.md §5.3)
+    let (value, layer_mode) = {
+        let anim = &armature.animations[anim_id];
+        match anim.layers.get(anim.active_layer).filter(|_| anim.active_layer > 0) {
+            Some(layer) if layer.locked => return,
+            Some(layer) => (layers::key_on_active(anim, &armature.bones, bone_id, &element, anim_frame, value), Some(layer.mode.clone())),
+            None => (value, None),
+        }
+    };
+
     macro_rules! check_kf {
         ($kf:expr) => {
             $kf.frame == 0 && $kf.element == element && $kf.bone_id == bone_id
@@ -2182,8 +2219,10 @@ fn edit_bone(
 
     let anim = &mut armature.animations;
 
+    // a first key with the setup value (an override layer gets none: it would hold
+    // the setup pose over Base)
     let has_0th = anim[anim_id].keyframes.iter().find(|kf| check_kf!(kf)) != None;
-    if anim_frame != 0 && !has_0th {
+    if anim_frame != 0 && !has_0th && layer_mode != Some(LayerMode::Override) {
         anim[anim_id].check_if_in_keyframe(bone_id, 0, element.clone());
         let mut oth_frame = anim[anim_id].keyframes.iter_mut().find(|kf| check_kf!(kf));
         oth_frame.as_mut().unwrap().value = init_value;

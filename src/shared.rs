@@ -6,7 +6,6 @@ use std::{
     fmt,
     ops::{DivAssign, MulAssign},
     path::PathBuf,
-    str::FromStr,
 };
 
 use std::sync::Mutex;
@@ -761,6 +760,8 @@ pub struct Ui {
     pub timeline_box: Option<(f32, f32)>,
     /// the frame of the hovered key, whose column is highlighted
     pub timeline_hover_column: Option<i32>,
+    /// the layer stack is folded away
+    pub timeline_layers_folded: bool,
     /// scaling the selected keys in time
     pub timeline_scale: Option<crate::timeline_rows::ScaleDrag>,
     /// `S` was pressed over the timeline: start scaling
@@ -1648,82 +1649,14 @@ impl Armature {
         anim_frame: i32,
         og_bones: Option<&Vec<Bone>>,
     ) -> Vec<Bone> {
-        let mut bones = if og_bones != None {
+        let bones = if og_bones != None {
             og_bones.unwrap().clone()
         } else {
             self.bones.clone()
         };
 
-        // ignore if this animation has no keyframes
-        let kf_len = self.animations[anim_idx].keyframes.len();
-        if kf_len == 0 {
-            return bones;
-        }
-
-        let kfs = &self.animations[anim_idx].keyframes;
-
-        for b in &mut bones {
-            macro_rules! prev_frame {
-                ($element:expr, $default:expr) => {{
-                    let prev = utils::get_prev_frame(anim_frame, kfs, b.id, &$element);
-                    if prev != usize::MAX {
-                        kfs[prev].value
-                    } else {
-                        $default
-                    }
-                }};
-            }
-
-            macro_rules! prev_str {
-                ($element:expr, $default:expr) => {{
-                    let prev = utils::get_prev_frame(anim_frame, kfs, b.id, &$element);
-                    if prev != usize::MAX {
-                        kfs[prev].value_str.clone()
-                    } else {
-                        $default
-                    }
-                }};
-            }
-
-            // iterable anim interps
-            type AE = AnimElement;
-            #[rustfmt::skip]
-            {
-                b.pos.x   = self.interpolate_keyframes(anim_idx, b.id, AE::PositionX, b.pos.x,   anim_frame);
-                b.pos.y   = self.interpolate_keyframes(anim_idx, b.id, AE::PositionY, b.pos.y,   anim_frame);
-                b.rot     = self.interpolate_keyframes(anim_idx, b.id, AE::Rotation,  b.rot,     anim_frame);
-                b.scale.x = self.interpolate_keyframes(anim_idx, b.id, AE::ScaleX,    b.scale.x, anim_frame);
-                b.scale.y = self.interpolate_keyframes(anim_idx, b.id, AE::ScaleY,    b.scale.y, anim_frame);
-                b.tint.r  = self.interpolate_keyframes(anim_idx, b.id, AE::TintR,     b.tint.r,  anim_frame);
-                b.tint.g  = self.interpolate_keyframes(anim_idx, b.id, AE::TintG,     b.tint.g,  anim_frame);
-                b.tint.b  = self.interpolate_keyframes(anim_idx, b.id, AE::TintB,     b.tint.b,  anim_frame);
-                b.tint.a  = self.interpolate_keyframes(anim_idx, b.id, AE::TintA,     b.tint.a,  anim_frame);
-
-                b.zindex          = prev_frame!(AE::Zindex,      b.zindex as f32) as i32;
-                b.hidden          = prev_frame!(AE::Hidden,      bool_as_f32(b.hidden)) != 0.;
-
-                b.tex = prev_str!(AE::Texture, b.tex.clone());
-            };
-
-            macro_rules! prev_enum {
-                ($field:expr, $anim_element:expr, $enum:ident) => {
-                    let kfs = &self.animations[anim_idx].keyframes;
-                    let prev_frame = utils::get_prev_frame(anim_frame, kfs, b.id, &$anim_element);
-                    if prev_frame != usize::MAX {
-                        $field = $enum::from_str(&kfs[prev_frame].value_str).unwrap();
-                    }
-                };
-            }
-
-            if let Some(mut ik) = b.ik.clone() {
-                ik.weight = self.interpolate_keyframes(anim_idx, b.id, AE::IkWeight, ik.weight, anim_frame);
-                ik.copy_rotation = prev_frame!(AE::IkCopyRotation, bool_as_f32(ik.copy_rotation)) != 0.;
-                prev_enum!(ik.bend, AnimElement::IkBend, IkBend);
-                b.ik = Some(ik);
-            }
-        }
-
-        bones
+        // Base as it always was, then each playing layer (docs/TIMELINE.md §5.2)
+        crate::layers::pose(&self.animations[anim_idx], &bones, anim_frame)
     }
 
     pub fn interpolate_keyframes(
@@ -2033,19 +1966,118 @@ pub struct Animation {
     /// The animation's last frame, set in the timeline: playback loops here and
     /// exports stop here. 0 follows the last key.
     pub end_frame: i32,
+    /// The active layer's keys (Base's, without layers): see `layers.rs`.
     pub keyframes: Vec<Keyframe>,
+    /// Animation layers, bottom (Base) to top (docs/TIMELINE.md §5). Empty: just Base.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub layers: Vec<AnimLayer>,
+    /// The layer being edited: its keys are in `keyframes`. Saved files have 0.
+    #[serde(skip_serializing_if = "is_zero_usize")]
+    pub active_layer: usize,
     #[serde(skip)]
     pub elapsed: Option<Instant>,
 }
 
+fn is_zero_usize(v: &usize) -> bool {
+    *v == 0
+}
+
+#[derive(PartialEq, serde::Serialize, serde::Deserialize, Clone, Default, Debug)]
+pub enum LayerMode {
+    /// blends toward the layer's values by its weight
+    #[default]
+    Override,
+    /// adds its offset from the setup pose (scale multiplies), by its weight
+    Additive,
+}
+
+/// An animation layer (docs/TIMELINE.md §5.1).
+#[derive(PartialEq, serde::Serialize, serde::Deserialize, Clone, Debug)]
+#[serde(default)]
+pub struct AnimLayer {
+    pub id: i32,
+    pub name: String,
+    pub mode: LayerMode,
+    /// 0..1
+    pub weight: f32,
+    pub muted: bool,
+    pub solo: bool,
+    /// no editing (e.g. a generated layer)
+    pub locked: bool,
+    /// owned by a lip-sync track, which regenerates its keys (docs/LIP_SYNC.md)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generated: Option<i32>,
+    /// this layer's keys, while it isn't the active one
+    pub keyframes: Vec<Keyframe>,
+}
+
+impl Default for AnimLayer {
+    fn default() -> Self {
+        AnimLayer {
+            id: 0,
+            name: String::new(),
+            mode: LayerMode::Override,
+            weight: 1.,
+            muted: false,
+            solo: false,
+            locked: false,
+            generated: None,
+            keyframes: vec![],
+        }
+    }
+}
+
 impl Animation {
-    /// The last frame: the End set in the timeline, or else the last key (0 without
-    /// keys). Playback loops here, and exports stop here.
+    /// The last frame: the End set in the timeline, or else the last key on any layer
+    /// (0 without keys). Playback loops here, and exports stop here.
     pub fn last_frame(&self) -> i32 {
         if self.end_frame > 0 {
             return self.end_frame;
         }
-        self.keyframes.iter().map(|kf| kf.frame).max().unwrap_or(0).max(0)
+        let layers = self.layers.iter().flat_map(|l| l.keyframes.iter());
+        self.keyframes.iter().chain(layers).map(|kf| kf.frame).max().unwrap_or(0).max(0)
+    }
+
+    /// Layer `i`'s keys, wherever they're kept (the active layer's are in `keyframes`).
+    pub fn layer_keys(&self, i: usize) -> &[Keyframe] {
+        if i == self.active_layer || self.layers.is_empty() {
+            if i == self.active_layer {
+                return &self.keyframes;
+            }
+            return &[];
+        }
+        self.layers.get(i).map_or(&[], |l| &l.keyframes)
+    }
+
+    /// Make layer `i` the one being edited: its keys move into `keyframes`.
+    pub fn set_active_layer(&mut self, i: usize) {
+        if i == self.active_layer || i >= self.layers.len() {
+            return;
+        }
+        let active = self.active_layer;
+        if let Some(layer) = self.layers.get_mut(active) {
+            layer.keyframes = std::mem::take(&mut self.keyframes);
+        }
+        self.keyframes = std::mem::take(&mut self.layers[i].keyframes);
+        self.active_layer = i;
+    }
+
+    /// A copy with Base's keys in `keyframes`, as files store it.
+    pub fn normalized(&self) -> Animation {
+        let mut anim = self.clone();
+        anim.set_active_layer(0);
+        anim
+    }
+
+    /// Add Base, if there are no layers yet, and a new layer on top. Returns its index.
+    pub fn add_layer(&mut self, name: &str, mode: LayerMode) -> usize {
+        if self.layers.is_empty() {
+            self.layers.push(AnimLayer { id: 0, name: "Base".to_string(), ..Default::default() });
+            self.active_layer = 0;
+        }
+        let id = self.layers.iter().map(|l| l.id).max().unwrap_or(0) + 1;
+        self.layers.push(AnimLayer { id, name: name.to_string(), mode, ..Default::default() });
+        self.layers.len() - 1
     }
 
     /// Return which frame has these attributes, or create a new one
@@ -2407,6 +2439,8 @@ pub struct EditMode {
     pub time: f32,
     pub sel_time: f32,
     pub export_bake_ik: bool,
+    /// bake animation layers into Base (exports for runtimes)
+    pub export_flatten_layers: bool,
     pub export_exclude_ik: bool,
     pub export_img_format: ExportImgFormat,
     pub export_clear_color: Color,
@@ -2803,6 +2837,13 @@ pub enum Events {
     SetAnimEnd,
     DeleteKeyframeGroup,
     ScaleSelectedKeyframes,
+    AddLayer,
+    SelectLayer,
+    SetLayer,
+    DeleteLayer,
+    DuplicateLayer,
+    MergeLayerDown,
+    FlattenLayers,
     ResetVertices,
     SelectBind,
     DeleteIkTarget,
@@ -2952,6 +2993,44 @@ impl EventState {
     event_with_value!(delete_triangle, Events::DeleteTriangle, idx, usize);
     event_with_value!(adjust_keyframes_by_fps, E::AdjustKeyframesByFPS, fps, usize);
     event_with_value!(set_anim_end, E::SetAnimEnd, end_frame, i32);
+
+    /// Add a layer to the selected animation (on top), and make it the active one.
+    pub fn add_layer(&mut self, mode: LayerMode) {
+        self.events.push(E::AddLayer);
+        self.values.push(if mode == LayerMode::Additive { 1. } else { 0. });
+        self.str_values.push("".to_string());
+    }
+
+    fn layer_event(&mut self, event: Events, index: usize) {
+        self.events.push(event);
+        self.values.push(index as f32);
+        self.str_values.push("".to_string());
+    }
+
+    pub fn select_layer(&mut self, index: usize) {
+        self.layer_event(E::SelectLayer, index);
+    }
+    pub fn delete_layer(&mut self, index: usize) {
+        self.layer_event(E::DeleteLayer, index);
+    }
+    pub fn duplicate_layer(&mut self, index: usize) {
+        self.layer_event(E::DuplicateLayer, index);
+    }
+    pub fn merge_layer_down(&mut self, index: usize) {
+        self.layer_event(E::MergeLayerDown, index);
+    }
+    pub fn flatten_layers(&mut self) {
+        self.layer_event(E::FlattenLayers, 0);
+    }
+
+    /// Set layer `index`'s settings (not its keys). `new_step` makes an undo step, so
+    /// dragging the weight is one.
+    pub fn set_layer(&mut self, index: usize, layer: &AnimLayer, new_step: bool) {
+        let settings = AnimLayer { keyframes: vec![], ..layer.clone() };
+        self.events.push(E::SetLayer);
+        self.values.push(if new_step { 1. } else { 0. });
+        self.str_values.push(serde_json::to_string(&(index, settings)).unwrap());
+    }
 
     /// Scale the selected keys in time by `factor` around `pivot` (a frame).
     pub fn scale_selected_keyframes(&mut self, pivot: i32, factor: f32) {

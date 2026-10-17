@@ -32,7 +32,13 @@ pub fn export(armature: &Armature, base: &str, tex_padding: Vec2) -> Result<DbFi
     }
 
     // Bind Pose helpers aren't exported: bind-posed meshes become native DragonBones skinning
-    let armature = &without_bind_helpers(armature);
+    let mut armature = without_bind_helpers(armature);
+    // DragonBones plays one timeline per animation: bake the layers in
+    let setup = armature.bones.clone();
+    for anim in &mut armature.animations {
+        *anim = crate::layers::flatten(anim, &setup);
+    }
+    let armature = &armature;
 
     let textures = resolve_textures(armature);
     let (tex_png, tex_json, tex_sizes) = build_atlas(armature, &textures, base, tex_padding)?;

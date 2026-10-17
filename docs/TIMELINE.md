@@ -282,6 +282,26 @@ The timeline gets a **layer stack** above the rows (§4.1):
 - **Generated layers** (lip sync) are locked. Unlocking one, or editing its keys,
   first asks whether to detach it from regeneration.
 
+**As built:**
+- **Storage:** the active layer's keys live in `Animation.keyframes`, and the other
+  layers keep theirs in `AnimLayer.keyframes`. Every existing tool (keying, the rows,
+  the keyframe panel, copy and paste, breakdown) therefore works on the active layer
+  unchanged. Saving puts Base back in `keyframes` (`active_layer` 0), so files read as
+  before.
+- **Keying through a layer:** editing a bone, or Set Key, writes the key the active
+  layer needs for the pose to show what was set. The other playing layers give the
+  value below it, and the layer's mode and weight are inverted over that
+  (`layers::key_on_active`). On an additive layer, the automatic first key is the
+  setup value, which is a zero offset. An override layer gets no automatic first key,
+  so it doesn't hold the setup pose over Base.
+- **The stack:** the header above the labels holds *+ Layer* (additive by default) and
+  folds the stack. Each layer shows its name (click to edit that layer, double-click
+  to rename), weight (drag; double-click for 100%), mode (`+` additive, `=` override),
+  and **M**ute, **S**olo and **L**ock. Its keyed frames show as ticks across the graph.
+  Right-click a layer for Rename, Duplicate, Merge Down, Delete, or Flatten All Layers.
+- **Merging and flattening** sample every frame. That's exact, because the editor and
+  runtimes play whole frames. Straight runs are reduced back to two keys.
+
 ### 5.4 Lip sync on layers
 
 - The lip-sync track writes into its own **Lip Sync** layer:
@@ -394,10 +414,10 @@ generator for blinks (play a short clip at random intervals between a min and ma
 
 | phase | contents |
 |---|---|
-| **1. Navigation** | Visible-range view and `frame_to_x`/`x_to_frame` (tested), range bar with zoom handles, cursor-anchored zoom, Shift-scroll and middle-drag pan, Home/F fit, adaptive ruler, drawing only what's in view |
-| **2. Rows and keys** | Compact rows, grouped channels with disclosure, small marks (diamond/square), colour per property group, summary rows (folded bones show keys), column highlight, box select, scaling keys around the playhead (§3.5), 🗑 moved to the context menu |
+| **1. Navigation** ✓ | Visible-range view and `frame_to_x`/`x_to_frame` (tested), range bar with zoom handles, cursor-anchored zoom, Shift-scroll and middle-drag pan, Home/F fit, adaptive ruler, drawing only what's in view |
+| **2. Rows and keys** ✓ | Compact rows, grouped channels with disclosure, small marks (diamond/square), colour per property group, summary rows (folded bones show keys), column highlight, box select, scaling keys around the playhead (§3.5), 🗑 moved to the context menu |
 | *2, later* | Pinned bone headers while scrolling; the typed *Scale Keys…* factor (`S`-drag with Ctrl snapping covers most uses); alternating frame shading |
-| **3. Layers** | §5.1–5.5: data, evaluation, the layer stack, Merge Down/Bake, flattening for export |
+| **3. Layers** ✓ | §5.1–5.5: data, evaluation, the layer stack, Merge Down/Bake, flattening for export (`.skfe` and DragonBones exports flatten; `.skf` keeps layers) |
 | **4. Play modes and generators** | §5.7–5.8: Linear/Looped layers (length, speed, phase, free-running clock), linked layers, Close Loop, Wave and Noise generators, Bake to Keys, seam warnings on export |
 
 Phases 1 and 2 change only the timeline UI: no file format changes, and nothing for

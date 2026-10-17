@@ -579,6 +579,12 @@ pub fn prepare_files(
     // clone armature and make some edits, then serialize it
     let mut armature_copy = armature.clone();
 
+    // files keep Base in `keyframes`; exports (runtimes) get the layers flattened
+    let setup = armature_copy.bones.clone();
+    for anim in &mut armature_copy.animations {
+        *anim = if edit_mode.export_flatten_layers { crate::layers::flatten(anim, &setup) } else { anim.normalized() };
+    }
+
     // remove keyframes with a frame of -1
     for anim in &mut armature_copy.animations {
         anim.keyframes.retain(|kf| kf.frame != -1);

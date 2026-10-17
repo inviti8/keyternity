@@ -71,6 +71,7 @@ pub mod export_modal;
 pub mod file_reader;
 pub mod keyframe_editor;
 pub mod keyframe_panel;
+pub mod layers;
 pub mod mesh_tools;
 pub mod modal;
 pub mod navigation;
@@ -1597,7 +1598,9 @@ impl BackendRenderer {
 
         let mut armature = rest_armature(shared);
         let camera = shared.camera.clone();
-        let edit_mode = shared.edit_mode.clone();
+        let mut edit_mode = shared.edit_mode.clone();
+        // runtimes play Base only: exports bake the layers into it
+        edit_mode.export_flatten_layers = *shared.ui.saving.lock().unwrap() == Saving::Exporting;
         let sequence_export = Some(shared.ui.sequence_opts.clone());
 
         // clear export options

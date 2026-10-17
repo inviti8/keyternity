@@ -1084,6 +1084,27 @@ fn context_menu_content(
             shared_ui.timeline_scale_start = true;
             shared_ui.context_menu.close();
         }
+    } else if id == "layer" {
+        let i: usize = split[1].parse().unwrap_or(0);
+        if i > 0 {
+            ui.context_rename(shared_ui, config, context_id.clone());
+            if ui.context_button(&shared_ui.loc("keyframe_editor.layer_duplicate"), &config).clicked() {
+                events.duplicate_layer(i);
+                shared_ui.context_menu.close();
+            }
+            if ui.context_button(&shared_ui.loc("keyframe_editor.layer_merge_down"), &config).clicked() {
+                events.merge_layer_down(i);
+                shared_ui.context_menu.close();
+            }
+            if ui.context_button(&shared_ui.loc("keyframe_editor.layer_delete"), &config).clicked() {
+                events.delete_layer(i);
+                shared_ui.context_menu.close();
+            }
+        }
+        if ui.context_button(&shared_ui.loc("keyframe_editor.layer_flatten"), &config).clicked() {
+            events.flatten_layers();
+            shared_ui.context_menu.close();
+        }
     } else if id == "kfrow" {
         // a timeline row: kfrow_{bone}_g_{group} or kfrow_{bone}_e_{element}
         let bone_id: i32 = split[1].parse().unwrap_or(-1);
