@@ -889,15 +889,15 @@ fn synthesize(&self, text: &str, voice: &Voice, opts: &VoiceOpts)
 ```
 
 The text is known, so lip sync only needs **word timings**:
-- Providers that give them (Kokoro's durations summed per word; ElevenLabs'
-  character timestamps) feed the engine directly.
+- Providers that give them (Kokoro's durations summed per word; the system voice's
+  word events) feed the engine directly.
 - For the others, Whisper times the known text (§7.4).
 
 | provider | where | voices | timings | licence and notes |
 |---|---|---|---|---|
 | **Kokoro-82M** (first) | Local ONNX (`ort`), ~80–330 MB model download | 54 voices, 8 languages (v1.0) | Phonemes from its misaki G2P. Durations come from ONNX exports that output the duration tensor (the Rust Kokoros project reads them). | Apache-2.0 weights. Small and fast, CPU-friendly. No voice cloning. |
 | **Chatterbox** (Resemble AI) | Local Python/PyTorch, as a helper process | **Voice cloning** from a reference clip. Emotion "exaggeration" control (original model). 23+ languages (Multilingual V3). | None, so Whisper times the known text | MIT. Every output carries an imperceptible Perth watermark. Heavier: 110M–500M parameters, and a GPU is best. |
-| **ElevenLabs** (cloud, optional) | HTTPS with the artist's own API key | Large library and cloning | `/with-timestamps` returns per-character timing | Commercial service. Sends the text off the machine, so it's opt-in, with the key stored like the agent token. |
+| ~~ElevenLabs~~ | — | — | — | Removed after 0.8.0: no third-party cloud dependency. Self-hosted inference, after Inkternity's, takes its place (§8.2). |
 | Piper | — | — | — | Skipped for now: the original MIT repository was archived in October 2025, and development continued under GPL. Voice licences vary. |
 
 **UI:** a **Dialog** panel on the animation:
@@ -930,11 +930,6 @@ window in `src/dialog_ui.rs`.
 - **System:** the computer's own voices, with nothing to download.
   - Windows' voices through SAPI, which gives exact word timings.
   - `say` on macOS, `espeak-ng` on Linux. These two are untested.
-- **ElevenLabs:**
-  - Opt-in, with the artist's API key from Settings → Voices.
-  - Uses `/with-timestamps`, whose character timings are joined into words.
-  - The response parsing is tested; a live call hasn't been tested, since it needs a
-    key.
 - **Chatterbox:**
   - `tools/voice/chatterbox_tts.py` declares its dependencies inline. Keyternity
     writes it to its data folder and runs it with `uv run`, or with a Python set in
@@ -948,7 +943,7 @@ window in `src/dialog_ui.rs`.
   - **Generate** speaks the line on a thread, showing download progress, and adds the
     result as a take. Each take keeps its audio, voice, speed and any word timings.
   - The take in use is the line's clip, lip-synced on the line's words. Exact word
-    timings (SAPI, ElevenLabs) are used as they are; an edited line keeps the matched
+    timings (SAPI) are used as they are; an edited line keeps the matched
     words' times and shares the gaps among the new ones.
   - **Use** swaps a take in, and the lip sync follows it. **▶** auditions a take.
     Deleting the take in use falls back to the newest one left.
@@ -959,6 +954,35 @@ window in `src/dialog_ui.rs`.
   - `cargo test --test all -- dialog::kokoro_speaks --ignored` downloads Kokoro
     through the app's own path and speaks.
   - `dialog::system_voice_speaks` uses the system voice.
+
+### 8.2 Self-hosted voice inference (proposed)
+
+No third-party cloud voices: heavy voice models run on our own inference, the way
+Inkternity's 3D tools do. That service is `hvym-img-tools`:
+- a FastAPI tool registry on RunPod Serverless GPUs that scale to zero;
+- weights baked into GHCR images;
+- an always-on proxy at `https://img.hvym.link` that holds the RunPod key;
+- clients that send `X-API-Key` and wait on one long request (cold starts of
+  minutes; the proxy does the polling);
+- optional warm leases, and x402 per-use billing.
+
+The proposal:
+- **A `tts` tool in hvym-img-tools** serving **Chatterbox**: voice cloning from a
+  reference clip, emotion exaggeration, 23+ languages. It's the model that's
+  impractical locally, at several GB of PyTorch and best on a GPU.
+- **Kokoro stays local,** since it's fast on a CPU.
+- **Request:** `POST {endpoint}/tools/tts`, multipart, with:
+  - `text`, `language` and `exaggeration`;
+  - optionally a `reference` audio file, behind the same consent checkbox.
+
+  The response is raw `audio/wav`.
+- **Same contract as Inkternity's clients:** endpoint and key in Settings → Voices
+  (endpoint defaulting to `img.hvym.link`), a 900 s timeout, status codes mapped to
+  messages, and an optional warm lease while the Dialog window is open.
+- **The local Chatterbox helper** (`uv run`) either stays as the offline option or
+  goes. To decide.
+- **Timings:** Chatterbox gives no word timings; lip sync's speech detection times
+  its clean output well (§7.6).
 
 ## 9. Agent (MCP) tools
 
@@ -990,7 +1014,7 @@ reviews and refines.
   - `get_dialog`: every animation's clips, dialog lines with takes, and lip-sync
     tracks with their word times, plus the voices on offer and whether Kokoro is
     installed.
-  - `add_dialog`: speaks a line (Kokoro, a system voice, or ElevenLabs), places it at
+  - `add_dialog`: speaks a line (Kokoro or a system voice), places it at
     a frame, and lip-syncs it. It returns the clip, its length and the words' times.
     The first Kokoro download isn't done from a tool call, which would freeze the
     editor: the agent is told to ask the artist to generate one line in the Dialog
@@ -1026,7 +1050,7 @@ reviews and refines.
 | **2. Dialog audio** ✓ (desktop) | Clips embedded in `.skf`, Symphonia decoding, rodio playback in sync, waveform, audio scrub, video export with audio | Desktop first |
 | **3. Mouth rigs + lip sync** ✓ (first pass, §7.5) | The 17 sounds and the viseme-set mappings, mouth rig panel and auto-fill, the English text rules (ported from TalkingHead), typed transcripts with words spread over speech, lip-sync tracks and keyer, regenerate and bake, loudness fallback, drawn and morph mouths | The Facebot loop, end to end. No downloads. |
 | **3b. Transcription** ✓ (§7.6) | whisper.cpp through `whisper-rs`, model download, word timings, editable transcript; TalkingHead's other language modules | Imported recordings |
-| **4. Voice generation** ✓ (§8.1) | Provider interface, Kokoro local with timings, Dialog panel with takes; then ElevenLabs (opt-in) and Chatterbox (helper process) | |
+| **4. Voice generation** ✓ (§8.1) | Provider interface, Kokoro local with timings, Dialog panel with takes; Chatterbox (helper process). ElevenLabs was built, then removed after 0.8.0 | |
 | **5. Agent** ✓ (§9.1) | MCP tools; optional audio-recognition engines (Rhubarb, ONNX phonemes) only if transcripts prove too coarse | |
 
 ## 11. Decisions to confirm
@@ -1056,7 +1080,6 @@ reviews and refines.
 - Rhubarb Lip Sync: [repository and README](https://github.com/DanielSWolf/rhubarb-lip-sync), [licence](https://github.com/DanielSWolf/rhubarb-lip-sync/blob/master/LICENSE.md), [releases](https://github.com/DanielSWolf/rhubarb-lip-sync/releases)
 - Kokoro-82M: [model card](https://huggingface.co/hexgrad/Kokoro-82M); durations in the Rust port: [Kokoros](https://docsearch.algolia.com/mcp/docs/repo/lucasjinreal/kokoros)
 - Chatterbox: [repository](https://github.com/resemble-ai/chatterbox)
-- ElevenLabs timestamps: [API reference](https://elevenlabs.io/docs/api-reference/streaming-with-timestamps), [announcement](https://elevenlabs.io/blog/new-text-to-speech-endpoints-with-timestamps)
 - Phoneme recognition in ONNX: [wav2vec2-espeak-ctc export](https://huggingface.co/sadda-speech/wav2vec2-espeak-ctc), [CTC aligner](https://huggingface.co/omote-ai/ctc-aligner), [torchaudio forced alignment](https://pytorch.org/audio/main/tutorials/forced_alignment_tutorial.html)
 - Piper status: [overview](https://www.cekura.ai/discover/piper-tts)
 - Audio in Rust: [rodio](https://docs.rs/crate/rodio/0.20.0), [Symphonia](https://www.mintlify.com/pdeljanov/Symphonia/resources/faq)

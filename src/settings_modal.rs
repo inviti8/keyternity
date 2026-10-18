@@ -629,14 +629,6 @@ fn voices(ui: &mut egui::Ui, shared_ui: &mut crate::Ui) {
     }
     ui.add_space(10.);
 
-    ui.label(egui::RichText::new("ElevenLabs").strong());
-    ui.label(loc(shared_ui, "elevenlabs_desc"));
-    ui.horizontal(|ui| {
-        ui.label(loc(shared_ui, "api_key"));
-        ui.add(egui::TextEdit::singleline(&mut shared_ui.updated_config.elevenlabs_key).password(true).desired_width(220.));
-    });
-    ui.add_space(10.);
-
     ui.label(egui::RichText::new("Chatterbox").strong());
     ui.label(loc(shared_ui, "chatterbox_desc"));
     ui.horizontal(|ui| {

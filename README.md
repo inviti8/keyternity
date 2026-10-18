@@ -132,8 +132,8 @@ DragonBones for game engines. Older files lose their IK.
 - **Voice generation** — the **Dialog** window: type a line, pick a voice,
   Generate. Each generation is kept as a take to listen to and swap. The take in use
   is placed on the timeline and lip-synced. Voices: Kokoro on this computer (through
-  sherpa-onnx, downloaded on first use), the computer's own voices, ElevenLabs with
-  your API key, and Chatterbox voice cloning (with the voice owner's consent)
+  sherpa-onnx, downloaded on first use), the computer's own voices, and Chatterbox
+  voice cloning (with the voice owner's consent)
   ([design](docs/LIP_SYNC.md#8-voice-generation-dialog-from-text))
 - **AI agent** — Keyternity runs a local MCP server, so an agent such as Claude
   Code can work on the open rig. For skinning, it reads the rig, looks at rendered

@@ -778,12 +778,10 @@ pub struct Ui {
     pub whisper_model: Option<usize>,
     pub lipsync_error: Option<String>,
     /// the Dialog window; generated takes' audio waiting to be added; the last
-    /// generation error; voices fetched from ElevenLabs; whether a line's text is
-    /// being typed (one undo step)
+    /// generation error; whether a line's text is being typed (one undo step)
     pub dialog_open: bool,
     pub pending_audio: Vec<crate::audio::AudioData>,
     pub dialog_error: Option<(i32, String)>,
-    pub elevenlabs_voices: Option<Result<Vec<crate::dialog::Voice>, String>>,
     pub dialog_typing: Option<i32>,
     /// the artist confirmed they have the cloned voice's owner's consent (this session)
     pub chatterbox_consent: bool,
@@ -979,10 +977,8 @@ pub struct Config {
     pub agent_port: u16,
     pub agent_token: String,
     pub agent_read_only: bool,
-    /// Voice generation (docs/LIP_SYNC.md §8): the artist's ElevenLabs API key (kept
-    /// here like the agent token, never sent anywhere else), the Kokoro model
+    /// Voice generation (docs/LIP_SYNC.md §8): the Kokoro model
     /// (`voice::KOKORO_MODELS`), and what runs the Chatterbox helper (`uv`, or a Python)
-    pub elevenlabs_key: String,
     pub kokoro_model: usize,
     pub chatterbox_runner: String,
 
@@ -1048,7 +1044,6 @@ impl Default for Config {
             agent_port: 0,
             agent_token: String::new(),
             agent_read_only: false,
-            elevenlabs_key: String::new(),
             kokoro_model: 0,
             chatterbox_runner: String::new(),
         }

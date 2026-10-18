@@ -7,7 +7,6 @@
 //!   generated speech is clean, so lip sync's speech detection times it well.
 //! - **System**: the computer's own voices (Windows SAPI, with exact word timings;
 //!   macOS `say`; `espeak-ng` on Linux). Nothing to download.
-//! - **ElevenLabs** (cloud, opt-in, the artist's own API key): per-character timings.
 //! - **Chatterbox** (MIT, Resemble AI): voice cloning from a reference clip, run as a
 //!   helper script through `uv` (it brings PyTorch; a GPU helps). Its output carries
 //!   Resemble's imperceptible watermark.
@@ -30,7 +29,6 @@ pub struct Speech {
 /// What providers need from the settings.
 #[derive(Clone, Default)]
 pub struct VoiceConfig {
-    pub elevenlabs_key: String,
     /// `KOKORO_MODELS` index
     pub kokoro_model: usize,
     /// what runs the Chatterbox helper: `uv` (default) or a Python with chatterbox-tts
@@ -405,76 +403,6 @@ pub fn sapi_words(tsv: &str, total: f32) -> Vec<TimedWord> {
         .collect()
 }
 
-// ---------------------------------------------------------------- ElevenLabs
-
-/// The voices on the artist's ElevenLabs account.
-pub fn elevenlabs_voices(key: &str) -> Result<Vec<Voice>, String> {
-    let resp = ureq::get("https://api.elevenlabs.io/v1/voices").header("xi-api-key", key).call().map_err(|e| format!("ElevenLabs: {e}"))?;
-    let body = resp.into_body().read_to_string().map_err(|e| format!("ElevenLabs: {e}"))?;
-    parse_elevenlabs_voices(&body)
-}
-
-pub fn parse_elevenlabs_voices(json: &str) -> Result<Vec<Voice>, String> {
-    let v: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("ElevenLabs sent something unexpected: {e}"))?;
-    Ok(v["voices"]
-        .as_array()
-        .ok_or("ElevenLabs sent no voices")?
-        .iter()
-        .filter_map(|x| Some(Voice { provider: Provider::ElevenLabs, id: x["voice_id"].as_str()?.to_string(), name: x["name"].as_str().unwrap_or("?").to_string() }))
-        .collect())
-}
-
-fn elevenlabs(text: &str, voice: &Voice, opts: &VoiceOpts, cfg: &VoiceConfig) -> Result<Speech, String> {
-    if cfg.elevenlabs_key.trim().is_empty() {
-        return Err("add your ElevenLabs API key in Settings → Voices".into());
-    }
-    let url = format!("https://api.elevenlabs.io/v1/text-to-speech/{}/with-timestamps?output_format=mp3_44100_128", voice.id);
-    let body = serde_json::json!({
-        "text": text,
-        "model_id": "eleven_multilingual_v2",
-        "voice_settings": { "stability": 0.5, "similarity_boost": 0.75, "speed": opts.speed.clamp(0.7, 1.2) },
-    });
-    let resp = ureq::post(&url)
-        .header("xi-api-key", cfg.elevenlabs_key.trim())
-        .header("Content-Type", "application/json")
-        .send(body.to_string())
-        .map_err(|e| format!("ElevenLabs: {e}"))?;
-    let json = resp.into_body().read_to_string().map_err(|e| format!("ElevenLabs: {e}"))?;
-    let (bytes, words) = parse_elevenlabs_speech(&json)?;
-    Ok(Speech { bytes, ext: "mp3".into(), words: Some(words) })
-}
-
-/// ElevenLabs' `/with-timestamps` answer: the audio, and its characters' times joined
-/// into words.
-pub fn parse_elevenlabs_speech(json: &str) -> Result<(Vec<u8>, Vec<TimedWord>), String> {
-    use base64::Engine;
-    let v: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("ElevenLabs sent something unexpected: {e}"))?;
-    let audio = v["audio_base64"].as_str().ok_or("ElevenLabs sent no audio")?;
-    let bytes = base64::engine::general_purpose::STANDARD.decode(audio).map_err(|e| format!("ElevenLabs' audio: {e}"))?;
-    let a = &v["alignment"];
-    let chars: Vec<&str> = a["characters"].as_array().map(|c| c.iter().filter_map(|x| x.as_str()).collect()).unwrap_or_default();
-    let times = |k: &str| -> Vec<f32> { a[k].as_array().map(|c| c.iter().filter_map(|x| x.as_f64()).map(|x| x as f32).collect()).unwrap_or_default() };
-    let (starts, ends) = (times("character_start_times_seconds"), times("character_end_times_seconds"));
-    let mut words: Vec<TimedWord> = vec![];
-    let mut cur: Option<TimedWord> = None;
-    for (i, c) in chars.iter().enumerate() {
-        let (s, e) = (starts.get(i).copied().unwrap_or(0.), ends.get(i).copied().unwrap_or(0.));
-        if c.trim().is_empty() {
-            words.extend(cur.take());
-            continue;
-        }
-        match &mut cur {
-            Some(w) => {
-                w.text += c;
-                w.end = e;
-            }
-            None => cur = Some(TimedWord { text: c.to_string(), start: s, end: e }),
-        }
-    }
-    words.extend(cur);
-    Ok((bytes, words))
-}
-
 // ---------------------------------------------------------------- Chatterbox
 
 /// The helper Keyternity runs for Chatterbox (its dependencies declared inline, for
@@ -515,7 +443,6 @@ pub fn synthesize(text: &str, voice: &Voice, opts: &VoiceOpts, cfg: &VoiceConfig
     match voice.provider {
         Provider::Kokoro => kokoro(text, voice, opts, cfg),
         Provider::System => system(text, voice, opts),
-        Provider::ElevenLabs => elevenlabs(text, voice, opts, cfg),
         Provider::Chatterbox => chatterbox(text, opts, cfg),
     }
 }

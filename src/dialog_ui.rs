@@ -63,7 +63,7 @@ fn body(ui: &mut egui::Ui, shared_ui: &mut crate::Ui, armature: &Armature, anim:
 /// What runs voice generation, from the settings.
 #[cfg(not(target_arch = "wasm32"))]
 fn voice_config(config: &Config) -> crate::voice::VoiceConfig {
-    crate::voice::VoiceConfig { elevenlabs_key: config.elevenlabs_key.clone(), kokoro_model: config.kokoro_model, chatterbox_runner: config.chatterbox_runner.clone() }
+    crate::voice::VoiceConfig { kokoro_model: config.kokoro_model, chatterbox_runner: config.chatterbox_runner.clone() }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -141,24 +141,6 @@ fn line_ui(ui: &mut egui::Ui, shared_ui: &mut crate::Ui, armature: &Armature, co
                 pick(ui, v);
             }
             ui.separator();
-            ui.label(egui::RichText::new("ElevenLabs").strong());
-            match &shared_ui.elevenlabs_voices {
-                Some(Ok(vs)) => {
-                    for v in vs.clone() {
-                        pick(ui, v);
-                    }
-                }
-                Some(Err(e)) => {
-                    ui.label(egui::RichText::new(e).small());
-                }
-                None => {}
-            }
-            if !config.elevenlabs_key.trim().is_empty() && ui.small_button(loc(shared_ui, "load_elevenlabs")).clicked() {
-                shared_ui.elevenlabs_voices = Some(voice::elevenlabs_voices(config.elevenlabs_key.trim()));
-            } else if config.elevenlabs_key.trim().is_empty() {
-                ui.label(egui::RichText::new(loc(shared_ui, "elevenlabs_key")).small());
-            }
-            ui.separator();
             pick(ui, Voice { provider: Provider::Chatterbox, id: "chatterbox".into(), name: loc(shared_ui, "chatterbox") });
         });
         ui.label(loc(shared_ui, "speed"));
@@ -223,10 +205,6 @@ fn line_ui(ui: &mut egui::Ui, shared_ui: &mut crate::Ui, armature: &Armature, co
                     tip += "\n\n";
                     tip += &loc(shared_ui, "kokoro_download").replace("$mb", &mb.to_string());
                 }
-            }
-            Provider::ElevenLabs => {
-                tip += "\n\n";
-                tip += &loc(shared_ui, "elevenlabs_note");
             }
             Provider::Chatterbox => {
                 tip += "\n\n";

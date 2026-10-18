@@ -164,27 +164,6 @@ fn a_voices_word_times_are_used_exactly() {
 }
 
 #[test]
-fn elevenlabs_answers_are_read() {
-    use base64::Engine;
-    let wav = speech(0.3, &[]);
-    let json = serde_json::json!({
-        "audio_base64": base64::engine::general_purpose::STANDARD.encode(&wav),
-        "alignment": {
-            "characters": ["H", "i", " ", "t", "h", "e", "r", "e", "!"],
-            "character_start_times_seconds": [0.0, 0.08, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45],
-            "character_end_times_seconds": [0.08, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5]
-        }
-    });
-    let (bytes, words) = voice::parse_elevenlabs_speech(&json.to_string()).unwrap();
-    assert_eq!(bytes, wav);
-    let w: Vec<(&str, f32, f32)> = words.iter().map(|w| (w.text.as_str(), w.start, w.end)).collect();
-    assert_eq!(w, vec![("Hi", 0.0, 0.15), ("there!", 0.2, 0.5)]);
-    let voices = voice::parse_elevenlabs_voices(r#"{"voices":[{"voice_id":"abc","name":"Rachel"}]}"#).unwrap();
-    assert_eq!((voices[0].id.as_str(), voices[0].name.as_str(), voices[0].provider), ("abc", "Rachel", Provider::ElevenLabs));
-    assert!(voice::parse_elevenlabs_speech("{}").is_err());
-}
-
-#[test]
 fn sapi_word_positions_become_words() {
     // events can arrive out of order; the character position orders them
     let tsv = "\u{feff}100\t0\tHello\n1650\t13\tPeter\n465\t6\tthere\n";

@@ -311,8 +311,6 @@
     "new_line_desc": "Add a line of dialog, starting at the current frame.",
     "text_hint": "What's said, punctuation and all",
     "system": "This computer",
-    "load_elevenlabs": "Load my ElevenLabs voices",
-    "elevenlabs_key": "Add your ElevenLabs API key in Settings → Voices to use its voices.",
     "chatterbox": "Chatterbox (clones a reference clip)",
     "speed": "Speed",
     "reference": "Voice to clone",
@@ -326,7 +324,6 @@
     "another_take": "Another take",
     "generate_desc": "Speak the line as a new take, and use it: it's placed at the line's frame and lip-synced.",
     "kokoro_download": "The first time, this downloads Kokoro ($mb MB), checked against its published checksums.",
-    "elevenlabs_note": "Sends the line to ElevenLabs, with your API key.",
     "chatterbox_note": "Runs the Chatterbox helper; the first time, uv installs it and PyTorch (several GB). Slow without a GPU. Its audio carries Resemble AI's imperceptible watermark.",
     "downloading": "Downloading $what: $done of $mb MB…",
     "speaking": "Speaking…",
@@ -579,7 +576,7 @@
       "outside_desc": "These vertices sit outside every bone's envelope, so they follow their nearest bone fully. Widen an envelope, or weight them by hand.",
       "select": "Select",
       "pose_mode": "Binding uses the rest pose: switch from Pose to the Armature or Animation tab.",
-    "bind_failed": "Couldn't bind to the skeleton:\n\n$err",
+      "bind_failed": "Couldn't bind to the skeleton:\n\n$err",
       "outside_report": "Bound to the skeleton. $err vertices sit outside every envelope and follow their nearest bone fully; the mesh panel can select them."
     },
     "envelope": {
@@ -821,10 +818,8 @@
     },
     "voices": {
       "heading": "Voices",
-      "desc": "Voice generation for dialog lines (the Dialog window). Kokoro runs on this computer; the system voice needs nothing; ElevenLabs and Chatterbox are optional.",
+      "desc": "Voice generation for dialog lines (the Dialog window). Kokoro and the system voice run on this computer; Chatterbox (voice cloning) is optional. Nothing is sent to a cloud service.",
       "kokoro_desc": "Speaks on this computer. The first line downloads sherpa-onnx's tool and the model below, checked against their published checksums. The full model is faster on most computers; int8 is a smaller download.",
-      "elevenlabs_desc": "Optional, and it sends your lines to ElevenLabs. Uses your own account: paste your API key here. It's kept in Keyternity's settings on this computer.",
-      "api_key": "API key",
       "chatterbox_desc": "Optional voice cloning from a reference clip, by a helper Keyternity runs. It needs uv (which installs Chatterbox and PyTorch, several GB, the first time); a GPU helps a lot. Only clone a voice with its owner's consent.",
       "runner": "Run with",
       "runner_desc": "uv (default), or the path of a Python that has chatterbox-tts installed."

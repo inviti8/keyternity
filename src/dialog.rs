@@ -10,17 +10,15 @@ pub enum Provider {
     #[default]
     Kokoro,
     System,
-    ElevenLabs,
     Chatterbox,
 }
 
 impl Provider {
-    pub const ALL: [Provider; 4] = [Provider::Kokoro, Provider::System, Provider::ElevenLabs, Provider::Chatterbox];
+    pub const ALL: [Provider; 3] = [Provider::Kokoro, Provider::System, Provider::Chatterbox];
     pub fn label(&self) -> &'static str {
         match self {
             Provider::Kokoro => "Kokoro",
             Provider::System => "System",
-            Provider::ElevenLabs => "ElevenLabs",
             Provider::Chatterbox => "Chatterbox",
         }
     }
