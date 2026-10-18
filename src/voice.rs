@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-pub use crate::dialog::{Provider, Voice, VoiceOpts};
+pub use crate::dialog::{Provider, Reference, Voice, VoiceOpts};
 
 /// What a provider made: an audio file, and the words' times if it knows them.
 #[derive(Debug)]
@@ -417,7 +417,7 @@ pub fn sapi_words(tsv: &str, total: f32) -> Vec<TimedWord> {
 /// `uv run`).
 const CHATTERBOX_HELPER: &str = include_str!("../tools/voice/chatterbox_tts.py");
 
-fn chatterbox(text: &str, opts: &VoiceOpts, cfg: &VoiceConfig) -> Result<Speech, String> {
+fn chatterbox(text: &str, opts: &VoiceOpts, cfg: &VoiceConfig, reference: Option<&Reference>) -> Result<Speech, String> {
     let helper = data_dir().join("chatterbox_tts.py");
     std::fs::create_dir_all(data_dir()).map_err(|e| e.to_string())?;
     std::fs::write(&helper, CHATTERBOX_HELPER).map_err(|e| e.to_string())?;
@@ -430,13 +430,19 @@ fn chatterbox(text: &str, opts: &VoiceOpts, cfg: &VoiceConfig) -> Result<Speech,
         cmd.arg("run");
     }
     cmd.arg(&helper).arg("--text-file").arg(&txt).arg("--out").arg(&wav).arg("--language").arg(opts.language.code()).arg("--exaggeration").arg(opts.exaggeration.to_string());
-    if !opts.reference.trim().is_empty() {
-        cmd.arg("--reference").arg(opts.reference.trim());
+    // the cloned voice's clip, as a file the helper can read
+    let ref_file = reference.map(|r| base.with_extension(format!("ref.{}", r.ext)));
+    if let (Some(path), Some(r)) = (&ref_file, reference) {
+        std::fs::write(path, r.bytes.as_slice()).map_err(|e| e.to_string())?;
+        cmd.arg("--reference").arg(path);
     }
     let r = run(&mut cmd, "Chatterbox");
     let bytes = std::fs::read(&wav);
     let _ = std::fs::remove_file(&txt);
     let _ = std::fs::remove_file(&wav);
+    if let Some(p) = &ref_file {
+        let _ = std::fs::remove_file(p);
+    }
     r?;
     Ok(Speech { bytes: bytes.map_err(|e| format!("Chatterbox wrote no audio: {e}"))?, ext: "wav".into(), words: None })
 }
@@ -498,7 +504,7 @@ pub fn hosted_error(status: u16, body: &str) -> String {
 /// retry (and its cache usually makes free).
 pub const HOSTED_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(5);
 
-fn hosted(text: &str, opts: &VoiceOpts, cfg: &VoiceConfig) -> Result<Speech, String> {
+fn hosted(text: &str, opts: &VoiceOpts, cfg: &VoiceConfig, reference: Option<&Reference>) -> Result<Speech, String> {
     let (endpoint, key) = hosted_target(cfg);
     if key.is_empty() {
         return Err("add your hosted voice key in Settings → Voices".into());
@@ -514,12 +520,9 @@ fn hosted(text: &str, opts: &VoiceOpts, cfg: &VoiceConfig) -> Result<Speech, Str
     ];
     // Chatterbox has no speed control; slower or faster pacing comes from cfg_weight
     fields.push(("cfg_weight", format!("{:.3}", (0.5 / opts.speed.clamp(0.5, 2.)).clamp(0.2, 1.))));
-    let reference = if opts.reference.trim().is_empty() {
-        None
-    } else {
-        Some(std::fs::read(opts.reference.trim()).map_err(|e| format!("couldn't read the voice reference: {e}"))?)
-    };
-    let (boundary, body) = multipart(&fields, reference.as_deref().map(|r| ("reference", "reference", r)));
+    let filename = reference.map(|r| format!("reference.{}", r.ext));
+    let file = reference.zip(filename.as_deref()).map(|(r, f)| ("reference", f, r.bytes.as_slice()));
+    let (boundary, body) = multipart(&fields, file);
 
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(std::time::Duration::from_secs(900)))
@@ -553,16 +556,17 @@ fn hosted(text: &str, opts: &VoiceOpts, cfg: &VoiceConfig) -> Result<Speech, Str
 
 // ---------------------------------------------------------------- speaking
 
-/// Speak `text` (blocking: run it on a thread).
-pub fn synthesize(text: &str, voice: &Voice, opts: &VoiceOpts, cfg: &VoiceConfig) -> Result<Speech, String> {
+/// Speak `text` (blocking: run it on a thread). `reference` is the cloned voice's clip
+/// for Chatterbox (`dialog::reference_of`, which checks consent); other voices ignore it.
+pub fn synthesize(text: &str, voice: &Voice, opts: &VoiceOpts, cfg: &VoiceConfig, reference: Option<&Reference>) -> Result<Speech, String> {
     if text.trim().is_empty() {
         return Err("type the line first".into());
     }
     match voice.provider {
         Provider::Kokoro => kokoro(text, voice, opts, cfg),
         Provider::System => system(text, voice, opts),
-        Provider::Chatterbox => chatterbox(text, opts, cfg),
-        Provider::Hosted => hosted(text, opts, cfg),
+        Provider::Chatterbox => chatterbox(text, opts, cfg, reference),
+        Provider::Hosted => hosted(text, opts, cfg, reference),
     }
 }
 
@@ -600,7 +604,7 @@ pub fn take_result(line: i32) -> Option<Result<(Vec<u8>, String, Option<Vec<Time
 }
 
 /// Speak a dialog line on a thread, downloading Kokoro first if it's needed.
-pub fn start(line: i32, text: String, voice: Voice, opts: VoiceOpts, cfg: VoiceConfig, repaint: impl Fn() + Send + 'static) {
+pub fn start(line: i32, text: String, voice: Voice, opts: VoiceOpts, cfg: VoiceConfig, reference: Option<Reference>, repaint: impl Fn() + Send + 'static) {
     if busy() {
         return;
     }
@@ -633,7 +637,7 @@ pub fn start(line: i32, text: String, voice: Voice, opts: VoiceOpts, cfg: VoiceC
             }
             *JOB.lock().unwrap() = Job::Speaking(line);
             repaint();
-            synthesize(&text, &voice, &opts, &cfg).map(|s| (s.bytes, s.ext, s.words))
+            synthesize(&text, &voice, &opts, &cfg, reference.as_ref()).map(|s| (s.bytes, s.ext, s.words))
         })();
         *JOB.lock().unwrap() = Job::Finished(line, result);
         repaint();

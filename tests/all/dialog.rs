@@ -3,7 +3,7 @@
 //! and saving every take.
 
 use keyternity_lib::audio;
-use keyternity_lib::dialog::{DialogLine, Provider, Take, Voice};
+use keyternity_lib::dialog::{DialogLine, Provider, Reference, Take, Voice};
 use keyternity_lib::editor;
 use keyternity_lib::face;
 use keyternity_lib::lipsync::{self, Language, TimedWord};
@@ -187,7 +187,7 @@ fn kokoro_voices_have_readable_names() {
 fn system_voice_speaks() {
     let voices = voice::system_voices();
     assert!(!voices.is_empty(), "no system voices");
-    let s = voice::synthesize("Hello there, how are you?", &voices[0], &Default::default(), &Default::default()).unwrap();
+    let s = voice::synthesize("Hello there, how are you?", &voices[0], &Default::default(), &Default::default(), None).unwrap();
     let d = audio::decode(1, "x", &s.ext, s.bytes).unwrap();
     assert!(d.duration() > 0.5);
     if cfg!(target_os = "windows") {
@@ -213,7 +213,7 @@ fn kokoro_speaks() {
         voice::fetch_kokoro_model(m, &AtomicU64::new(0)).unwrap();
     }
     let v = Voice { provider: Provider::Kokoro, id: "af_heart".into(), name: "Heart".into() };
-    let s = voice::synthesize("Hello there. Would you like some water?", &v, &Default::default(), &Default::default()).unwrap();
+    let s = voice::synthesize("Hello there. Would you like some water?", &v, &Default::default(), &Default::default(), None).unwrap();
     let d = audio::decode(1, "x", &s.ext, s.bytes).unwrap();
     assert!(d.duration() > 1.5, "{} s", d.duration());
     let spans = lipsync::speech_spans(&d.samples, d.channels, d.sample_rate);
@@ -260,18 +260,12 @@ fn stub_server(answers: Vec<(u16, &'static str, Vec<u8>)>) -> (String, std::sync
 fn hosted_chatterbox_sends_the_line_and_gets_audio() {
     let wav = speech(0.4, &[]);
     let (url, seen) = stub_server(vec![(200, "audio/wav", wav.clone())]);
-    let reference = std::env::temp_dir().join(format!("keyternity_ref_{}.wav", std::process::id()));
-    std::fs::write(&reference, speech(0.2, &[])).unwrap();
-    let opts = keyternity_lib::dialog::VoiceOpts {
-        language: Language::French,
-        exaggeration: 0.8,
-        reference: reference.to_string_lossy().to_string(),
-        seed: 3,
-        ..Default::default()
-    };
+    let clip = speech(0.2, &[]);
+    let reference = Reference { bytes: std::sync::Arc::new(clip.clone()), ext: "wav".into() };
+    let opts = keyternity_lib::dialog::VoiceOpts { language: Language::French, exaggeration: 0.8, seed: 3, ..Default::default() };
     let cfg = voice::VoiceConfig { hosted_endpoint: url, hosted_key: "k-123".into(), ..Default::default() };
     let v = Voice { provider: Provider::Hosted, id: "chatterbox".into(), name: "Chatterbox (hosted)".into() };
-    let s = voice::synthesize("Bonjour.", &v, &opts, &cfg).unwrap();
+    let s = voice::synthesize("Bonjour.", &v, &opts, &cfg, Some(&reference)).unwrap();
     assert_eq!(s.bytes, wav);
     assert!(s.words.is_none());
 
@@ -285,10 +279,8 @@ fn hosted_chatterbox_sends_the_line_and_gets_audio() {
         assert!(text.contains(&format!("name=\"{field}\"\r\n\r\n{value}\r\n")), "{field}");
     }
     assert!(text.contains("name=\"cfg_weight\""));
-    assert!(text.contains("name=\"reference\"; filename="));
-    let r = std::fs::read(&reference).unwrap();
-    assert!(req.windows(r.len()).any(|w| w == r.as_slice()), "the reference's bytes are sent");
-    let _ = std::fs::remove_file(reference);
+    assert!(text.contains("name=\"reference\"; filename=\"reference.wav\""));
+    assert!(req.windows(clip.len()).any(|w| w == clip.as_slice()), "the clip's bytes are sent");
 }
 
 #[test]
@@ -297,17 +289,17 @@ fn hosted_chatterbox_explains_failures() {
     let (url, _) = stub_server(vec![(422, "application/json", detail), (401, "application/json", br#"{"detail":"bad key"}"#.to_vec())]);
     let cfg = voice::VoiceConfig { hosted_endpoint: url, hosted_key: "k".into(), ..Default::default() };
     let v = Voice { provider: Provider::Hosted, id: "chatterbox".into(), name: String::new() };
-    let e = voice::synthesize("Hi.", &v, &Default::default(), &cfg).unwrap_err();
+    let e = voice::synthesize("Hi.", &v, &Default::default(), &cfg, None).unwrap_err();
     assert!(e.contains("refused the line") && e.contains("unsupported language"), "{e}");
-    let e = voice::synthesize("Hi.", &v, &Default::default(), &cfg).unwrap_err();
+    let e = voice::synthesize("Hi.", &v, &Default::default(), &cfg, None).unwrap_err();
     assert!(e.contains("didn't accept the key"), "{e}");
     // no key, and a language Chatterbox doesn't speak: refused before any call
     let none = voice::VoiceConfig { hosted_endpoint: "http://127.0.0.1:9".into(), ..Default::default() };
     if std::env::var("HVYM_TOOLS_KEY").is_err() {
-        assert!(voice::synthesize("Hi.", &v, &Default::default(), &none).unwrap_err().contains("key"));
+        assert!(voice::synthesize("Hi.", &v, &Default::default(), &none, None).unwrap_err().contains("key"));
     }
     let lt = keyternity_lib::dialog::VoiceOpts { language: Language::Lithuanian, ..Default::default() };
-    assert!(voice::synthesize("Labas.", &v, &lt, &cfg).unwrap_err().contains("Lithuanian"));
+    assert!(voice::synthesize("Labas.", &v, &lt, &cfg, None).unwrap_err().contains("Lithuanian"));
 }
 
 #[test]
@@ -329,16 +321,56 @@ fn hosted_chatterbox_against_the_service() {
     let v = Voice { provider: Provider::Hosted, id: "chatterbox".into(), name: String::new() };
     let cfg = voice::VoiceConfig { hosted_endpoint: url.clone(), hosted_key: key, ..Default::default() };
     // English, no reference
-    let s = voice::synthesize("Hello there.", &v, &Default::default(), &cfg).unwrap();
+    let s = voice::synthesize("Hello there.", &v, &Default::default(), &cfg, None).unwrap();
     let d = audio::decode(1, "x", &s.ext, s.bytes).unwrap();
     assert_eq!((d.channels, d.sample_rate), (1, 24_000));
     // French with a voice reference
-    let reference = std::env::temp_dir().join(format!("keyternity_ref_{}.wav", std::process::id()));
-    std::fs::write(&reference, speech(0.3, &[])).unwrap();
-    let fr = keyternity_lib::dialog::VoiceOpts { language: Language::French, reference: reference.to_string_lossy().to_string(), seed: 2, ..Default::default() };
-    voice::synthesize("Bonjour.", &v, &fr, &cfg).unwrap();
-    let _ = std::fs::remove_file(reference);
+    let reference = Reference { bytes: std::sync::Arc::new(speech(0.3, &[])), ext: "wav".into() };
+    let fr = keyternity_lib::dialog::VoiceOpts { language: Language::French, seed: 2, ..Default::default() };
+    voice::synthesize("Bonjour.", &v, &fr, &cfg, Some(&reference)).unwrap();
     // a wrong key is refused
     let bad = voice::VoiceConfig { hosted_key: "wrong".into(), ..cfg.clone() };
-    assert!(voice::synthesize("Hi.", &v, &Default::default(), &bad).unwrap_err().contains("key"));
+    assert!(voice::synthesize("Hi.", &v, &Default::default(), &bad, None).unwrap_err().contains("key"));
+}
+
+
+/// a cloned voice added the way the Dialog window adds it: its clip waits in the UI
+fn add_voice(s: &mut Shared, id: i32, audio_id: i32, consent: bool) {
+    let data = audio::decode(audio_id, "Alice", "wav", speech(0.5, &[])).unwrap();
+    s.ui.pending_audio.push(data);
+    s.events.add_cloned_voice(&keyternity_lib::dialog::ClonedVoice { id, name: "Alice".into(), audio: audio_id, consent });
+    run(s);
+}
+
+#[test]
+fn cloned_voices_live_with_the_rig() {
+    let mut s = with_line();
+    add_voice(&mut s, 1, 40, true);
+    assert_eq!(s.armature.voices.len(), 1);
+    assert!(s.armature.audio.iter().any(|a| a.id == 40), "the clip moved into the rig");
+    // saved: listed in armature.json, and its clip among the audio files
+    let (json, _) = utils::prepare_files(&s.armature, Camera::default(), vec![], &EditMode::default(), None);
+    let root: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(root["voices"][0]["name"], "Alice");
+    assert!(utils::used_audio(&s.armature).iter().any(|a| a.id == 40));
+    // a line speaking in it gets its clip; Chatterbox's own voice gets none
+    let opts = keyternity_lib::dialog::VoiceOpts { cloned: 1, ..Default::default() };
+    let r = keyternity_lib::dialog::reference_of(&s.armature, &opts).unwrap().unwrap();
+    assert_eq!((r.ext.as_str(), r.bytes.len()), ("wav", speech(0.5, &[]).len()));
+    assert!(keyternity_lib::dialog::reference_of(&s.armature, &Default::default()).unwrap().is_none());
+    // removed: lines using it are told to pick another
+    s.events.delete_cloned_voice(1);
+    run(&mut s);
+    assert!(keyternity_lib::dialog::reference_of(&s.armature, &opts).unwrap_err().contains("gone"));
+}
+
+#[test]
+fn a_voice_needs_its_owners_consent() {
+    let mut s = with_line();
+    add_voice(&mut s, 1, 40, false);
+    assert!(s.armature.voices.is_empty(), "never added without consent");
+    // and one on record without consent (an edited file) is refused at use
+    s.armature.voices.push(keyternity_lib::dialog::ClonedVoice { id: 2, name: "Bob".into(), audio: 40, consent: false });
+    let opts = keyternity_lib::dialog::VoiceOpts { cloned: 2, ..Default::default() };
+    assert!(keyternity_lib::dialog::reference_of(&s.armature, &opts).unwrap_err().contains("consent"));
 }

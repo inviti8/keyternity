@@ -783,8 +783,9 @@ pub struct Ui {
     pub pending_audio: Vec<crate::audio::AudioData>,
     pub dialog_error: Option<(i32, String)>,
     pub dialog_typing: Option<i32>,
-    /// the artist confirmed they have the cloned voice's owner's consent (this session)
-    pub chatterbox_consent: bool,
+    /// a voice being cloned in the Dialog window: its clip, its name, and whether its
+    /// owner's consent is confirmed
+    pub clone_draft: Option<(std::path::PathBuf, String, bool)>,
     /// the bone panel's Shapes section is folded
     pub shapes_folded: bool,
     /// the Face Landmarks section is open
@@ -1616,6 +1617,9 @@ pub struct Armature {
     /// audio files the rig carries (decoded), for animations' dialog clips
     #[serde(skip)]
     pub audio: Vec<crate::audio::AudioData>,
+    /// voices cloned from reference clips, for Chatterbox (docs/LIP_SYNC.md §8.2)
+    #[serde(skip)]
+    pub voices: Vec<crate::dialog::ClonedVoice>,
     #[serde(skip)]
     pub animated_bones: Vec<Bone>,
     /// seconds on the editor's clock while playing, for free-running loops
@@ -1994,6 +1998,9 @@ pub struct Root {
     /// audio files in the zip (`audio/…`), for animations' clips
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub audio: Vec<crate::audio::AudioFile>,
+    /// cloned voices (their clips are among `audio`)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub voices: Vec<crate::dialog::ClonedVoice>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Default, PartialEq)]
@@ -3178,6 +3185,8 @@ pub enum Events {
     AddTake,
     UseTake,
     DeleteTake,
+    AddClonedVoice,
+    DeleteClonedVoice,
     DeleteLipSync,
     BakeLipSync,
     SetMouthRig,
@@ -3452,6 +3461,19 @@ impl EventState {
         self.events.push(E::UseTake);
         self.values.push(line as f32);
         self.str_values.push(format!("{line}|{take}"));
+    }
+
+    /// Add a cloned voice to the rig; its clip waits in `Ui::pending_audio`.
+    pub fn add_cloned_voice(&mut self, voice: &crate::dialog::ClonedVoice) {
+        self.events.push(E::AddClonedVoice);
+        self.values.push(voice.id as f32);
+        self.str_values.push(serde_json::to_string(voice).unwrap());
+    }
+
+    pub fn delete_cloned_voice(&mut self, id: i32) {
+        self.events.push(E::DeleteClonedVoice);
+        self.values.push(id as f32);
+        self.str_values.push(String::new());
     }
 
     pub fn delete_take(&mut self, line: i32, take: i32) {

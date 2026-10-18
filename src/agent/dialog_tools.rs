@@ -111,6 +111,7 @@ pub fn tools() -> Vec<Tool> {
                     "voice": schema(json!({ "provider": { "type": "string", "enum": ["Kokoro", "System", "Hosted"] }, "id": { "type": "string" } }), &["provider", "id"]),
                     "language": language,
                     "speed": { "type": "number", "description": "1 = normal (0.5-2)" },
+                    "cloned_voice": { "type": "integer", "description": "Hosted only: a cloned voice's id from get_dialog's cloned_voices (its owner's consent is on record); default Chatterbox's own voice" },
                     "start_frame": { "type": "integer" }
                 }),
                 &["animation", "text"],
@@ -337,7 +338,8 @@ fn get_dialog(shared: &Shared) -> ToolResult {
     };
     #[cfg(target_arch = "wasm32")]
     let voices = json!("voice generation is desktop only");
-    ToolResult::json(json!({ "animations": anims, "voices": voices, "mouths": lipsync::mouth_hosts(armature) }))
+    let cloned: Vec<Value> = armature.voices.iter().map(|v| json!({ "id": v.id, "name": v.name, "consent": v.consent })).collect();
+    ToolResult::json(json!({ "animations": anims, "voices": voices, "cloned_voices": cloned, "mouths": lipsync::mouth_hosts(armature) }))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -370,14 +372,23 @@ fn add_dialog(shared: &mut Shared, args: &Value) -> Result<ToolResult, String> {
             return Err("Kokoro isn't installed yet: ask the artist to generate one line in the Dialog window (it downloads it), or use a System voice".into());
         }
     }
-    let opts = crate::dialog::VoiceOpts { speed: opt_num(args, "speed").unwrap_or(1.).clamp(0.5, 2.), language: language_of(args)?, ..Default::default() };
+    let opts = crate::dialog::VoiceOpts {
+        speed: opt_num(args, "speed").unwrap_or(1.).clamp(0.5, 2.),
+        language: language_of(args)?,
+        cloned: args.get("cloned_voice").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+        ..Default::default()
+    };
+    if opts.cloned != 0 && voice.provider != Provider::Hosted {
+        return Err("cloned voices are spoken by the Hosted provider".into());
+    }
+    let reference = crate::dialog::reference_of(&shared.armature, &opts)?;
     let cfg = crate::voice::VoiceConfig {
         kokoro_model: shared.config.kokoro_model,
         chatterbox_runner: String::new(),
         hosted_endpoint: shared.config.hosted_endpoint.clone(),
         hosted_key: shared.config.hosted_key.clone(),
     };
-    let speech = crate::voice::synthesize(&text, &voice, &opts, &cfg)?;
+    let speech = crate::voice::synthesize(&text, &voice, &opts, &cfg, reference.as_ref())?;
 
     let anim = &shared.armature.animations[a];
     let line_id = crate::audio::next_id(anim.dialog.iter().map(|l| l.id));

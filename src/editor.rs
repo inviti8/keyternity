@@ -700,6 +700,11 @@ pub fn simple_event(
             face::upgrade(armature);
             ui.face_panel_open = true;
         }
+        Events::AddClonedVoice | Events::DeleteClonedVoice => {
+            let mut pending = std::mem::take(&mut ui.pending_audio);
+            crate::dialog::voice_library_event(event, value, &str_value, armature, &mut pending);
+            ui.pending_audio = pending;
+        }
         Events::SetDialogLine | Events::DeleteDialogLine | Events::AddTake | Events::UseTake | Events::DeleteTake => {
             let mut pending = std::mem::take(&mut ui.pending_audio);
             let err = crate::dialog::dialog_event(event, value, &str_value, armature, selections.anim, &mut pending);

@@ -45,8 +45,9 @@ pub struct VoiceOpts {
     pub language: Language,
     /// Chatterbox's emotion exaggeration, 0.25–2 (0.5 neutral)
     pub exaggeration: f32,
-    /// Chatterbox: the reference clip to clone (a WAV of the voice's owner)
-    pub reference: String,
+    /// Chatterbox (local or hosted): the cloned voice to speak in (`ClonedVoice::id`;
+    /// 0: Chatterbox's own voice)
+    pub cloned: i32,
     /// which take this is: hosted Chatterbox's seed, so each take differs and asking
     /// for the same take again is a cache hit (set when generating, not saved)
     #[serde(skip)]
@@ -55,10 +56,64 @@ pub struct VoiceOpts {
 
 impl Default for VoiceOpts {
     fn default() -> Self {
-        VoiceOpts { speed: 1., language: Language::English, exaggeration: 0.5, reference: String::new(), seed: 0 }
+        VoiceOpts { speed: 1., language: Language::English, exaggeration: 0.5, cloned: 0, seed: 0 }
     }
 }
 
+
+/// A voice cloned from a reference clip, kept with the rig: its name, its clip
+/// (`AudioData::id`, embedded in the `.skf` like dialog audio), and that its owner's
+/// consent was confirmed when it was added. Chatterbox (local or hosted) speaks lines
+/// in it.
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Default, Debug)]
+#[serde(default)]
+pub struct ClonedVoice {
+    pub id: i32,
+    pub name: String,
+    pub audio: i32,
+    pub consent: bool,
+}
+
+/// A cloned voice's clip, ready to send: its file's bytes and extension.
+#[derive(Clone, Debug)]
+pub struct Reference {
+    pub bytes: std::sync::Arc<Vec<u8>>,
+    pub ext: String,
+}
+
+/// The clip a line's voice options clone, if any. Refused without the voice owner's
+/// consent on record, or if the voice or its clip is gone.
+pub fn reference_of(armature: &Armature, opts: &VoiceOpts) -> Result<Option<Reference>, String> {
+    if opts.cloned == 0 {
+        return Ok(None);
+    }
+    let v = armature.voices.iter().find(|v| v.id == opts.cloned).ok_or("the line's cloned voice is gone; pick another")?;
+    if !v.consent {
+        return Err(format!("{} has no record of its owner's consent", v.name));
+    }
+    let a = armature.audio.iter().find(|a| a.id == v.audio).ok_or(format!("{}'s clip isn't loaded", v.name))?;
+    Ok(Some(Reference { bytes: a.bytes.clone(), ext: if a.ext.is_empty() { "wav".into() } else { a.ext.clone() } }))
+}
+
+/// Add or remove a cloned voice (`Events::AddClonedVoice`, `DeleteClonedVoice`). A new
+/// voice's clip waits in `pending`.
+pub fn voice_library_event(event: &Events, value: f32, str_value: &str, armature: &mut Armature, pending: &mut Vec<crate::audio::AudioData>) {
+    match event {
+        Events::AddClonedVoice => {
+            let Ok(v) = serde_json::from_str::<ClonedVoice>(str_value) else { return };
+            if !v.consent {
+                return;
+            }
+            if let Some(i) = pending.iter().position(|d| d.id == v.audio) {
+                armature.audio.push(pending.remove(i));
+            }
+            armature.voices.retain(|x| x.id != v.id);
+            armature.voices.push(v);
+        }
+        Events::DeleteClonedVoice => armature.voices.retain(|x| x.id != value as i32),
+        _ => {}
+    }
+}
 
 /// A line of dialog.
 #[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Default, Debug)]

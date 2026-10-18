@@ -313,9 +313,6 @@
     "system": "This computer",
     "chatterbox": "Chatterbox (clones a reference clip)",
     "speed": "Speed",
-    "reference": "Voice to clone",
-    "reference_hint": "a clean clip of the voice, 5–20 s",
-    "choose": "Choose…",
     "exaggeration": "Emotion",
     "exaggeration_desc": "Chatterbox's exaggeration: 0.5 is neutral; higher is more expressive (and faster).",
     "consent": "I have this voice's owner's consent to clone it",
@@ -335,7 +332,17 @@
     "delete_take": "Delete this take",
     "listen": "Listen",
     "hosted": "Chatterbox (hosted)",
-    "hosted_note": "Sends the line (and any voice reference) to the hosted voice service in Settings → Voices, where Chatterbox speaks it on a GPU. After a quiet spell the first line can take a few minutes while a GPU starts; the rest are quick."
+    "hosted_note": "Sends the line (and any voice reference) to the hosted voice service in Settings → Voices, where Chatterbox speaks it on a GPU. After a quiet spell the first line can take a few minutes while a GPU starts; the rest are quick.",
+    "voices": "Voices",
+    "voices_desc": "Voices cloned from a clip, kept with this rig (the clip is saved in the .skf). Chatterbox lines, local or hosted, can speak in them.",
+    "clone_voice": "Clone a voice…",
+    "clone_voice_desc": "Pick a clean 5–20 s clip of the voice. Only with its owner's consent.",
+    "voice_name": "Name",
+    "add_voice": "Add",
+    "cancel": "Cancel",
+    "remove_voice": "Remove this voice (lines using it will need another)",
+    "speaks_as": "Voice",
+    "own_voice": "Chatterbox's own"
   },
   "lipsync": {
     "open": "Lip sync: make mouth keys for this clip from its words (or its loudness)",

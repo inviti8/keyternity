@@ -49,6 +49,8 @@ fn body(ui: &mut egui::Ui, shared_ui: &mut crate::Ui, armature: &Armature, anim:
         events.set_dialog_line(&line, true);
     }
     ui.add_space(4.);
+    voices_section(ui, shared_ui, armature, events);
+    ui.add_space(4.);
     egui::ScrollArea::vertical().max_height(520.).auto_shrink([false, true]).show(ui, |ui| {
         for line in &anim.dialog {
             egui::Frame::group(ui.style()).show(ui, |ui| {
@@ -56,6 +58,86 @@ fn body(ui: &mut egui::Ui, shared_ui: &mut crate::Ui, armature: &Armature, anim:
                 line_ui(ui, shared_ui, armature, config, events, line);
             });
             ui.add_space(4.);
+        }
+    });
+}
+
+/// The rig's cloned voices: listen, remove, or clone a new one from a clip (named, and
+/// only with its owner's consent, recorded with the voice).
+#[cfg(not(target_arch = "wasm32"))]
+fn voices_section(ui: &mut egui::Ui, shared_ui: &mut crate::Ui, armature: &Armature, events: &mut EventState) {
+    let title = format!("{} ({})", loc(shared_ui, "voices"), armature.voices.len());
+    egui::CollapsingHeader::new(title).id_salt("dialog_voices").show(ui, |ui| {
+        ui.label(egui::RichText::new(loc(shared_ui, "voices_desc")).small());
+        for v in &armature.voices {
+            ui.horizontal(|ui| {
+                ui.label(format!("♪ {}", v.name));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.small_button("✕").on_hover_text(loc(shared_ui, "remove_voice")).clicked() {
+                        events.delete_cloned_voice(v.id);
+                    }
+                    if let Some(a) = armature.audio.iter().find(|a| a.id == v.audio) {
+                        if ui.small_button("▶").on_hover_text(loc(shared_ui, "listen")).clicked() {
+                            crate::audio::play_data(a);
+                        }
+                    }
+                });
+            });
+        }
+        match shared_ui.clone_draft.take() {
+            None => {
+                if ui.button(loc(shared_ui, "clone_voice")).on_hover_text(loc(shared_ui, "clone_voice_desc")).clicked() {
+                    if let Some(p) = rfd::FileDialog::new().add_filter("Audio", &["wav", "mp3", "flac", "ogg"]).pick_file() {
+                        let name = p.file_stem().and_then(|s| s.to_str()).unwrap_or("Voice").to_string();
+                        shared_ui.clone_draft = Some((p, name, false));
+                    }
+                }
+            }
+            Some((path, mut name, mut consent)) => {
+                let mut keep = true;
+                egui::Frame::group(ui.style()).show(ui, |ui| {
+                    ui.label(egui::RichText::new(path.file_name().map_or(String::new(), |f| f.to_string_lossy().to_string())).small());
+                    ui.horizontal(|ui| {
+                        ui.label(loc(shared_ui, "voice_name"));
+                        ui.text_edit_singleline(&mut name);
+                    });
+                    let (label, tip) = (loc(shared_ui, "consent"), loc(shared_ui, "consent_desc"));
+                    ui.checkbox(&mut consent, label).on_hover_text(tip);
+                    ui.horizontal(|ui| {
+                        let ok = consent && !name.trim().is_empty();
+                        if ui.add_enabled(ok, egui::Button::new(loc(shared_ui, "add_voice"))).clicked() {
+                            let added = std::fs::read(&path).map_err(|e| e.to_string()).and_then(|bytes| {
+                                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("wav").to_lowercase();
+                                let ids = armature.audio.iter().map(|a| a.id).chain(shared_ui.pending_audio.iter().map(|a| a.id));
+                                crate::audio::decode(crate::audio::next_id(ids), name.trim(), &ext, bytes)
+                            });
+                            match added {
+                                Ok(data) => {
+                                    let voice = crate::dialog::ClonedVoice {
+                                        id: crate::audio::next_id(armature.voices.iter().map(|v| v.id)),
+                                        name: name.trim().to_string(),
+                                        audio: data.id,
+                                        consent: true,
+                                    };
+                                    shared_ui.pending_audio.push(data);
+                                    events.add_cloned_voice(&voice);
+                                    keep = false;
+                                }
+                                Err(e) => shared_ui.dialog_error = Some((0, format!("couldn't read the clip: {e}"))),
+                            }
+                        }
+                        if ui.button(loc(shared_ui, "cancel")).clicked() {
+                            keep = false;
+                        }
+                    });
+                });
+                if keep {
+                    shared_ui.clone_draft = Some((path, name, consent));
+                }
+            }
+        }
+        if let Some((0, e)) = &shared_ui.dialog_error {
+            ui.label(egui::RichText::new(e).small().color(egui::Color32::from_rgb(230, 110, 100)));
         }
     });
 }
@@ -160,17 +242,19 @@ fn line_ui(ui: &mut egui::Ui, shared_ui: &mut crate::Ui, armature: &Armature, co
     let chatterbox = matches!(l.voice.provider, Provider::Chatterbox | Provider::Hosted);
     if chatterbox {
         ui.horizontal(|ui| {
-            ui.label(loc(shared_ui, "reference"));
-            let r = ui.add(egui::TextEdit::singleline(&mut l.opts.reference).desired_width(200.).hint_text(loc(shared_ui, "reference_hint")));
-            if r.lost_focus() && r.changed() {
-                commit = Some(true);
-            }
-            if ui.small_button(loc(shared_ui, "choose")).clicked() {
-                if let Some(p) = rfd::FileDialog::new().add_filter("Audio", &["wav", "mp3", "flac", "ogg"]).pick_file() {
-                    l.opts.reference = p.to_string_lossy().to_string();
+            ui.label(loc(shared_ui, "speaks_as"));
+            let own = loc(shared_ui, "own_voice");
+            let shown = armature.voices.iter().find(|v| v.id == l.opts.cloned).map_or(own.clone(), |v| v.name.clone());
+            egui::ComboBox::from_id_salt(("dialog_cloned", line.id)).selected_text(shown).show_ui(ui, |ui| {
+                if ui.selectable_value(&mut l.opts.cloned, 0, own).clicked() {
                     commit = Some(true);
                 }
-            }
+                for v in &armature.voices {
+                    if ui.selectable_value(&mut l.opts.cloned, v.id, &v.name).clicked() {
+                        commit = Some(true);
+                    }
+                }
+            });
         });
         ui.horizontal(|ui| {
             ui.label(loc(shared_ui, "exaggeration")).on_hover_text(loc(shared_ui, "exaggeration_desc"));
@@ -179,10 +263,6 @@ fn line_ui(ui: &mut egui::Ui, shared_ui: &mut crate::Ui, armature: &Armature, co
                 commit = Some(true);
             }
         });
-        if !l.opts.reference.trim().is_empty() {
-            let (label, tip) = (loc(shared_ui, "consent"), loc(shared_ui, "consent_desc"));
-            ui.checkbox(&mut shared_ui.chatterbox_consent, label).on_hover_text(tip);
-        }
     }
 
     if let Some(step) = commit {
@@ -194,8 +274,7 @@ fn line_ui(ui: &mut egui::Ui, shared_ui: &mut crate::Ui, armature: &Armature, co
     // generating
     let job = voice::job();
     let busy = voice::busy();
-    let cloning = chatterbox && !l.opts.reference.trim().is_empty();
-    let ready = !busy && !l.text.trim().is_empty() && (!cloning || shared_ui.chatterbox_consent);
+    let ready = !busy && !l.text.trim().is_empty();
     ui.horizontal(|ui| {
         let mut tip = loc(shared_ui, "generate_desc");
         match l.voice.provider {
@@ -228,7 +307,12 @@ fn line_ui(ui: &mut egui::Ui, shared_ui: &mut crate::Ui, armature: &Armature, co
             let ctx = ui.ctx().clone();
             // each take its own seed, so "another take" really is another
             let opts = crate::voice::VoiceOpts { seed: line.takes.iter().map(|t| t.id).max().unwrap_or(0) as u32 + 1, ..l.opts.clone() };
-            voice::start(line.id, l.text.clone(), l.voice.clone(), opts, voice_config(config), move || ctx.request_repaint());
+            // the cloned voice's clip, only with its owner's consent on record
+            let reference = if chatterbox { crate::dialog::reference_of(armature, &opts) } else { Ok(None) };
+            match reference {
+                Ok(reference) => voice::start(line.id, l.text.clone(), l.voice.clone(), opts, voice_config(config), reference, move || ctx.request_repaint()),
+                Err(e) => shared_ui.dialog_error = Some((line.id, e)),
+            }
         }
         let status = match &job {
             Job::Downloading(what, bytes, mb) => {

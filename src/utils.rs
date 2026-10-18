@@ -973,6 +973,7 @@ pub fn prepare_files(
         visuals,
         physics,
         audio: used_audio(armature).iter().map(|a| crate::audio::AudioFile { id: a.id, name: a.name.clone(), file: crate::audio::file_name(a) }).collect(),
+        voices: armature.voices.clone(),
     };
     let armatures_json = serde_json::to_string(&root).unwrap();
 
@@ -1028,6 +1029,7 @@ pub fn import<R: Read + std::io::Seek>(
         animated_bones: vec![],
         clock: None,
         audio: vec![],
+        voices: vec![],
         cameras: vec![],
     };
 
@@ -1210,6 +1212,8 @@ pub fn import<R: Read + std::io::Seek>(
             temp_arm.audio.push(data);
         }
     }
+
+    temp_arm.voices = root.voices.clone();
 
     shared.armature = temp_arm;
 
@@ -1738,7 +1742,11 @@ pub fn solved_local_rot(world: &[Bone], bone_id: i32) -> f32 {
 /// The audio files any animation's clips use (docs/LIP_SYNC.md §5): saved into the
 /// `.skf` as they were imported.
 pub fn used_audio(armature: &Armature) -> Vec<&crate::audio::AudioData> {
-    // clips' audio, and every dialog take's (so takes can still be swapped in)
-    let used = |id: i32| armature.animations.iter().any(|an| an.clips.iter().any(|c| c.audio == id) || an.dialog.iter().any(|l| l.takes.iter().any(|t| t.audio == id)));
+    // clips' audio, every dialog take's (so takes can still be swapped in), and the
+    // cloned voices' clips
+    let used = |id: i32| {
+        armature.voices.iter().any(|v| v.audio == id)
+            || armature.animations.iter().any(|an| an.clips.iter().any(|c| c.audio == id) || an.dialog.iter().any(|l| l.takes.iter().any(|t| t.audio == id)))
+    };
     armature.audio.iter().filter(|a| used(a.id)).collect()
 }
