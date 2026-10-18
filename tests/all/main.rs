@@ -48,4 +48,5 @@ mod timeline_view;
 mod topology;
 mod transcribe;
 mod visibility;
+mod wallet;
 mod weights;

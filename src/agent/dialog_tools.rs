@@ -103,7 +103,7 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "add_dialog",
-            description: "Speak a line with a voice and place it on an animation at start_frame (default 0), lip-synced on the rig's mouth if it has one. voice: {provider: Kokoro|System|Hosted, id} (Hosted: Chatterbox on the hosted service, id chatterbox) from get_dialog's voices (default Kokoro af_heart). Takes a few seconds. Returns the clip, its length, and the words' times.",
+            description: "Speak a line with a voice and place it on an animation at start_frame (default 0), lip-synced on the rig's mouth if it has one. voice: {provider: Kokoro|System|Hosted, id} (Hosted: Chatterbox on the hosted service, id chatterbox; it is paid for from the artist's wallet if they've turned paying on, so prefer Kokoro unless asked) from get_dialog's voices (default Kokoro af_heart). Takes a few seconds. Returns the clip, its length, and the words' times.",
             schema: schema(
                 json!({
                     "animation": anim_schema(),
@@ -382,12 +382,7 @@ fn add_dialog(shared: &mut Shared, args: &Value) -> Result<ToolResult, String> {
         return Err("cloned voices are spoken by the Hosted provider".into());
     }
     let reference = crate::dialog::reference_of(&shared.armature, &opts)?;
-    let cfg = crate::voice::VoiceConfig {
-        kokoro_model: shared.config.kokoro_model,
-        chatterbox_runner: String::new(),
-        hosted_endpoint: shared.config.hosted_endpoint.clone(),
-        hosted_key: shared.config.hosted_key.clone(),
-    };
+    let cfg = crate::dialog_ui::voice_config(&shared.config);
     let speech = crate::voice::synthesize(&text, &voice, &opts, &cfg, reference.as_ref())?;
 
     let anim = &shared.armature.animations[a];

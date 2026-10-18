@@ -65,6 +65,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      # hosted voices' service key, built into the app (src/voice.rs BUILT_IN_KEY). It
+      # only keeps bots off the GPU; the wallet's signature and payment are what count.
+      HVYM_TOOLS_KEY: ${{ secrets.HVYM_TOOLS_KEY }}
     steps:
       - uses: actions/checkout@v5
         with:

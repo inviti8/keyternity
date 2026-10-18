@@ -642,7 +642,8 @@ fn voices(ui: &mut egui::Ui, shared_ui: &mut crate::Ui) {
             ui.label(loc(shared_ui, "key"));
             ui.add(egui::TextEdit::singleline(&mut shared_ui.updated_config.hosted_key).password(true).desired_width(220.));
         });
-
+        ui.add_space(6.);
+        wallet(ui, shared_ui);
     }
     ui.add_space(10.);
 
@@ -652,6 +653,124 @@ fn voices(ui: &mut egui::Ui, shared_ui: &mut crate::Ui) {
         ui.label(loc(shared_ui, "runner")).on_hover_text(loc(shared_ui, "runner_desc"));
         ui.add(egui::TextEdit::singleline(&mut shared_ui.updated_config.chatterbox_runner).hint_text("uv").desired_width(220.));
     });
+}
+
+/// The wallet that pays for hosted voices (docs/LIP_SYNC.md §8.3).
+#[cfg(not(target_arch = "wasm32"))]
+fn wallet(ui: &mut egui::Ui, shared_ui: &mut crate::Ui) {
+    use crate::voice::WalletCheck;
+    let loc = |shared_ui: &crate::Ui, key: &str| shared_ui.loc(&format!("settings_modal.voices.{key}"));
+    let warn = egui::Color32::from_rgb(230, 110, 100);
+    let w = match crate::wallet::current() {
+        Ok(w) => w,
+        Err(e) => {
+            ui.label(egui::RichText::new(e).color(warn));
+            return;
+        }
+    };
+    let cfg = crate::dialog_ui::voice_config(&shared_ui.updated_config);
+    let ctx = ui.ctx().clone();
+    let check = move || {
+        let ctx = ctx.clone();
+        crate::voice::check_wallet(cfg.clone(), move || ctx.request_repaint())
+    };
+    if matches!(crate::voice::wallet_check(), WalletCheck::Unchecked) {
+        check();
+    }
+
+    ui.label(egui::RichText::new(loc(shared_ui, "wallet")).strong());
+    ui.label(loc(shared_ui, "wallet_desc"));
+    ui.horizontal(|ui| {
+        ui.label(loc(shared_ui, "address"));
+        ui.monospace(&w.address);
+        if ui.skf_button(&loc(shared_ui, "copy")).clicked() {
+            ui.ctx().copy_text(w.address.clone());
+        }
+    });
+    ui.horizontal(|ui| {
+        match crate::voice::wallet_check() {
+            WalletCheck::Unchecked | WalletCheck::Checking => {
+                ui.label(loc(shared_ui, "checking"));
+            }
+            WalletCheck::Failed(e) => {
+                ui.label(egui::RichText::new(e).color(warn));
+            }
+            WalletCheck::Done(account, price) => {
+                let balances = match &account {
+                    Some(a) if !a.balances.is_empty() => a
+                        .balances
+                        .iter()
+                        .map(|(code, _, b)| format!("{} {code}", if b.contains('.') { b.trim_end_matches('0').trim_end_matches('.') } else { b }))
+                        .collect::<Vec<_>>()
+                        .join(" · "),
+                    _ => loc(shared_ui, "empty"),
+                };
+                ui.label(format!("{} {balances}", loc(shared_ui, "balance")));
+                if let Some(p) = price {
+                    ui.label(format!("· {} {}", loc(shared_ui, "price"), crate::voice::price_text(&p)));
+                }
+            }
+        }
+        if ui.skf_button(&loc(shared_ui, "refresh")).clicked() {
+            check();
+        }
+    });
+    let (autopay, autopay_desc) = (loc(shared_ui, "autopay"), loc(shared_ui, "autopay_desc"));
+    ui.checkbox(&mut shared_ui.updated_config.hosted_autopay, autopay).on_hover_text(autopay_desc);
+    ui.horizontal(|ui| {
+        ui.label(loc(shared_ui, "max_price")).on_hover_text(loc(shared_ui, "max_price_desc"));
+        ui.add(egui::DragValue::new(&mut shared_ui.updated_config.hosted_max_price).range(0.0..=20.0).speed(0.05).max_decimals(2));
+        ui.label(loc(shared_ui, "network"));
+        let net = &mut shared_ui.updated_config.stellar_network;
+        let shown = if net == "testnet" { "Testnet" } else { "Public" };
+        egui::ComboBox::from_id_salt("stellar_network").selected_text(shown).show_ui(ui, |ui| {
+            ui.selectable_value(net, String::new(), "Public");
+            ui.selectable_value(net, "testnet".to_string(), "Testnet");
+        });
+    });
+
+    // recovery words, and restoring another wallet
+    ui.horizontal(|ui| {
+        let words = loc(shared_ui, if shared_ui.wallet_words_shown { "hide_words" } else { "show_words" });
+        if !w.mnemonic.is_empty() && ui.skf_button(&words).clicked() {
+            shared_ui.wallet_words_shown = !shared_ui.wallet_words_shown;
+        }
+        if shared_ui.wallet_restore.is_none() && ui.skf_button(&loc(shared_ui, "restore")).on_hover_text(loc(shared_ui, "restore_desc")).clicked() {
+            shared_ui.wallet_restore = Some(String::new());
+        }
+    });
+    if shared_ui.wallet_words_shown && !w.mnemonic.is_empty() {
+        ui.label(egui::RichText::new(loc(shared_ui, "words_warning")).small().color(warn));
+        ui.add(egui::Label::new(egui::RichText::new(&w.mnemonic).monospace()).selectable(true));
+    }
+    if let Some(mut input) = shared_ui.wallet_restore.take() {
+        ui.label(loc(shared_ui, "restore_prompt"));
+        ui.add(egui::TextEdit::multiline(&mut input).password(true).desired_rows(2).desired_width(320.));
+        let mut keep = true;
+        ui.horizontal(|ui| {
+            if ui.skf_button(&loc(shared_ui, "restore_confirm")).clicked() {
+                match crate::wallet::Wallet::restore(&input).and_then(crate::wallet::replace) {
+                    Ok(()) => {
+                        keep = false;
+                        shared_ui.wallet_error = None;
+                        shared_ui.wallet_words_shown = false;
+                        check();
+                    }
+                    Err(e) => shared_ui.wallet_error = Some(e),
+                }
+            }
+            if ui.skf_button(&loc(shared_ui, "cancel")).clicked() {
+                keep = false;
+                shared_ui.wallet_error = None;
+            }
+        });
+        if keep {
+            shared_ui.wallet_restore = Some(input);
+        }
+    }
+    if let Some(e) = &shared_ui.wallet_error {
+        ui.label(egui::RichText::new(e).small().color(warn));
+    }
 }
 
 fn color_row(

@@ -11,8 +11,9 @@
 //!   helper script through `uv` (it brings PyTorch; a GPU helps). Its output carries
 //!   Resemble's imperceptible watermark.
 //! - **Chatterbox (hosted)**: the same model on our own GPU service, hvym-img-tools'
-//!   `tts` tool (docs/LIP_SYNC.md §8.2), called as Inkternity calls its tools: an
-//!   API key, one long request, and retries on 502/504.
+//!   `tts` tool (docs/LIP_SYNC.md §8.2), called as Inkternity calls its tools: one
+//!   long request, signed by the wallet (`crate::wallet`), retried on 502/504, and
+//!   paid for over x402 when the service asks (§8.3).
 
 use crate::lipsync::{Language, TimedWord};
 use std::io::Read;
@@ -41,6 +42,16 @@ pub struct VoiceConfig {
     /// then `HOSTED_ENDPOINT`) and API key (blank: `HVYM_TOOLS_KEY`)
     pub hosted_endpoint: String,
     pub hosted_key: String,
+    /// pay the service's quote from the wallet without asking, up to `hosted_max_price`
+    /// a window (docs/LIP_SYNC.md §8.3)
+    pub hosted_autopay: bool,
+    pub hosted_max_price: f64,
+    /// the Stellar network the wallet pays on: `public` (blank) or `testnet`
+    pub stellar_network: String,
+    /// Horizon (blank: the network's own)
+    pub horizon: String,
+    /// the wallet's file (`None`: Keyternity's own, `wallet::current`)
+    pub wallet_path: Option<PathBuf>,
 }
 
 fn data_dir() -> PathBuf {
@@ -452,14 +463,88 @@ fn chatterbox(text: &str, opts: &VoiceOpts, cfg: &VoiceConfig, reference: Option
 /// The hosted tools service's default address.
 pub const HOSTED_ENDPOINT: &str = "https://img.hvym.link";
 
-/// The endpoint and key to use: the settings', else the environment's (as Inkternity).
+/// The service's key built into this copy (`HVYM_TOOLS_KEY` when it was compiled).
+/// Only a gate against bots: the wallet's signature and payment are what count.
+const BUILT_IN_KEY: Option<&str> = option_env!("HVYM_TOOLS_KEY");
+
+/// The endpoint and key to use: the settings', else the environment's (as Inkternity),
+/// else the defaults.
 pub fn hosted_target(cfg: &VoiceConfig) -> (String, String) {
     let pick = |set: &str, env: &str| if set.trim().is_empty() { std::env::var(env).unwrap_or_default() } else { set.trim().to_string() };
     let mut endpoint = pick(&cfg.hosted_endpoint, "HVYM_TOOLS_ENDPOINT");
     if endpoint.is_empty() {
         endpoint = HOSTED_ENDPOINT.into();
     }
-    (endpoint.trim_end_matches('/').to_string(), pick(&cfg.hosted_key, "HVYM_TOOLS_KEY"))
+    let mut key = pick(&cfg.hosted_key, "HVYM_TOOLS_KEY");
+    if key.is_empty() {
+        key = BUILT_IN_KEY.unwrap_or_default().to_string();
+    }
+    (endpoint.trim_end_matches('/').to_string(), key)
+}
+
+/// The path part of an endpoint (`https://host/prefix` → `/prefix`): signatures cover
+/// the path the service sees.
+fn url_path(endpoint: &str) -> &str {
+    let rest = endpoint.split_once("://").map_or(endpoint, |(_, r)| r);
+    rest.find('/').map_or("", |i| &rest[i..])
+}
+
+/// The wallet a config pays from.
+pub fn wallet_of(cfg: &VoiceConfig) -> Result<crate::wallet::Wallet, String> {
+    match &cfg.wallet_path {
+        Some(p) => crate::wallet::load_or_create(p),
+        None => crate::wallet::current(),
+    }
+}
+
+/// The network a config pays on, and its Horizon.
+pub fn network_of(cfg: &VoiceConfig) -> (crate::wallet::Network, String) {
+    let network = crate::wallet::Network::from_name(&cfg.stellar_network).unwrap_or(crate::wallet::Network::Public);
+    let horizon = if cfg.horizon.trim().is_empty() { network.horizon().to_string() } else { cfg.horizon.trim().trim_end_matches('/').to_string() };
+    (network, horizon)
+}
+
+/// "0.75 USDC for 15 minutes"
+pub fn price_text(ch: &crate::wallet::Challenge) -> String {
+    let asset = if ch.native() { "XLM" } else { &ch.asset };
+    format!("{} {asset} for {} minutes", ch.amount, (ch.window_s / 60.).round())
+}
+
+/// Answer a 402: pay its quote from the wallet, then show the service the payment.
+fn pay_window(agent: &ureq::Agent, endpoint: &str, key: &str, wallet: &crate::wallet::Wallet, cfg: &VoiceConfig, body: &str) -> Result<(), String> {
+    use crate::wallet::{self, Network};
+    let ch = wallet::Challenge::parse(body).filter(|c| !c.pay_to.is_empty()).ok_or("the hosted voice service wants payment, but its quote was unreadable")?;
+    if !cfg.hosted_autopay {
+        return Err(format!("hosted voices cost {} of GPU time, paid from this app's wallet: turn on paying in Settings → Voices", price_text(&ch)));
+    }
+    let (expected, horizon) = network_of(cfg);
+    match Network::from_name(&ch.network) {
+        Some(n) if n == expected => {}
+        _ => return Err(format!("the service wants payment on Stellar's {} network, but the wallet pays on {:?}; not paying", ch.network, expected)),
+    }
+    let price: f64 = ch.amount.parse().map_err(|_| format!("can't read the price {:?}", ch.amount))?;
+    if price > cfg.hosted_max_price {
+        return Err(format!("the service asks {}, more than your limit of {} a window (Settings → Voices); not paying", price_text(&ch), cfg.hosted_max_price));
+    }
+    let tx = wallet::pay(wallet, &ch, expected, &horizon).map_err(|e| format!("couldn't pay for GPU time: {e}"))?;
+
+    // the proof: the transaction's hash (resubmitting the same one is safe)
+    let pay_body = serde_json::json!({ "price_id": ch.price_id, "tool": "tts" }).to_string();
+    let mut req = agent.post(&format!("{endpoint}/warm/pay")).header("Content-Type", "application/json").header("X-Payment", &tx);
+    if !key.is_empty() {
+        req = req.header("X-API-Key", key);
+    }
+    for (name, value) in wallet.sign_request("POST", &format!("{}/warm/pay", url_path(endpoint)), "tts", "") {
+        req = req.header(name, &value);
+    }
+    let resp = req.send(pay_body.as_bytes()).map_err(|e| format!("paid (transaction {tx}), but couldn't reach the service to say so: {e}"))?;
+    let status = resp.status().as_u16();
+    let mut text = String::new();
+    let _ = resp.into_body().into_reader().read_to_string(&mut text);
+    if status != 200 {
+        return Err(format!("paid (transaction {tx}), but the service didn't accept it: {}", hosted_error(status, &text)));
+    }
+    Ok(())
 }
 
 /// A multipart/form-data body: text fields, then optionally one file.
@@ -490,6 +575,7 @@ pub fn hosted_error(status: u16, body: &str) -> String {
     });
     let detail = detail.unwrap_or_else(|| body.chars().take(200).collect());
     match status {
+        401 if detail.contains("signed identity") => format!("the hosted voice service didn't accept the wallet's signature ({detail}); check this computer's clock"),
         401 | 403 => "the hosted voice service didn't accept the key (Settings → Voices)".into(),
         402 => "the hosted voice service wants payment for GPU time".into(),
         413 => "the voice reference clip is too large".into(),
@@ -506,9 +592,6 @@ pub const HOSTED_RETRY_DELAY: std::time::Duration = std::time::Duration::from_se
 
 fn hosted(text: &str, opts: &VoiceOpts, cfg: &VoiceConfig, reference: Option<&Reference>) -> Result<Speech, String> {
     let (endpoint, key) = hosted_target(cfg);
-    if key.is_empty() {
-        return Err("add your hosted voice key in Settings → Voices".into());
-    }
     if opts.language == Language::Lithuanian {
         return Err("Chatterbox doesn't speak Lithuanian; use a system voice".into());
     }
@@ -530,21 +613,32 @@ fn hosted(text: &str, opts: &VoiceOpts, cfg: &VoiceConfig, reference: Option<&Re
         .http_status_as_error(false)
         .build()
         .new_agent();
+    let wallet = wallet_of(cfg)?;
     let url = format!("{endpoint}/tools/tts");
-    let mut attempt = 0;
+    let signed_path = format!("{}/tools/tts", url_path(&endpoint));
+    let (mut attempt, mut paid) = (0, false);
     loop {
-        let resp = agent
-            .post(&url)
-            .header("X-API-Key", &key)
-            .header("Content-Type", &format!("multipart/form-data; boundary={boundary}"))
-            .send(&body[..])
-            .map_err(|e| format!("couldn't reach the hosted voice service at {endpoint}: {e}"))?;
+        let mut req = agent.post(&url).header("Content-Type", &format!("multipart/form-data; boundary={boundary}"));
+        if !key.is_empty() {
+            req = req.header("X-API-Key", &key);
+        }
+        // signed afresh each time: a nonce is good once
+        for (name, value) in wallet.sign_request("POST", &signed_path, "tts", "") {
+            req = req.header(name, &value);
+        }
+        let resp = req.send(&body[..]).map_err(|e| format!("couldn't reach the hosted voice service at {endpoint}: {e}"))?;
         let status = resp.status().as_u16();
         let mut reader = resp.into_body().into_reader();
         let mut bytes = vec![];
         reader.read_to_end(&mut bytes).map_err(|e| format!("the hosted voice service's answer was cut off: {e}"))?;
         match status {
             200 => return Ok(Speech { bytes, ext: "wav".into(), words: None }),
+            // no paid window: buy one, once, and try again
+            402 if !paid => {
+                pay_window(&agent, &endpoint, &key, &wallet, cfg, &String::from_utf8_lossy(&bytes))?;
+                paid = true;
+            }
+            402 => return Err("paid, but the hosted voice service still asks for payment; try again in a minute".into()),
             502 | 504 if attempt < 2 => {
                 attempt += 1;
                 std::thread::sleep(HOSTED_RETRY_DELAY);
@@ -552,6 +646,45 @@ fn hosted(text: &str, opts: &VoiceOpts, cfg: &VoiceConfig, reference: Option<&Re
             _ => return Err(hosted_error(status, &String::from_utf8_lossy(&bytes))),
         }
     }
+}
+
+/// What Settings → Voices shows about the wallet: its balances and the service's price.
+#[derive(Clone, Debug, Default)]
+pub enum WalletCheck {
+    #[default]
+    Unchecked,
+    Checking,
+    /// the account (`None`: not on the network yet, so empty), and the price
+    Done(Option<crate::wallet::Account>, Option<crate::wallet::Challenge>),
+    Failed(String),
+}
+
+static WALLET_CHECK: Mutex<WalletCheck> = Mutex::new(WalletCheck::Unchecked);
+
+pub fn wallet_check() -> WalletCheck {
+    WALLET_CHECK.lock().unwrap().clone()
+}
+
+/// Look up the wallet's balances and the service's price (`GET /warm/price`), on a thread.
+pub fn check_wallet(cfg: VoiceConfig, repaint: impl Fn() + Send + 'static) {
+    *WALLET_CHECK.lock().unwrap() = WalletCheck::Checking;
+    std::thread::spawn(move || {
+        let r = (|| {
+            let wallet = wallet_of(&cfg)?;
+            let (_, horizon) = network_of(&cfg);
+            let account = crate::wallet::account(&horizon, &wallet.address)?;
+            let (endpoint, _) = hosted_target(&cfg);
+            let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(20))).http_status_as_error(false).build().new_agent();
+            let price = agent.get(&format!("{endpoint}/warm/price")).call().ok().and_then(|r| {
+                let mut s = String::new();
+                r.into_body().into_reader().read_to_string(&mut s).ok()?;
+                crate::wallet::Challenge::parse(&s).filter(|c| !c.amount.is_empty())
+            });
+            Ok::<_, String>(WalletCheck::Done(account, price))
+        })();
+        *WALLET_CHECK.lock().unwrap() = r.unwrap_or_else(WalletCheck::Failed);
+        repaint();
+    });
 }
 
 // ---------------------------------------------------------------- speaking

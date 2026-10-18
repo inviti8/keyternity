@@ -961,8 +961,9 @@ No third-party cloud voices: heavy voice models run on our own inference, the wa
 Inkternity's 3D tools do. That service is `hvym-img-tools`:
 - a FastAPI tool registry on RunPod Serverless GPUs that scale to zero;
 - weights baked into GHCR images;
-- an always-on proxy at `https://img.hvym.link` that holds the RunPod key;
-- clients that send `X-API-Key` and wait on one long request.
+- an always-on proxy at `https://img.hvym.link` that holds the RunPod key and
+  charges for GPU time (§8.3);
+- clients that sign each request with a wallet and wait on one long request.
 
 **Built:**
 - **The `tts` tool** in hvym-img-tools (its `docs/tools/tts.md`) serves **Chatterbox**:
@@ -980,6 +981,8 @@ Inkternity's 3D tools do. That service is `hvym-img-tools`:
     clip (behind the same consent checkbox as local cloning).
   - Settings → Voices holds the endpoint (default `img.hvym.link`) and the key, with
     `HVYM_TOOLS_ENDPOINT` and `HVYM_TOOLS_KEY` as fallbacks, as in Inkternity.
+    Release builds carry the key (`HVYM_TOOLS_KEY` at compile time, from a CI
+    secret), so artists don't need one. It only keeps bots off the GPU.
   - Like Inkternity's client, it waits up to 15 minutes, retries 502/504 twice,
     and turns each status into a plain message.
 - **Kokoro stays local, and so does the local Chatterbox helper,** the offline
@@ -1002,10 +1005,84 @@ Inkternity's 3D tools do. That service is `hvym-img-tools`:
   model and French with a reference to the multilingual one, and a wrong key was
   refused (`dialog::hosted_chatterbox_against_the_service`, opt-in).
 
-**Not done:** building the image, deploying the RunPod endpoint, and the GPU
-benchmark (cold start, seconds per line, cost). Those spend money, so they wait for
-the go-ahead. Chatterbox gives no word timings; lip sync times its clean output from
-the audio (§7.6).
+**Deployed and measured** (hvym-img-tools `docs/tools/tts.md` §5): endpoint
+`37q2tisf0fssjn`, 4090/L4, scale to zero. Warm, a line takes about its own length
+to speak (0.7–1.1× real time) and costs the service $0.0006–0.002 in GPU time.
+Cloning carried the reference voice's pitch over. Chatterbox gives no word timings;
+lip sync times its clean output from the audio (§7.6).
+
+### 8.3 Paying for hosted voices
+
+The service charges for GPU time over x402 on Stellar, with no free tier, exactly as
+it charges Inkternity (hvym-img-tools `docs/X402_BILLING.md` and `docs/CLIENT.md`;
+Inkternity's `docs/design/AI_BILLING_INTEGRATION.md`). Production asks **0.75 USDC
+for 15 minutes**. Keyternity pays the same way, crypto only.
+
+**Built** (`src/wallet.rs`, the hosted client in `src/voice.rs`, Settings → Voices):
+- **A wallet of the artist's own.**
+  - 12 BIP-39 words, derived by SEP-0005 (account 0), the same as Inkternity's. So
+    the same words open the same wallet in either app.
+  - Made on first use and saved in Keyternity's config folder as `wallet.json`,
+    with Inkternity's key-file field names.
+  - Settings → Voices shows its address (with Copy) and its balances from Horizon,
+    plus the service's price (`GET /warm/price`). The recovery words show only on
+    request, under a warning. Restore takes words or a secret key (`S…`) and
+    replaces the wallet.
+- **Every hosted call is signed** (`X-Ink-Pubkey`, `X-Ink-Auth`), byte for byte
+  as Inkternity's `RequestSigner`. The signature covers method, path, tool, time and
+  a fresh nonce; the body isn't signed, by the service's design. `X-API-Key` still
+  rides along.
+- **A 402 is paid, once, then the line retried:**
+  1. Read the quote (asset, issuer, amount, payee, network, memo).
+  2. Refuse it unless **Pay for GPU time from this wallet** is on (off by
+     default), the network is the one the wallet pays on (Public, or Testnet for
+     testing), and the price is within **At most** (default 1.00) a window.
+  3. Build and sign a Stellar payment natively. A USDC trustline is opened first
+     if the wallet has none; then the artist has to send it USDC.
+  4. Submit it to Horizon, then hand the service its hash (`POST /warm/pay`).
+  5. Retry the line. A second 402 is an error, never a second payment.
+- **No lease.** Inkternity holds a warm lease while its AI toggle is on. Lines are
+  spoken one at a time, on demand, so Keyternity doesn't: the window's clock starts
+  with the first line the service speaks. This needed a fix in the proxy
+  (hvym-img-tools `settle-on-served`). Before it, a credit only started when a
+  lease warmed, so a client that never held one could pay once and call forever.
+- The transaction encoding is ours: about 80 lines of XDR rather than the
+  `stellar` CLI Inkternity runs, or a 37,000-line generated crate.
+
+**Verified:**
+- **SEP-0005's published test vector:** the words give its address and secret.
+- **stellar_sdk reads our transactions back:** a payment with a trustline and a
+  memo, and their hash. It signs the same transaction to identical bytes. That
+  transaction is pinned (`wallet::transactions_encode_as_stellar_reads_them`).
+- **The signature payload** matches hvym-img-tools' tests byte for byte, and it
+  verifies.
+- **The payment flow against a stub proxy and Horizon:**
+  - paid and retried, with the right sequence, amount, payee and memo;
+  - nothing paid when paying is off, over the limit, or on the wrong network;
+  - an empty wallet, no trustline, too little USDC, and a 402 after paying.
+- **On Stellar testnet, end to end** (`dialog::hosted_pays_on_testnet`,
+  opt-in):
+  - The setup: a local proxy with identity and payment enforced, routed to the
+    live `tts` endpoint, with its own testnet "USDC" issuer.
+  - With XLM only, Keyternity opened its own USDC trustline on-chain and asked to
+    be funded.
+  - With USDC, the first line paid 0.75 on-chain, `/warm/pay` accepted the
+    payment, and the line was spoken. The second line was spoken inside the
+    window without paying again.
+  - Exactly one payment left the wallet. The first line took 200 s, because the
+    worker had been evicted (cold start); the second took 4.4 s.
+
+**Not done:**
+- **Deploying the proxy fix** to `img.hvym.link`: until then, production has the
+  hole described above.
+- **Release builds don't carry the key yet:** that needs the `HVYM_TOOLS_KEY`
+  secret in the repository settings.
+- **Encrypting the wallet at rest.** The secret is in plain text on disk, as
+  Inkternity's is (its AI_BILLING_INTEGRATION.md §6). The loss is capped at what
+  the wallet holds.
+- **A cheaper window for voice.** 0.75 USDC buys 15 minutes, but a line costs the
+  service a fraction of a cent, so a per-line or shorter window may fit dialog
+  better. The price is the service's to set.
 
 ## 9. Agent (MCP) tools
 

@@ -256,6 +256,15 @@ fn stub_server(answers: Vec<(u16, &'static str, Vec<u8>)>) -> (String, std::sync
     (url, seen)
 }
 
+/// A hosted voice config with a wallet of its own (never Keyternity's real one).
+fn hosted_cfg(url: &str) -> voice::VoiceConfig {
+    static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let wallet = std::env::temp_dir().join(format!("keyternity_test_wallet_{}_{n}.json", std::process::id()));
+    let _ = std::fs::remove_file(&wallet);
+    voice::VoiceConfig { hosted_endpoint: url.into(), hosted_key: "k-123".into(), wallet_path: Some(wallet), ..Default::default() }
+}
+
 #[test]
 fn hosted_chatterbox_sends_the_line_and_gets_audio() {
     let wav = speech(0.4, &[]);
@@ -263,7 +272,7 @@ fn hosted_chatterbox_sends_the_line_and_gets_audio() {
     let clip = speech(0.2, &[]);
     let reference = Reference { bytes: std::sync::Arc::new(clip.clone()), ext: "wav".into() };
     let opts = keyternity_lib::dialog::VoiceOpts { language: Language::French, exaggeration: 0.8, seed: 3, ..Default::default() };
-    let cfg = voice::VoiceConfig { hosted_endpoint: url, hosted_key: "k-123".into(), ..Default::default() };
+    let cfg = hosted_cfg(&url);
     let v = Voice { provider: Provider::Hosted, id: "chatterbox".into(), name: "Chatterbox (hosted)".into() };
     let s = voice::synthesize("Bonjour.", &v, &opts, &cfg, Some(&reference)).unwrap();
     assert_eq!(s.bytes, wav);
@@ -273,6 +282,10 @@ fn hosted_chatterbox_sends_the_line_and_gets_audio() {
     let text = String::from_utf8_lossy(&req);
     assert!(text.starts_with("POST /tools/tts "), "{}", &text[..40]);
     assert!(text.to_lowercase().contains("x-api-key: k-123"));
+    // signed by the wallet, for the path the service sees
+    let wallet = keyternity_lib::wallet::Wallet::load(cfg.wallet_path.as_ref().unwrap()).unwrap().unwrap();
+    assert!(text.contains(&format!("x-ink-pubkey: {}", wallet.address)) || text.contains(&format!("X-Ink-Pubkey: {}", wallet.address)));
+    assert!(text.contains(r#""p":"/tools/tts""#) || signed_payload(&text).contains(r#""p":"/tools/tts""#));
     assert!(text.contains("multipart/form-data; boundary="));
     // the fields the service's TtsInput declares
     for (field, value) in [("text", "Bonjour."), ("language", "fr"), ("exaggeration", "0.800"), ("seed", "3")] {
@@ -286,18 +299,20 @@ fn hosted_chatterbox_sends_the_line_and_gets_audio() {
 #[test]
 fn hosted_chatterbox_explains_failures() {
     let detail = br#"{"detail":[{"msg":"Value error, unsupported language 'xx'"}]}"#.to_vec();
-    let (url, _) = stub_server(vec![(422, "application/json", detail), (401, "application/json", br#"{"detail":"bad key"}"#.to_vec())]);
-    let cfg = voice::VoiceConfig { hosted_endpoint: url, hosted_key: "k".into(), ..Default::default() };
+    let (url, _) = stub_server(vec![
+        (422, "application/json", detail),
+        (401, "application/json", br#"{"detail":"bad key"}"#.to_vec()),
+        (401, "application/json", br#"{"detail":"signed identity: signature is stale"}"#.to_vec()),
+    ]);
+    let cfg = hosted_cfg(&url);
     let v = Voice { provider: Provider::Hosted, id: "chatterbox".into(), name: String::new() };
     let e = voice::synthesize("Hi.", &v, &Default::default(), &cfg, None).unwrap_err();
     assert!(e.contains("refused the line") && e.contains("unsupported language"), "{e}");
     let e = voice::synthesize("Hi.", &v, &Default::default(), &cfg, None).unwrap_err();
     assert!(e.contains("didn't accept the key"), "{e}");
-    // no key, and a language Chatterbox doesn't speak: refused before any call
-    let none = voice::VoiceConfig { hosted_endpoint: "http://127.0.0.1:9".into(), ..Default::default() };
-    if std::env::var("HVYM_TOOLS_KEY").is_err() {
-        assert!(voice::synthesize("Hi.", &v, &Default::default(), &none, None).unwrap_err().contains("key"));
-    }
+    let e = voice::synthesize("Hi.", &v, &Default::default(), &cfg, None).unwrap_err();
+    assert!(e.contains("signature") && e.contains("clock"), "{e}");
+    // a language Chatterbox doesn't speak: refused before any call
     let lt = keyternity_lib::dialog::VoiceOpts { language: Language::Lithuanian, ..Default::default() };
     assert!(voice::synthesize("Labas.", &v, &lt, &cfg, None).unwrap_err().contains("Lithuanian"));
 }
@@ -311,6 +326,198 @@ fn hosted_endpoint_defaults() {
     }
 }
 
+/// The signed payload in a request's `X-Ink-Auth` header.
+fn signed_payload(request: &str) -> String {
+    use base64::Engine;
+    let auth = request.lines().find_map(|l| l.strip_prefix("x-ink-auth: ").or_else(|| l.strip_prefix("X-Ink-Auth: "))).unwrap_or_default();
+    let payload = auth.split_once('.').map(|(_, p)| p).unwrap_or_default();
+    String::from_utf8(base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(payload.trim()).unwrap_or_default()).unwrap_or_default()
+}
+
+const USDC_ISSUER: &str = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN";
+const PAYEE: &str = "GA32CYGMEIFC7FVWEWMAUWVBG52ZSR7AEYCFDZZQ5KJFNBHB3FRYXEEZ";
+
+/// The proxy's 402 body (hvym-img-tools X402_BILLING.md §4.1).
+fn quote(network: &str, amount: &str) -> Vec<u8> {
+    format!(
+        r#"{{"detail":"no live paid window for this identity","x402":{{"asset":"USDC","issuer":"{USDC_ISSUER}","amount":"{amount}","pay_to":"{PAYEE}","network":"{network}","window_s":900.0,"memo":"q-123","price_id":"q-123","horizon":"x"}}}}"#
+    )
+    .into_bytes()
+}
+
+/// Horizon's account view: a sequence number and these balances (code, balance).
+fn horizon_account(balances: &[(&str, &str)]) -> Vec<u8> {
+    let bs: Vec<String> = balances
+        .iter()
+        .map(|(code, b)| {
+            if *code == "XLM" {
+                format!(r#"{{"balance":"{b}","asset_type":"native"}}"#)
+            } else {
+                format!(r#"{{"balance":"{b}","asset_type":"credit_alphanum4","asset_code":"{code}","asset_issuer":"{USDC_ISSUER}"}}"#)
+            }
+        })
+        .collect();
+    format!(r#"{{"sequence":"4100","balances":[{}]}}"#, bs.join(",")).into_bytes()
+}
+
+/// A request's body (after its headers).
+fn body_of(req: &[u8]) -> Vec<u8> {
+    let end = req.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+    req[end + 4..].to_vec()
+}
+
+/// The transaction envelope a `POST /transactions` form carries, decoded.
+fn submitted_tx(req: &[u8]) -> Vec<u8> {
+    use base64::Engine;
+    let form = String::from_utf8(body_of(req)).unwrap();
+    let b64 = form.strip_prefix("tx=").unwrap().replace("%2B", "+").replace("%2F", "/").replace("%3D", "=");
+    base64::engine::general_purpose::STANDARD.decode(b64).unwrap()
+}
+
+fn paying(url: &str) -> voice::VoiceConfig {
+    voice::VoiceConfig { hosted_autopay: true, hosted_max_price: 1., stellar_network: "testnet".into(), horizon: url.into(), ..hosted_cfg(url) }
+}
+
+#[test]
+fn a_402_is_paid_from_the_wallet_and_the_line_retried() {
+    let wav = speech(0.3, &[]);
+    let (url, seen) = stub_server(vec![
+        (402, "application/json", quote("testnet", "0.75")),
+        (200, "application/json", horizon_account(&[("XLM", "9.5000000"), ("USDC", "3.0000000")])),
+        (200, "application/json", br#"{"successful":true}"#.to_vec()),
+        (200, "application/json", br#"{"settled":true,"credited":true}"#.to_vec()),
+        (200, "audio/wav", wav.clone()),
+    ]);
+    let cfg = paying(&url);
+    let v = Voice { provider: Provider::Hosted, id: "chatterbox".into(), name: String::new() };
+    let s = voice::synthesize("Hello.", &v, &Default::default(), &cfg, None).unwrap();
+    assert_eq!(s.bytes, wav);
+
+    let reqs = seen.lock().unwrap().clone();
+    let line = |i: usize| String::from_utf8_lossy(&reqs[i]).lines().next().unwrap().to_string();
+    let wallet = keyternity_lib::wallet::Wallet::load(cfg.wallet_path.as_ref().unwrap()).unwrap().unwrap();
+    assert!(line(0).starts_with("POST /tools/tts "));
+    assert_eq!(line(1), format!("GET /accounts/{} HTTP/1.1", wallet.address));
+    assert!(line(2).starts_with("POST /transactions "));
+    assert!(line(3).starts_with("POST /warm/pay "));
+    assert!(line(4).starts_with("POST /tools/tts "), "the line, again");
+
+    // the payment: from the wallet, 0.75 USDC to the payee, with the quote's memo
+    let tx = submitted_tx(&reqs[2]);
+    let has = |b: &[u8]| tx.windows(b.len()).any(|w| w == b);
+    assert!(has(&keyternity_lib::wallet::decode_address(&wallet.address).unwrap()));
+    assert!(has(&keyternity_lib::wallet::decode_address(PAYEE).unwrap()));
+    assert!(has(&7_500_000i64.to_be_bytes()), "0.75 in stroops");
+    assert!(has(b"q-123"), "the memo binds it to the quote");
+    assert!(has(&4101i64.to_be_bytes()), "the next sequence number");
+
+    // the proof: its hash, signed, for the quote
+    let pay = String::from_utf8_lossy(&reqs[3]).to_string();
+    let hash = pay.lines().find_map(|l| l.strip_prefix("x-payment: ").or_else(|| l.strip_prefix("X-Payment: "))).unwrap().trim().to_string();
+    assert_eq!(hash.len(), 64);
+    assert!(signed_payload(&pay).contains(r#""p":"/warm/pay""#) && signed_payload(&pay).contains(r#""tool":"tts""#));
+    assert_eq!(String::from_utf8(body_of(&reqs[3])).unwrap(), r#"{"price_id":"q-123","tool":"tts"}"#);
+    // a fresh signature for the retry
+    assert_ne!(signed_payload(&String::from_utf8_lossy(&reqs[0])), signed_payload(&String::from_utf8_lossy(&reqs[4])));
+}
+
+#[test]
+fn nothing_is_paid_without_the_owners_say_so() {
+    let v = Voice { provider: Provider::Hosted, id: "chatterbox".into(), name: String::new() };
+    // paying is off: the price is explained, and nothing else is called
+    let (url, seen) = stub_server(vec![(402, "application/json", quote("testnet", "0.75"))]);
+    let off = voice::VoiceConfig { hosted_autopay: false, ..paying(&url) };
+    let e = voice::synthesize("Hi.", &v, &Default::default(), &off, None).unwrap_err();
+    assert!(e.contains("0.75 USDC for 15 minutes") && e.contains("Settings"), "{e}");
+    assert_eq!(seen.lock().unwrap().len(), 1);
+    // over the limit
+    let (url, seen) = stub_server(vec![(402, "application/json", quote("testnet", "5.00"))]);
+    let e = voice::synthesize("Hi.", &v, &Default::default(), &paying(&url), None).unwrap_err();
+    assert!(e.contains("more than your limit"), "{e}");
+    assert_eq!(seen.lock().unwrap().len(), 1);
+    // on another network than the wallet pays on
+    let (url, seen) = stub_server(vec![(402, "application/json", quote("public", "0.75"))]);
+    let e = voice::synthesize("Hi.", &v, &Default::default(), &paying(&url), None).unwrap_err();
+    assert!(e.contains("network") && e.contains("not paying"), "{e}");
+    assert_eq!(seen.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn a_wallet_that_cant_pay_says_why() {
+    let v = Voice { provider: Provider::Hosted, id: "chatterbox".into(), name: String::new() };
+    // not on the network yet
+    let (url, _) = stub_server(vec![(402, "application/json", quote("testnet", "0.75")), (404, "application/json", b"{}".to_vec())]);
+    let e = voice::synthesize("Hi.", &v, &Default::default(), &paying(&url), None).unwrap_err();
+    assert!(e.contains("empty") && e.contains("XLM"), "{e}");
+    // no USDC trustline: one is opened, and the wallet still needs USDC
+    let (url, seen) = stub_server(vec![
+        (402, "application/json", quote("testnet", "0.75")),
+        (200, "application/json", horizon_account(&[("XLM", "5.0000000")])),
+        (200, "application/json", br#"{"successful":true}"#.to_vec()),
+    ]);
+    let e = voice::synthesize("Hi.", &v, &Default::default(), &paying(&url), None).unwrap_err();
+    assert!(e.contains("can hold USDC now"), "{e}");
+    let tx = submitted_tx(&seen.lock().unwrap()[2]);
+    assert!(tx.windows(4).any(|w| w == b"USDC") && tx.windows(8).any(|w| w == i64::MAX.to_be_bytes()), "a change-trust at the maximum limit");
+    // not enough USDC
+    let refused = br#"{"extras":{"result_codes":{"transaction":"tx_failed","operations":["op_underfunded"]}}}"#.to_vec();
+    let (url, _) = stub_server(vec![
+        (402, "application/json", quote("testnet", "0.75")),
+        (200, "application/json", horizon_account(&[("XLM", "5.0000000"), ("USDC", "0.1000000")])),
+        (400, "application/json", refused),
+    ]);
+    let e = voice::synthesize("Hi.", &v, &Default::default(), &paying(&url), None).unwrap_err();
+    assert!(e.contains("doesn't have enough"), "{e}");
+    // paid, but the service still says 402: stop there, never pay twice
+    let (url, seen) = stub_server(vec![
+        (402, "application/json", quote("testnet", "0.75")),
+        (200, "application/json", horizon_account(&[("XLM", "5.0000000"), ("USDC", "2.0000000")])),
+        (200, "application/json", b"{}".to_vec()),
+        (200, "application/json", b"{}".to_vec()),
+        (402, "application/json", quote("testnet", "0.75")),
+    ]);
+    let e = voice::synthesize("Hi.", &v, &Default::default(), &paying(&url), None).unwrap_err();
+    assert!(e.contains("still asks"), "{e}");
+    assert_eq!(seen.lock().unwrap().len(), 5);
+}
+
+/// Opt-in: Stellar testnet against a local proxy with billing enforced, in two
+/// stages a harness runs (it funds the wallet between them). `trust`: the wallet has
+/// XLM only, so paying opens its USDC trustline and stops. `pay`: it has USDC, so the
+/// first line buys a window and the second is spoken inside it.
+#[test]
+#[ignore]
+fn hosted_pays_on_testnet() {
+    let (Ok(url), Ok(wallet), Ok(stage)) = (std::env::var("HVYM_TTS_TEST_URL"), std::env::var("KEYTERNITY_TEST_WALLET"), std::env::var("KEYTERNITY_TESTNET_STAGE")) else { return };
+    let cfg = voice::VoiceConfig {
+        hosted_endpoint: url,
+        hosted_key: std::env::var("HVYM_TTS_TEST_KEY").unwrap_or_default(),
+        hosted_autopay: true,
+        hosted_max_price: 1.,
+        stellar_network: "testnet".into(),
+        wallet_path: Some(wallet.into()),
+        ..Default::default()
+    };
+    let v = Voice { provider: Provider::Hosted, id: "chatterbox".into(), name: String::new() };
+    match stage.as_str() {
+        "trust" => {
+            let e = voice::synthesize("Hello there.", &v, &Default::default(), &cfg, None).unwrap_err();
+            println!("stage trust: {e}");
+            assert!(e.contains("can hold USDC now"), "{e}");
+        }
+        "pay" => {
+            for (i, line) in ["Hello there. How are you today?", "I paid for this line, and the next one is free."].iter().enumerate() {
+                let started = std::time::Instant::now();
+                let s = voice::synthesize(line, &v, &Default::default(), &cfg, None).unwrap();
+                let d = audio::decode(1, "x", &s.ext, s.bytes).unwrap();
+                assert_eq!((d.channels, d.sample_rate), (1, 24_000));
+                println!("line {i}: {:.2} s of audio in {:.1} s", d.samples.len() as f32 / 24_000., started.elapsed().as_secs_f32());
+            }
+        }
+        _ => panic!("unknown stage {stage}"),
+    }
+}
+
 /// Opt-in: against a running hvym-img-tools server (its real routing, multipart
 /// parsing, validation, auth and cache; a fake model is fine).
 /// `HVYM_TTS_TEST_URL=http://127.0.0.1:8765 HVYM_TTS_TEST_KEY=… cargo test --test all -- dialog::hosted_chatterbox_against_the_service --ignored`
@@ -319,7 +526,7 @@ fn hosted_endpoint_defaults() {
 fn hosted_chatterbox_against_the_service() {
     let (Ok(url), Ok(key)) = (std::env::var("HVYM_TTS_TEST_URL"), std::env::var("HVYM_TTS_TEST_KEY")) else { return };
     let v = Voice { provider: Provider::Hosted, id: "chatterbox".into(), name: String::new() };
-    let cfg = voice::VoiceConfig { hosted_endpoint: url.clone(), hosted_key: key, ..Default::default() };
+    let cfg = voice::VoiceConfig { hosted_key: key, ..hosted_cfg(&url) };
     // English, no reference
     let s = voice::synthesize("Hello there.", &v, &Default::default(), &cfg, None).unwrap();
     let d = audio::decode(1, "x", &s.ext, s.bytes).unwrap();

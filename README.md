@@ -134,7 +134,8 @@ DragonBones for game engines. Older files lose their IK.
   is placed on the timeline and lip-synced. Voices: Kokoro on this computer (through
   sherpa-onnx, downloaded on first use), the computer's own voices, and Chatterbox
   voice cloning (with the voice owner's consent), on this computer or on the
-  self-hosted hvym tools service
+  self-hosted hvym tools service, paid for by GPU time in USDC from a Stellar
+  wallet of your own
   ([design](docs/LIP_SYNC.md#8-voice-generation-dialog-from-text))
 - **AI agent** — Keyternity runs a local MCP server, so an agent such as Claude
   Code can work on the open rig. For skinning, it reads the rig, looks at rendered

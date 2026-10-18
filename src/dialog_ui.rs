@@ -144,12 +144,17 @@ fn voices_section(ui: &mut egui::Ui, shared_ui: &mut crate::Ui, armature: &Armat
 
 /// What runs voice generation, from the settings.
 #[cfg(not(target_arch = "wasm32"))]
-fn voice_config(config: &Config) -> crate::voice::VoiceConfig {
+pub fn voice_config(config: &Config) -> crate::voice::VoiceConfig {
     crate::voice::VoiceConfig {
         kokoro_model: config.kokoro_model,
         chatterbox_runner: config.chatterbox_runner.clone(),
         hosted_endpoint: config.hosted_endpoint.clone(),
         hosted_key: config.hosted_key.clone(),
+        hosted_autopay: config.hosted_autopay,
+        hosted_max_price: config.hosted_max_price,
+        stellar_network: config.stellar_network.clone(),
+        horizon: String::new(),
+        wallet_path: None,
     }
 }
 

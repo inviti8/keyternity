@@ -786,6 +786,11 @@ pub struct Ui {
     /// a voice being cloned in the Dialog window: its clip, its name, and whether its
     /// owner's consent is confirmed
     pub clone_draft: Option<(std::path::PathBuf, String, bool)>,
+    /// Settings → Voices' wallet: its recovery words are showing; words or a secret
+    /// key being typed to restore another; the last thing that went wrong
+    pub wallet_words_shown: bool,
+    pub wallet_restore: Option<String>,
+    pub wallet_error: Option<String>,
     /// the bone panel's Shapes section is folded
     pub shapes_folded: bool,
     /// the Face Landmarks section is open
@@ -986,6 +991,11 @@ pub struct Config {
     /// base URL (blank: the default) and API key
     pub hosted_endpoint: String,
     pub hosted_key: String,
+    /// paying for them from the wallet (§8.3): on, at most this much a window, and
+    /// on which Stellar network (blank: public)
+    pub hosted_autopay: bool,
+    pub hosted_max_price: f64,
+    pub stellar_network: String,
 
     #[serde(skip)]
     pub colors: ColorConfig,
@@ -1053,6 +1063,9 @@ impl Default for Config {
             chatterbox_runner: String::new(),
             hosted_endpoint: String::new(),
             hosted_key: String::new(),
+            hosted_autopay: false,
+            hosted_max_price: 1.,
+            stellar_network: String::new(),
         }
     }
 }

@@ -71,6 +71,8 @@ pub mod lipsync_ui;
 pub mod transcribe;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod voice;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod wallet;
 pub mod dialog_ui;
 pub mod atlas_modal;
 pub mod auto_mesh;
