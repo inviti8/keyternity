@@ -17,3 +17,7 @@ textures.png
 
 # dragonbones verification harness build output
 /tools/dragonbones_verify/build
+
+# local secrets (API keys)
+.env
+.env.*
