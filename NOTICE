@@ -100,7 +100,8 @@ Modifications (GPLv3 section 5a)
     src/lipsync_fi.rs, src/lipsync.rs, src/lipsync_ui.rs,
     tests/all/lipsync_langs.rs, tests/all/transcribe.rs, tests/data/
   Voice generation (Kokoro through sherpa-onnx, system voices, Chatterbox)
-  and dialog lines with takes (an ElevenLabs provider, removed 2026-10-18)
+  and dialog lines with takes (an ElevenLabs provider, removed 2026-10-18;
+  hosted Chatterbox on hvym-img-tools' tts tool added the same day)
     src/voice.rs, src/dialog.rs, src/dialog_ui.rs, src/settings_modal.rs,
     src/audio.rs, tools/voice/chatterbox_tts.py, tests/all/dialog.rs
   Agent tools for shapes, mouth rigs, dialog and lip sync; lip-sync strips

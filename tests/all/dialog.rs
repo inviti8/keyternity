@@ -219,3 +219,126 @@ fn kokoro_speaks() {
     let spans = lipsync::speech_spans(&d.samples, d.channels, d.sample_rate);
     assert!(!spans.is_empty());
 }
+
+/// A one-shot HTTP server: answers each request in turn with (status, content type,
+/// body), recording what it was sent.
+fn stub_server(answers: Vec<(u16, &'static str, Vec<u8>)>) -> (String, std::sync::Arc<std::sync::Mutex<Vec<Vec<u8>>>>) {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(vec![]));
+    let log = seen.clone();
+    std::thread::spawn(move || {
+        for (status, ctype, body) in answers {
+            let (mut s, _) = listener.accept().unwrap();
+            let mut req = vec![];
+            let mut buf = [0u8; 65536];
+            // read the headers, then exactly Content-Length bytes of body
+            loop {
+                let n = s.read(&mut buf).unwrap();
+                req.extend_from_slice(&buf[..n]);
+                if let Some(end) = req.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let head = String::from_utf8_lossy(&req[..end]).to_lowercase();
+                    let len: usize = head.lines().find_map(|l| l.strip_prefix("content-length:").map(|v| v.trim().parse().unwrap())).unwrap_or(0);
+                    while req.len() < end + 4 + len {
+                        let n = s.read(&mut buf).unwrap();
+                        req.extend_from_slice(&buf[..n]);
+                    }
+                    break;
+                }
+            }
+            log.lock().unwrap().push(req);
+            let head = format!("HTTP/1.1 {status} X\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+            s.write_all(head.as_bytes()).unwrap();
+            s.write_all(&body).unwrap();
+        }
+    });
+    (url, seen)
+}
+
+#[test]
+fn hosted_chatterbox_sends_the_line_and_gets_audio() {
+    let wav = speech(0.4, &[]);
+    let (url, seen) = stub_server(vec![(200, "audio/wav", wav.clone())]);
+    let reference = std::env::temp_dir().join(format!("keyternity_ref_{}.wav", std::process::id()));
+    std::fs::write(&reference, speech(0.2, &[])).unwrap();
+    let opts = keyternity_lib::dialog::VoiceOpts {
+        language: Language::French,
+        exaggeration: 0.8,
+        reference: reference.to_string_lossy().to_string(),
+        seed: 3,
+        ..Default::default()
+    };
+    let cfg = voice::VoiceConfig { hosted_endpoint: url, hosted_key: "k-123".into(), ..Default::default() };
+    let v = Voice { provider: Provider::Hosted, id: "chatterbox".into(), name: "Chatterbox (hosted)".into() };
+    let s = voice::synthesize("Bonjour.", &v, &opts, &cfg).unwrap();
+    assert_eq!(s.bytes, wav);
+    assert!(s.words.is_none());
+
+    let req = seen.lock().unwrap()[0].clone();
+    let text = String::from_utf8_lossy(&req);
+    assert!(text.starts_with("POST /tools/tts "), "{}", &text[..40]);
+    assert!(text.to_lowercase().contains("x-api-key: k-123"));
+    assert!(text.contains("multipart/form-data; boundary="));
+    // the fields the service's TtsInput declares
+    for (field, value) in [("text", "Bonjour."), ("language", "fr"), ("exaggeration", "0.800"), ("seed", "3")] {
+        assert!(text.contains(&format!("name=\"{field}\"\r\n\r\n{value}\r\n")), "{field}");
+    }
+    assert!(text.contains("name=\"cfg_weight\""));
+    assert!(text.contains("name=\"reference\"; filename="));
+    let r = std::fs::read(&reference).unwrap();
+    assert!(req.windows(r.len()).any(|w| w == r.as_slice()), "the reference's bytes are sent");
+    let _ = std::fs::remove_file(reference);
+}
+
+#[test]
+fn hosted_chatterbox_explains_failures() {
+    let detail = br#"{"detail":[{"msg":"Value error, unsupported language 'xx'"}]}"#.to_vec();
+    let (url, _) = stub_server(vec![(422, "application/json", detail), (401, "application/json", br#"{"detail":"bad key"}"#.to_vec())]);
+    let cfg = voice::VoiceConfig { hosted_endpoint: url, hosted_key: "k".into(), ..Default::default() };
+    let v = Voice { provider: Provider::Hosted, id: "chatterbox".into(), name: String::new() };
+    let e = voice::synthesize("Hi.", &v, &Default::default(), &cfg).unwrap_err();
+    assert!(e.contains("refused the line") && e.contains("unsupported language"), "{e}");
+    let e = voice::synthesize("Hi.", &v, &Default::default(), &cfg).unwrap_err();
+    assert!(e.contains("didn't accept the key"), "{e}");
+    // no key, and a language Chatterbox doesn't speak: refused before any call
+    let none = voice::VoiceConfig { hosted_endpoint: "http://127.0.0.1:9".into(), ..Default::default() };
+    if std::env::var("HVYM_TOOLS_KEY").is_err() {
+        assert!(voice::synthesize("Hi.", &v, &Default::default(), &none).unwrap_err().contains("key"));
+    }
+    let lt = keyternity_lib::dialog::VoiceOpts { language: Language::Lithuanian, ..Default::default() };
+    assert!(voice::synthesize("Labas.", &v, &lt, &cfg).unwrap_err().contains("Lithuanian"));
+}
+
+#[test]
+fn hosted_endpoint_defaults() {
+    let (url, _) = voice::hosted_target(&voice::VoiceConfig { hosted_endpoint: "https://x.example/ ".into(), hosted_key: "k".into(), ..Default::default() });
+    assert_eq!(url, "https://x.example");
+    if std::env::var("HVYM_TOOLS_ENDPOINT").is_err() {
+        assert_eq!(voice::hosted_target(&Default::default()).0, voice::HOSTED_ENDPOINT);
+    }
+}
+
+/// Opt-in: against a running hvym-img-tools server (its real routing, multipart
+/// parsing, validation, auth and cache; a fake model is fine).
+/// `HVYM_TTS_TEST_URL=http://127.0.0.1:8765 HVYM_TTS_TEST_KEY=… cargo test --test all -- dialog::hosted_chatterbox_against_the_service --ignored`
+#[test]
+#[ignore]
+fn hosted_chatterbox_against_the_service() {
+    let (Ok(url), Ok(key)) = (std::env::var("HVYM_TTS_TEST_URL"), std::env::var("HVYM_TTS_TEST_KEY")) else { return };
+    let v = Voice { provider: Provider::Hosted, id: "chatterbox".into(), name: String::new() };
+    let cfg = voice::VoiceConfig { hosted_endpoint: url.clone(), hosted_key: key, ..Default::default() };
+    // English, no reference
+    let s = voice::synthesize("Hello there.", &v, &Default::default(), &cfg).unwrap();
+    let d = audio::decode(1, "x", &s.ext, s.bytes).unwrap();
+    assert_eq!((d.channels, d.sample_rate), (1, 24_000));
+    // French with a voice reference
+    let reference = std::env::temp_dir().join(format!("keyternity_ref_{}.wav", std::process::id()));
+    std::fs::write(&reference, speech(0.3, &[])).unwrap();
+    let fr = keyternity_lib::dialog::VoiceOpts { language: Language::French, reference: reference.to_string_lossy().to_string(), seed: 2, ..Default::default() };
+    voice::synthesize("Bonjour.", &v, &fr, &cfg).unwrap();
+    let _ = std::fs::remove_file(reference);
+    // a wrong key is refused
+    let bad = voice::VoiceConfig { hosted_key: "wrong".into(), ..cfg.clone() };
+    assert!(voice::synthesize("Hi.", &v, &Default::default(), &bad).unwrap_err().contains("key"));
+}

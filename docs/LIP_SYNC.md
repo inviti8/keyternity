@@ -897,7 +897,7 @@ The text is known, so lip sync only needs **word timings**:
 |---|---|---|---|---|
 | **Kokoro-82M** (first) | Local ONNX (`ort`), ~80–330 MB model download | 54 voices, 8 languages (v1.0) | Phonemes from its misaki G2P. Durations come from ONNX exports that output the duration tensor (the Rust Kokoros project reads them). | Apache-2.0 weights. Small and fast, CPU-friendly. No voice cloning. |
 | **Chatterbox** (Resemble AI) | Local Python/PyTorch, as a helper process | **Voice cloning** from a reference clip. Emotion "exaggeration" control (original model). 23+ languages (Multilingual V3). | None, so Whisper times the known text | MIT. Every output carries an imperceptible Perth watermark. Heavier: 110M–500M parameters, and a GPU is best. |
-| ~~ElevenLabs~~ | — | — | — | Removed after 0.8.0: no third-party cloud dependency. Self-hosted inference, after Inkternity's, takes its place (§8.2). |
+| ~~ElevenLabs~~ | — | — | — | Removed after 0.8.0: no third-party cloud dependency. Chatterbox on our own inference (hvym-img-tools' `tts`) takes its place (§8.2). |
 | Piper | — | — | — | Skipped for now: the original MIT repository was archived in October 2025, and development continued under GPL. Voice licences vary. |
 
 **UI:** a **Dialog** panel on the animation:
@@ -955,34 +955,48 @@ window in `src/dialog_ui.rs`.
     through the app's own path and speaks.
   - `dialog::system_voice_speaks` uses the system voice.
 
-### 8.2 Self-hosted voice inference (proposed)
+### 8.2 Self-hosted voice inference
 
 No third-party cloud voices: heavy voice models run on our own inference, the way
 Inkternity's 3D tools do. That service is `hvym-img-tools`:
 - a FastAPI tool registry on RunPod Serverless GPUs that scale to zero;
 - weights baked into GHCR images;
 - an always-on proxy at `https://img.hvym.link` that holds the RunPod key;
-- clients that send `X-API-Key` and wait on one long request (cold starts of
-  minutes; the proxy does the polling);
-- optional warm leases, and x402 per-use billing.
+- clients that send `X-API-Key` and wait on one long request.
 
-The proposal:
-- **A `tts` tool in hvym-img-tools** serving **Chatterbox**: voice cloning from a
-  reference clip, emotion exaggeration, 23+ languages. It's the model that's
-  impractical locally, at several GB of PyTorch and best on a GPU.
-- **Kokoro stays local,** since it's fast on a CPU.
-- **Request:** `POST {endpoint}/tools/tts`, multipart, with:
-  - `text`, `language` and `exaggeration`;
-  - optionally a `reference` audio file, behind the same consent checkbox.
+**Built:**
+- **The `tts` tool** in hvym-img-tools (its `docs/tools/tts.md`) serves **Chatterbox**:
+  23 languages, voice cloning from an optional reference clip, and emotion
+  exaggeration.
+  - It returns `audio/wav`, cached by every field.
+  - A `seed` makes each take reproducible, so asking for the same take again is
+    free.
+  - Its own image, `hvym-img-tts` (torch 2.6, Chatterbox 0.1.7, weights baked,
+    offline at run time), with a GitHub Actions build job.
+  - It needed one core addition: optional file fields.
+- **Keyternity's "Chatterbox (hosted)" voice** (`voice.rs`):
+  - It sends `POST {endpoint}/tools/tts` with the line, language, emotion, a seed
+    per take, a pacing value derived from the speed setting, and the reference
+    clip (behind the same consent checkbox as local cloning).
+  - Settings → Voices holds the endpoint (default `img.hvym.link`) and the key, with
+    `HVYM_TOOLS_ENDPOINT` and `HVYM_TOOLS_KEY` as fallbacks, as in Inkternity.
+  - Like Inkternity's client, it waits up to 15 minutes, retries 502/504 twice,
+    and turns each status into a plain message.
+- **Kokoro stays local, and so does the local Chatterbox helper,** the offline
+  option.
 
-  The response is raw `audio/wav`.
-- **Same contract as Inkternity's clients:** endpoint and key in Settings → Voices
-  (endpoint defaulting to `img.hvym.link`), a 900 s timeout, status codes mapped to
-  messages, and an optional warm lease while the Dialog window is open.
-- **The local Chatterbox helper** (`uv run`) either stays as the offline option or
-  goes. To decide.
-- **Timings:** Chatterbox gives no word timings; lip sync's speech detection times
-  its clean output well (§7.6).
+**Verified:**
+- Keyternity's client against a stub server: the request's fields, key and
+  reference, and the error messages.
+- Against the real hvym-img-tools server running locally with a faked model: real
+  routing, multipart, validation, auth and caching. English went to the English
+  model and French with a reference to the multilingual one, and a wrong key was
+  refused (`dialog::hosted_chatterbox_against_the_service`, opt-in).
+
+**Not done:** building the image, deploying the RunPod endpoint, and the GPU
+benchmark (cold start, seconds per line, cost). Those spend money, so they wait for
+the go-ahead. Chatterbox gives no word timings; lip sync times its clean output from
+the audio (§7.6).
 
 ## 9. Agent (MCP) tools
 

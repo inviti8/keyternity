@@ -629,6 +629,23 @@ fn voices(ui: &mut egui::Ui, shared_ui: &mut crate::Ui) {
     }
     ui.add_space(10.);
 
+    // voice generation is desktop-only
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        ui.label(egui::RichText::new(loc(shared_ui, "hosted")).strong());
+        ui.label(loc(shared_ui, "hosted_desc"));
+        ui.horizontal(|ui| {
+            ui.label(loc(shared_ui, "endpoint"));
+            ui.add(egui::TextEdit::singleline(&mut shared_ui.updated_config.hosted_endpoint).hint_text(crate::voice::HOSTED_ENDPOINT).desired_width(220.));
+        });
+        ui.horizontal(|ui| {
+            ui.label(loc(shared_ui, "key"));
+            ui.add(egui::TextEdit::singleline(&mut shared_ui.updated_config.hosted_key).password(true).desired_width(220.));
+        });
+
+    }
+    ui.add_space(10.);
+
     ui.label(egui::RichText::new("Chatterbox").strong());
     ui.label(loc(shared_ui, "chatterbox_desc"));
     ui.horizontal(|ui| {

@@ -333,7 +333,9 @@
     "use": "Use",
     "use_desc": "Use this take: it replaces the line's clip, and the lip sync follows it.",
     "delete_take": "Delete this take",
-    "listen": "Listen"
+    "listen": "Listen",
+    "hosted": "Chatterbox (hosted)",
+    "hosted_note": "Sends the line (and any voice reference) to the hosted voice service in Settings → Voices, where Chatterbox speaks it on a GPU. After a quiet spell the first line can take a few minutes while a GPU starts; the rest are quick."
   },
   "lipsync": {
     "open": "Lip sync: make mouth keys for this clip from its words (or its loudness)",
@@ -818,11 +820,15 @@
     },
     "voices": {
       "heading": "Voices",
-      "desc": "Voice generation for dialog lines (the Dialog window). Kokoro and the system voice run on this computer; Chatterbox (voice cloning) is optional. Nothing is sent to a cloud service.",
+      "desc": "Voice generation for dialog lines (the Dialog window). Kokoro and the system voice run on this computer. Chatterbox (voice cloning) runs on this computer or on the hosted service.",
       "kokoro_desc": "Speaks on this computer. The first line downloads sherpa-onnx's tool and the model below, checked against their published checksums. The full model is faster on most computers; int8 is a smaller download.",
       "chatterbox_desc": "Optional voice cloning from a reference clip, by a helper Keyternity runs. It needs uv (which installs Chatterbox and PyTorch, several GB, the first time); a GPU helps a lot. Only clone a voice with its owner's consent.",
       "runner": "Run with",
-      "runner_desc": "uv (default), or the path of a Python that has chatterbox-tts installed."
+      "runner_desc": "uv (default), or the path of a Python that has chatterbox-tts installed.",
+      "hosted": "Hosted voices",
+      "hosted_desc": "Chatterbox on the hvym tools service (self-hosted GPUs, no third-party voice API). Leave the address blank for the default; the key comes from whoever runs the service. Blank fields fall back to HVYM_TOOLS_ENDPOINT and HVYM_TOOLS_KEY.",
+      "endpoint": "Address",
+      "key": "Key"
     },
     "agent": {
       "heading": "Agent",

@@ -10,6 +10,9 @@
 //! - **Chatterbox** (MIT, Resemble AI): voice cloning from a reference clip, run as a
 //!   helper script through `uv` (it brings PyTorch; a GPU helps). Its output carries
 //!   Resemble's imperceptible watermark.
+//! - **Chatterbox (hosted)**: the same model on our own GPU service, hvym-img-tools'
+//!   `tts` tool (docs/LIP_SYNC.md §8.2), called as Inkternity calls its tools: an
+//!   API key, one long request, and retries on 502/504.
 
 use crate::lipsync::{Language, TimedWord};
 use std::io::Read;
@@ -20,6 +23,7 @@ use std::sync::{Arc, Mutex};
 pub use crate::dialog::{Provider, Voice, VoiceOpts};
 
 /// What a provider made: an audio file, and the words' times if it knows them.
+#[derive(Debug)]
 pub struct Speech {
     pub bytes: Vec<u8>,
     pub ext: String,
@@ -33,6 +37,10 @@ pub struct VoiceConfig {
     pub kokoro_model: usize,
     /// what runs the Chatterbox helper: `uv` (default) or a Python with chatterbox-tts
     pub chatterbox_runner: String,
+    /// the hosted service (hvym-img-tools): its base URL (blank: `HVYM_TOOLS_ENDPOINT`,
+    /// then `HOSTED_ENDPOINT`) and API key (blank: `HVYM_TOOLS_KEY`)
+    pub hosted_endpoint: String,
+    pub hosted_key: String,
 }
 
 fn data_dir() -> PathBuf {
@@ -433,6 +441,116 @@ fn chatterbox(text: &str, opts: &VoiceOpts, cfg: &VoiceConfig) -> Result<Speech,
     Ok(Speech { bytes: bytes.map_err(|e| format!("Chatterbox wrote no audio: {e}"))?, ext: "wav".into(), words: None })
 }
 
+// ---------------------------------------------------------------- Chatterbox, hosted
+
+/// The hosted tools service's default address.
+pub const HOSTED_ENDPOINT: &str = "https://img.hvym.link";
+
+/// The endpoint and key to use: the settings', else the environment's (as Inkternity).
+pub fn hosted_target(cfg: &VoiceConfig) -> (String, String) {
+    let pick = |set: &str, env: &str| if set.trim().is_empty() { std::env::var(env).unwrap_or_default() } else { set.trim().to_string() };
+    let mut endpoint = pick(&cfg.hosted_endpoint, "HVYM_TOOLS_ENDPOINT");
+    if endpoint.is_empty() {
+        endpoint = HOSTED_ENDPOINT.into();
+    }
+    (endpoint.trim_end_matches('/').to_string(), pick(&cfg.hosted_key, "HVYM_TOOLS_KEY"))
+}
+
+/// A multipart/form-data body: text fields, then optionally one file.
+pub fn multipart(fields: &[(&str, String)], file: Option<(&str, &str, &[u8])>) -> (String, Vec<u8>) {
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+    let boundary = format!("----keyternity{nanos:x}");
+    let mut body = vec![];
+    for (name, value) in fields {
+        body.extend(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n").as_bytes());
+    }
+    if let Some((name, filename, data)) = file {
+        body.extend(
+            format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"; filename=\"{filename}\"\r\nContent-Type: application/octet-stream\r\n\r\n").as_bytes(),
+        );
+        body.extend(data);
+        body.extend(b"\r\n");
+    }
+    body.extend(format!("--{boundary}--\r\n").as_bytes());
+    (boundary, body)
+}
+
+/// A failed call's message, from its status and the service's `{"detail": ...}`.
+pub fn hosted_error(status: u16, body: &str) -> String {
+    let detail = serde_json::from_str::<serde_json::Value>(body).ok().map(|v| match &v["detail"] {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Array(errs) => errs.iter().filter_map(|e| e["msg"].as_str()).collect::<Vec<_>>().join("; "),
+        other => other.to_string(),
+    });
+    let detail = detail.unwrap_or_else(|| body.chars().take(200).collect());
+    match status {
+        401 | 403 => "the hosted voice service didn't accept the key (Settings → Voices)".into(),
+        402 => "the hosted voice service wants payment for GPU time".into(),
+        413 => "the voice reference clip is too large".into(),
+        422 => format!("the hosted voice service refused the line: {detail}"),
+        503 => "the hosted voice service isn't set up for tts yet".into(),
+        504 => "the hosted voice timed out (a cold GPU can take a few minutes); try again".into(),
+        _ => format!("the hosted voice failed ({status}): {detail}"),
+    }
+}
+
+/// How long to wait before retrying a 502/504, which the service says are safe to
+/// retry (and its cache usually makes free).
+pub const HOSTED_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(5);
+
+fn hosted(text: &str, opts: &VoiceOpts, cfg: &VoiceConfig) -> Result<Speech, String> {
+    let (endpoint, key) = hosted_target(cfg);
+    if key.is_empty() {
+        return Err("add your hosted voice key in Settings → Voices".into());
+    }
+    if opts.language == Language::Lithuanian {
+        return Err("Chatterbox doesn't speak Lithuanian; use a system voice".into());
+    }
+    let mut fields = vec![
+        ("text", text.to_string()),
+        ("language", opts.language.code().to_string()),
+        ("exaggeration", format!("{:.3}", opts.exaggeration.clamp(0.25, 2.))),
+        ("seed", opts.seed.to_string()),
+    ];
+    // Chatterbox has no speed control; slower or faster pacing comes from cfg_weight
+    fields.push(("cfg_weight", format!("{:.3}", (0.5 / opts.speed.clamp(0.5, 2.)).clamp(0.2, 1.))));
+    let reference = if opts.reference.trim().is_empty() {
+        None
+    } else {
+        Some(std::fs::read(opts.reference.trim()).map_err(|e| format!("couldn't read the voice reference: {e}"))?)
+    };
+    let (boundary, body) = multipart(&fields, reference.as_deref().map(|r| ("reference", "reference", r)));
+
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(std::time::Duration::from_secs(900)))
+        .timeout_connect(Some(std::time::Duration::from_secs(15)))
+        .http_status_as_error(false)
+        .build()
+        .new_agent();
+    let url = format!("{endpoint}/tools/tts");
+    let mut attempt = 0;
+    loop {
+        let resp = agent
+            .post(&url)
+            .header("X-API-Key", &key)
+            .header("Content-Type", &format!("multipart/form-data; boundary={boundary}"))
+            .send(&body[..])
+            .map_err(|e| format!("couldn't reach the hosted voice service at {endpoint}: {e}"))?;
+        let status = resp.status().as_u16();
+        let mut reader = resp.into_body().into_reader();
+        let mut bytes = vec![];
+        reader.read_to_end(&mut bytes).map_err(|e| format!("the hosted voice service's answer was cut off: {e}"))?;
+        match status {
+            200 => return Ok(Speech { bytes, ext: "wav".into(), words: None }),
+            502 | 504 if attempt < 2 => {
+                attempt += 1;
+                std::thread::sleep(HOSTED_RETRY_DELAY);
+            }
+            _ => return Err(hosted_error(status, &String::from_utf8_lossy(&bytes))),
+        }
+    }
+}
+
 // ---------------------------------------------------------------- speaking
 
 /// Speak `text` (blocking: run it on a thread).
@@ -444,6 +562,7 @@ pub fn synthesize(text: &str, voice: &Voice, opts: &VoiceOpts, cfg: &VoiceConfig
         Provider::Kokoro => kokoro(text, voice, opts, cfg),
         Provider::System => system(text, voice, opts),
         Provider::Chatterbox => chatterbox(text, opts, cfg),
+        Provider::Hosted => hosted(text, opts, cfg),
     }
 }
 

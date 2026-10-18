@@ -103,12 +103,12 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "add_dialog",
-            description: "Speak a line with a voice and place it on an animation at start_frame (default 0), lip-synced on the rig's mouth if it has one. voice: {provider: Kokoro|System, id} from get_dialog's voices (default Kokoro af_heart). Takes a few seconds. Returns the clip, its length, and the words' times.",
+            description: "Speak a line with a voice and place it on an animation at start_frame (default 0), lip-synced on the rig's mouth if it has one. voice: {provider: Kokoro|System|Hosted, id} (Hosted: Chatterbox on the hosted service, id chatterbox) from get_dialog's voices (default Kokoro af_heart). Takes a few seconds. Returns the clip, its length, and the words' times.",
             schema: schema(
                 json!({
                     "animation": anim_schema(),
                     "text": { "type": "string" },
-                    "voice": schema(json!({ "provider": { "type": "string", "enum": ["Kokoro", "System"] }, "id": { "type": "string" } }), &["provider", "id"]),
+                    "voice": schema(json!({ "provider": { "type": "string", "enum": ["Kokoro", "System", "Hosted"] }, "id": { "type": "string" } }), &["provider", "id"]),
                     "language": language,
                     "speed": { "type": "number", "description": "1 = normal (0.5-2)" },
                     "start_frame": { "type": "integer" }
@@ -352,7 +352,8 @@ fn add_dialog(shared: &mut Shared, args: &Value) -> Result<ToolResult, String> {
             let provider = match v.get("provider").and_then(|p| p.as_str()).unwrap_or("") {
                 "Kokoro" => Provider::Kokoro,
                 "System" => Provider::System,
-                p => return Err(format!("unknown provider `{p}` (Kokoro or System)")),
+                "Hosted" => Provider::Hosted,
+                p => return Err(format!("unknown provider `{p}` (Kokoro, System or Hosted)")),
             };
             let id = v.get("id").and_then(|i| i.as_str()).ok_or("voice `id` is required")?.to_string();
             let name = match provider {
@@ -370,7 +371,12 @@ fn add_dialog(shared: &mut Shared, args: &Value) -> Result<ToolResult, String> {
         }
     }
     let opts = crate::dialog::VoiceOpts { speed: opt_num(args, "speed").unwrap_or(1.).clamp(0.5, 2.), language: language_of(args)?, ..Default::default() };
-    let cfg = crate::voice::VoiceConfig { kokoro_model: shared.config.kokoro_model, chatterbox_runner: String::new() };
+    let cfg = crate::voice::VoiceConfig {
+        kokoro_model: shared.config.kokoro_model,
+        chatterbox_runner: String::new(),
+        hosted_endpoint: shared.config.hosted_endpoint.clone(),
+        hosted_key: shared.config.hosted_key.clone(),
+    };
     let speech = crate::voice::synthesize(&text, &voice, &opts, &cfg)?;
 
     let anim = &shared.armature.animations[a];

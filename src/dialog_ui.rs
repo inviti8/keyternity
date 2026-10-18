@@ -63,7 +63,12 @@ fn body(ui: &mut egui::Ui, shared_ui: &mut crate::Ui, armature: &Armature, anim:
 /// What runs voice generation, from the settings.
 #[cfg(not(target_arch = "wasm32"))]
 fn voice_config(config: &Config) -> crate::voice::VoiceConfig {
-    crate::voice::VoiceConfig { kokoro_model: config.kokoro_model, chatterbox_runner: config.chatterbox_runner.clone() }
+    crate::voice::VoiceConfig {
+        kokoro_model: config.kokoro_model,
+        chatterbox_runner: config.chatterbox_runner.clone(),
+        hosted_endpoint: config.hosted_endpoint.clone(),
+        hosted_key: config.hosted_key.clone(),
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -142,6 +147,7 @@ fn line_ui(ui: &mut egui::Ui, shared_ui: &mut crate::Ui, armature: &Armature, co
             }
             ui.separator();
             pick(ui, Voice { provider: Provider::Chatterbox, id: "chatterbox".into(), name: loc(shared_ui, "chatterbox") });
+            pick(ui, Voice { provider: Provider::Hosted, id: "chatterbox".into(), name: loc(shared_ui, "hosted") });
         });
         ui.label(loc(shared_ui, "speed"));
         let s = ui.add(egui::DragValue::new(&mut l.opts.speed).range(0.5..=2.0).speed(0.01).suffix("×"));
@@ -150,8 +156,9 @@ fn line_ui(ui: &mut egui::Ui, shared_ui: &mut crate::Ui, armature: &Armature, co
         }
     });
 
-    // Chatterbox: who to clone, with their consent
-    if l.voice.provider == Provider::Chatterbox {
+    // Chatterbox (local or hosted): who to clone, with their consent
+    let chatterbox = matches!(l.voice.provider, Provider::Chatterbox | Provider::Hosted);
+    if chatterbox {
         ui.horizontal(|ui| {
             ui.label(loc(shared_ui, "reference"));
             let r = ui.add(egui::TextEdit::singleline(&mut l.opts.reference).desired_width(200.).hint_text(loc(shared_ui, "reference_hint")));
@@ -187,7 +194,7 @@ fn line_ui(ui: &mut egui::Ui, shared_ui: &mut crate::Ui, armature: &Armature, co
     // generating
     let job = voice::job();
     let busy = voice::busy();
-    let cloning = l.voice.provider == Provider::Chatterbox && !l.opts.reference.trim().is_empty();
+    let cloning = chatterbox && !l.opts.reference.trim().is_empty();
     let ready = !busy && !l.text.trim().is_empty() && (!cloning || shared_ui.chatterbox_consent);
     ui.horizontal(|ui| {
         let mut tip = loc(shared_ui, "generate_desc");
@@ -210,12 +217,18 @@ fn line_ui(ui: &mut egui::Ui, shared_ui: &mut crate::Ui, armature: &Armature, co
                 tip += "\n\n";
                 tip += &loc(shared_ui, "chatterbox_note");
             }
+            Provider::Hosted => {
+                tip += "\n\n";
+                tip += &loc(shared_ui, "hosted_note");
+            }
             Provider::System => {}
         }
         let label = loc(shared_ui, if line.takes.is_empty() { "generate" } else { "another_take" });
         if ui.add_enabled(ready, egui::Button::new(label)).on_hover_text(tip).clicked() {
             let ctx = ui.ctx().clone();
-            voice::start(line.id, l.text.clone(), l.voice.clone(), l.opts.clone(), voice_config(config), move || ctx.request_repaint());
+            // each take its own seed, so "another take" really is another
+            let opts = crate::voice::VoiceOpts { seed: line.takes.iter().map(|t| t.id).max().unwrap_or(0) as u32 + 1, ..l.opts.clone() };
+            voice::start(line.id, l.text.clone(), l.voice.clone(), opts, voice_config(config), move || ctx.request_repaint());
         }
         let status = match &job {
             Job::Downloading(what, bytes, mb) => {

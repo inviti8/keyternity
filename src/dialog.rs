@@ -11,15 +11,18 @@ pub enum Provider {
     Kokoro,
     System,
     Chatterbox,
+    /// Chatterbox on our own GPU service (hvym-img-tools' `tts` tool)
+    Hosted,
 }
 
 impl Provider {
-    pub const ALL: [Provider; 3] = [Provider::Kokoro, Provider::System, Provider::Chatterbox];
+    pub const ALL: [Provider; 4] = [Provider::Kokoro, Provider::System, Provider::Chatterbox, Provider::Hosted];
     pub fn label(&self) -> &'static str {
         match self {
             Provider::Kokoro => "Kokoro",
             Provider::System => "System",
             Provider::Chatterbox => "Chatterbox",
+            Provider::Hosted => "Chatterbox (hosted)",
         }
     }
 }
@@ -44,11 +47,15 @@ pub struct VoiceOpts {
     pub exaggeration: f32,
     /// Chatterbox: the reference clip to clone (a WAV of the voice's owner)
     pub reference: String,
+    /// which take this is: hosted Chatterbox's seed, so each take differs and asking
+    /// for the same take again is a cache hit (set when generating, not saved)
+    #[serde(skip)]
+    pub seed: u32,
 }
 
 impl Default for VoiceOpts {
     fn default() -> Self {
-        VoiceOpts { speed: 1., language: Language::English, exaggeration: 0.5, reference: String::new() }
+        VoiceOpts { speed: 1., language: Language::English, exaggeration: 0.5, reference: String::new(), seed: 0 }
     }
 }
 

@@ -981,6 +981,10 @@ pub struct Config {
     /// (`voice::KOKORO_MODELS`), and what runs the Chatterbox helper (`uv`, or a Python)
     pub kokoro_model: usize,
     pub chatterbox_runner: String,
+    /// hosted voices (hvym-img-tools' `tts`, docs/LIP_SYNC.md §8.2): the service's
+    /// base URL (blank: the default) and API key
+    pub hosted_endpoint: String,
+    pub hosted_key: String,
 
     #[serde(skip)]
     pub colors: ColorConfig,
@@ -1046,6 +1050,8 @@ impl Default for Config {
             agent_read_only: false,
             kokoro_model: 0,
             chatterbox_runner: String::new(),
+            hosted_endpoint: String::new(),
+            hosted_key: String::new(),
         }
     }
 }
