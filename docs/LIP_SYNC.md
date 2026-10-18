@@ -1071,12 +1071,13 @@ for 15 minutes**. Keyternity pays the same way, crypto only.
     window without paying again.
   - Exactly one payment left the wallet. The first line took 200 s, because the
     worker had been evicted (cold start); the second took 4.4 s.
+- **In production** (`img.hvym.link`, proxy 0.4.1 with the fix, 2026-10-18):
+  `tts` is routed to its endpoint. A signed, unpaid line gets a 402 with a
+  mainnet quote (0.75 USDC, Circle's issuer). Without a signature, it gets a 401.
+  Release builds carry the key from the `HVYM_TOOLS_KEY` repository secret.
 
 **Not done:**
-- **Deploying the proxy fix** to `img.hvym.link`: until then, production has the
-  hole described above.
-- **Release builds don't carry the key yet:** that needs the `HVYM_TOOLS_KEY`
-  secret in the repository settings.
+- **A paid line on mainnet,** from a funded wallet.
 - **Encrypting the wallet at rest.** The secret is in plain text on disk, as
   Inkternity's is (its AI_BILLING_INTEGRATION.md §6). The loss is capped at what
   the wallet holds.
