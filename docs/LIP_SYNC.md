@@ -984,6 +984,15 @@ Inkternity's 3D tools do. That service is `hvym-img-tools`:
     and turns each status into a plain message.
 - **Kokoro stays local, and so does the local Chatterbox helper,** the offline
   option.
+- **Cloned voices live with the rig:**
+  - The Dialog window's **Voices** section clones a voice from a clip. It's named,
+    and its owner's consent is confirmed once and recorded with the voice.
+  - The clip is embedded in the `.skf` like dialog audio (`Armature::voices`, saved
+    as `voices` with the clip among `audio`), so voices travel with the rig.
+  - Chatterbox lines, local or hosted, pick a voice instead of a file path.
+  - `dialog::reference_of` refuses a voice without consent on record.
+  - The hosted tool remembers each analysed voice by the clip's hash, so a
+    character's lines share one analysis.
 
 **Verified:**
 - Keyternity's client against a stub server: the request's fields, key and
